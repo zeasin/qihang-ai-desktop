@@ -172,8 +172,8 @@ function showWindow() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1600,
-    height: 1000,
+    width: 1400,
+    height: 900,
     minWidth: 1000,
     minHeight: 700,
     title: '启航AI工作台',
