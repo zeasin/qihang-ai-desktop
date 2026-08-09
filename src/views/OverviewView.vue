@@ -16,15 +16,31 @@
     <div class="dashboard-grid">
       <div class="dashboard-left">
         <div class="section-header">📊 综合日报 <span class="report-schedule">{{ reportScheduleText }}</span></div>
-        <div class="card" v-if="reportDetail">
-          <div class="preview" v-html="renderMarkdown(reportDetail)"></div>
+        <div class="card" v-if="latestReport">
+          <div class="latest-header">
+            <div class="latest-info">
+              <div class="latest-date">{{ latestReport.report_date || '最新日报' }}</div>
+              <div class="latest-time">{{ latestReport.created_at }}</div>
+            </div>
+            <button class="btn btn-sm btn-secondary" @click="openReportModal(latestReport)">查看详情</button>
+          </div>
+          <div v-if="keyPointGroups.length" class="key-points">
+            <div v-for="g in keyPointGroups" :key="g.label" class="key-point-group">
+              <div class="key-points-title">{{ g.label }}</div>
+              <div v-for="(p, i) in g.items" :key="i" class="key-point">• {{ p }}</div>
+            </div>
+          </div>
+          <div v-else class="key-points">
+            <div class="key-point">{{ (latestReport.summary || '').slice(0, 200) }}</div>
+          </div>
         </div>
         <div class="card">
           <div v-if="reports.length" class="report-list">
-            <div v-for="(r, i) in reports" :key="r.id" class="report-item" :class="{ active: expandedReport === i }" @click="selectReport(i, r)">
+            <div v-for="(r, i) in reports" :key="r.id" class="report-item" @click="openReportModal(r)">
               <div class="report-header">
                 <span class="report-date">{{ r.report_date || '日报' }}</span>
                 <span class="report-time" style="margin:0;">{{ r.created_at }}</span>
+                <span class="report-expand">查看详情</span>
               </div>
               <div class="report-summary">{{ (r.summary || '').slice(0, 200) }}</div>
             </div>
@@ -85,6 +101,19 @@
       </div>
     </div>
   </div>
+
+  <!-- ========== 日报详情弹窗 ========== -->
+  <div v-if="showReportModal" class="modal-overlay" @click.self="closeReportModal">
+    <div class="modal-box modal-box-lg">
+      <div class="modal-header">
+        <h3>📊 综合日报{{ modalReport?.report_date ? ' · ' + modalReport.report_date : '' }}</h3>
+        <button class="modal-close" @click="closeReportModal">&times;</button>
+      </div>
+      <div class="modal-body report-modal-body">
+        <div v-html="renderMarkdown(reportBody(modalReport?.content || ''))"></div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -102,8 +131,6 @@ const stats = ref({
 });
 
 const reports = ref<any[]>([]);
-const expandedReport = ref<number | null>(null);
-const reportDetail = ref('');
 const reportCron = ref('');
 
 const reportScheduleText = computed(() => {
@@ -208,9 +235,100 @@ const renderMarkdown = (text: string) => {
   return out.join('\n');
 };
 
-function selectReport(i: number, r: any) {
-  expandedReport.value = i;
-  reportDetail.value = r.content || '无内容';
+// ========== 最新日报重点提炼 ==========
+const latestReport = computed(() => (reports.value.length ? reports.value[0] : null));
+
+const KEY_GROUPS: { match: RegExp; label: string }[] = [
+  { match: /今日概览|概览/, label: '📊 今日概览' },
+  { match: /今日完成|已完成|完成情况/, label: '✅ 完成情况' },
+  { match: /待办|待处理|进行中/, label: '📋 今日待办' },
+  { match: /综合评估|改进建议|建议/, label: '💡 改进建议' },
+];
+
+function markdownClean(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1')
+    .trim();
+}
+
+function reportBody(content: string): string {
+  if (!content) return '';
+  const lines = content.split('\n');
+  const start = lines.findIndex((l) => {
+    const t = l.trim();
+    return /^#{1,4}\s/.test(t) || /^-{3,}\s*$/.test(t);
+  });
+  return start > 0 ? lines.slice(start).join('\n') : content;
+}
+
+function extractKeyPoints(content: string): { label: string; items: string[] }[] {
+  if (!content) return [];
+  const lines = content.split('\n');
+  const start = lines.findIndex((l) => {
+    const t = l.trim();
+    return /^#{1,4}\s/.test(t) || /^-{3,}\s*$/.test(t);
+  });
+  const body = (start >= 0 ? lines.slice(start) : lines).map((l) => l.trim()).filter(Boolean);
+
+  const groups: { label: string; items: string[] }[] = [];
+  let current: { label: string; items: string[] } | null = null;
+  let defaultGroup: { label: string; items: string[] } | null = null;
+
+  const pushItem = (text: string) => {
+    if (!text) return;
+    if (current) current.items.push(text);
+    else {
+      if (!defaultGroup) {
+        defaultGroup = { label: '关键数据', items: [] };
+        groups.push(defaultGroup);
+      }
+      defaultGroup.items.push(text);
+    }
+  };
+
+  let inTable = false;
+  for (const line of body) {
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      inTable = false;
+      const title = heading[1];
+      const g = KEY_GROUPS.find((k) => k.match.test(title));
+      current = g ? { label: g.label, items: [] } : null;
+      if (g) groups.push(current!);
+      continue;
+    }
+    if (/^[-|=]{3,}$/.test(line)) { inTable = false; continue; }
+    if (/^\|/.test(line)) {
+      const cells = line.split('|').map((c) => c.trim()).filter(Boolean);
+      if (cells.length >= 2) {
+        if (!inTable) inTable = true;
+        else if (!/^:?-{2,}:?$/.test(cells[1])) pushItem(`${cells[0]}：${cells.slice(1).join(' / ')}`);
+      }
+      continue;
+    }
+    inTable = false;
+    const clean = markdownClean(line.replace(/^[-*]\s+/, ''));
+    if (clean && clean.length < 80) pushItem(clean);
+  }
+
+  return groups.map((g) => ({ ...g, items: g.items.slice(0, 6) })).filter((g) => g.items.length);
+}
+
+const keyPointGroups = computed(() => extractKeyPoints(latestReport.value?.content || ''));
+
+// ========== 日报详情弹窗 ==========
+const showReportModal = ref(false);
+const modalReport = ref<any>(null);
+
+function openReportModal(r: any) {
+  modalReport.value = r;
+  showReportModal.value = true;
+}
+function closeReportModal() {
+  showReportModal.value = false;
+  modalReport.value = null;
 }
 
 async function toggleTodo(t: any) {
@@ -224,10 +342,6 @@ async function loadOverviewData() {
   todayStr.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   try { stats.value = await API.insights.stats(); } catch {}
   try { reports.value = await API.insights.reports(); } catch {}
-  if (reports.value.length && expandedReport.value === null) {
-    expandedReport.value = 0;
-    reportDetail.value = reports.value[0].content || '无内容';
-  }
   try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 10); } catch {}
   try { reminders.value = await API.reminder.list(); } catch {}
   try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
@@ -383,4 +497,69 @@ onUnmounted(() => {
 .report-date { font-size: 13px; font-weight: 600; color: var(--primary); }
 .report-summary { font-size: 12px; color: var(--text-secondary); margin-top: 3px; line-height: 1.4; }
 .report-time { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.report-expand { font-size: 11px; color: var(--primary); margin-left: auto; padding-left: 8px; }
+.latest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.latest-date { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.latest-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.key-points {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(99, 102, 241, 0.04);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.key-point-group { display: flex; flex-direction: column; gap: 4px; }
+.key-points-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.key-point {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.report-item { cursor: pointer; }
+
+/* ========== 日报详情弹窗 ========== */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000;
+}
+.modal-box {
+  background: white; border-radius: var(--radius-md); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  max-width: 90%; max-height: 90vh; overflow-y: auto; width: 520px;
+}
+.modal-box-lg { width: 680px; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.modal-header h3 { font-size: 16px; font-weight: 600; }
+.modal-close {
+  border: none; background: none; font-size: 20px; line-height: 1;
+  color: var(--text-muted); cursor: pointer; padding: 4px 8px; border-radius: 6px;
+}
+.modal-close:hover { color: var(--text-primary); background: var(--hover); }
+.modal-body { padding: 20px; }
+.report-modal-body { font-size: 14px; line-height: 1.7; color: var(--text-primary); word-break: break-word; }
+.report-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  word-break: break-word;
+}
 </style>
