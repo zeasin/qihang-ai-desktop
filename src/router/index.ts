@@ -3,7 +3,7 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 const routes = [
   {
     path: '/',
-    redirect: '/chat'
+    redirect: '/overview'
   },
   {
     path: '/chat',
@@ -43,6 +43,11 @@ const routes = [
     path: '/tools',
     name: 'Tools',
     component: () => import('@/views/ToolsView.vue')
+  },
+  {
+    path: '/overview',
+    name: 'Overview',
+    component: () => import('@/views/OverviewView.vue')
   },
   {
     path: '/projects',

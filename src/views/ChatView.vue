@@ -4,7 +4,6 @@
     <div class="view-tabs">
       <button class="view-tab" :class="{ active: activeView === 'chat' }" @click="activeView = 'chat'">💬 对话</button>
       <button class="view-tab" :class="{ active: activeView === 'kb' }" @click="activeView = 'kb'">📚 知识库</button>
-      <button class="view-tab" :class="{ active: activeView === 'overview' }" @click="activeView = 'overview'">📊 概览</button>
     </div>
 
     <!-- ========== 对话视图 ========== -->
@@ -183,11 +182,6 @@
     <div v-show="activeView === 'kb'" class="chat-body kb-body">
       <NotesView />
     </div>
-
-    <!-- ========== 概览视图 ========== -->
-    <div v-show="activeView === 'overview'" class="chat-body overview-body">
-      <OverviewView />
-    </div>
   </div>
 </template>
 
@@ -196,7 +190,6 @@ import { ref, onMounted, nextTick, onBeforeUnmount, defineAsyncComponent } from 
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 const NotesView = defineAsyncComponent(() => import('@/views/NotesView.vue'));
-const OverviewView = defineAsyncComponent(() => import('@/views/OverviewView.vue'));
 
 // 配置 marked 以启用换行和 GFM
 marked.setOptions({
@@ -231,7 +224,7 @@ const modelsLoaded = ref(false);
 const CHAT_STATE_KEY = 'chat_home_state';
 const CHAT_MODEL_KEY = 'chat_home_model';
 
-const activeView = ref<'chat' | 'kb' | 'overview'>('chat');
+const activeView = ref<'chat' | 'kb'>('chat');
 
 // ========== 加载数据 ==========
 async function loadKbLibraries() {
@@ -645,15 +638,6 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   min-height: 0;
-}
-
-.overview-body {
-  background: var(--bg-main);
-}
-
-.overview-body :deep(.overview-view) {
-  flex: 1;
-  min-width: 0;
 }
 
 /* ========== 左栏 ========== */

@@ -240,6 +240,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow-y: auto;
   padding: 16px 20px;
+  background: var(--bg-main);
 }
 
 .stats-grid {
