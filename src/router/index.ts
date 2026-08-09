@@ -45,6 +45,11 @@ const routes = [
     component: () => import('@/views/ToolsView.vue')
   },
   {
+    path: '/projects',
+    name: 'Projects',
+    component: () => import('@/views/ProjectsView.vue')
+  },
+  {
     path: '/coding',
     redirect: '/planner'
   },

@@ -66,7 +66,7 @@
         <!-- 无对话时 -->
         <div v-if="!currentSessionId" class="workbench-empty">
           <div class="empty-icon">💻</div>
-          <div class="empty-title">编程</div>
+          <div class="empty-title">自由对话</div>
           <div class="empty-desc">
             从左侧选择一个项目下的对话，或新建一个对话开始<br>
             数据集查询 · 笔记库检索 · 项目文件操作，一个助理全部搞定
