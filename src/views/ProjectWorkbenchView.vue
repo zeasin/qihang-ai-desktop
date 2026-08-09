@@ -21,13 +21,6 @@
     <!-- ========== 对话视图：自带左侧会话列表 ========== -->
     <div v-if="props.view !== 'tasks'" v-show="props.view === 'all' ? rightTab === 'chat' : true" class="wb-view">
       <div class="workbench-sidebar wb-sidebar-chat">
-        <div class="sidebar-header">
-          <h3 class="sidebar-title">代码库</h3>
-          <button class="sidebar-action-btn" @click="openAddProject" title="添加代码库">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="4" x2="8" y2="12"/><line x1="4" y1="8" x2="12" y2="8"/></svg>
-          </button>
-        </div>
-
         <div class="sidebar-action-row">
           <button class="new-item-btn" @click="quickNewSession" :disabled="!projects.length">
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
@@ -89,7 +82,7 @@
         <div v-else class="sidebar-empty">
           <div class="empty-icon">📁</div>
           <div class="empty-text">还没有项目，创建一个开始吧</div>
-          <button class="btn btn-primary btn-sm" @click="openAddProject">新建项目</button>
+          <button class="btn btn-primary btn-sm" @click="createProjectFromSidebar">新建项目</button>
         </div>
       </div>
 
@@ -229,6 +222,7 @@
                   >
                     <option value="">选择项目…</option>
                     <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+                    <option value="__new__" class="new-project-option">+ 新建项目…</option>
                   </select>
                   <svg class="select-chevron" viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 10 5 14 9"/></svg>
                 </div>
@@ -262,13 +256,6 @@
     <!-- ========== 任务视图：自带左侧任务列表 ========== -->
     <div v-if="props.view !== 'chat'" v-show="props.view === 'all' ? rightTab === 'tasks' : true" class="wb-view">
       <div class="workbench-sidebar wb-sidebar-tasks">
-        <div class="sidebar-header">
-          <h3 class="sidebar-title">任务列表</h3>
-          <button class="sidebar-action-btn" @click="openAddProject" title="添加代码库">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="4" x2="8" y2="12"/><line x1="4" y1="8" x2="12" y2="8"/></svg>
-          </button>
-        </div>
-
         <div class="sidebar-action-row">
           <button class="new-item-btn" @click="quickNewTask" :disabled="!projects.length">
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
@@ -659,16 +646,70 @@ const currentProject = computed(() => {
   return projects.value.find(p => p.id === currentSession.value.project_id) || null;
 });
 
-function onProjectChangeForChat() {
+async function onProjectChangeForChat() {
   // 已有对话时不允许切换项目（双重保护，前端select已经disabled）
   if (currentSessionId.value) return;
+
+  const val = selectedProjectIdForChat.value;
+
+  // 新建项目流程
+  if (val === '__new__') {
+    try {
+      const dir = await API.dialog.openDirectory();
+      if (!dir) {
+        // 用户取消 → 重置选择
+        selectedProjectIdForChat.value = selectedProject.value?.id ?? '';
+        return;
+      }
+      // 从文件夹名自动提取项目名
+      const folderName = dir.split(/[/\\]/).pop() || dir;
+      const projectName = folderName || '新项目';
+      // 立即创建项目
+      const newProj = await API.project.add(projectName, 'code', dir, '', '');
+      // 重新加载项目列表
+      await loadProjects();
+      // 选中新项目
+      selectedProjectIdForChat.value = newProj.id;
+      selectedProject.value = newProj;
+      expandedProjects.add(newProj.id);
+      saveCodingState();
+    } catch (e: any) {
+      selectedProjectIdForChat.value = selectedProject.value?.id ?? '';
+      alert('创建项目失败: ' + (e.message || ''));
+    }
+    return;
+  }
+
   // 草稿态：只切换选择的项目，不创建session
   // 发送第一条消息时才会创建session并绑定项目
-  if (selectedProjectIdForChat.value != null) {
-    const p = projects.value.find(x => x.id === selectedProjectIdForChat.value);
+  if (val != null && val !== '') {
+    const p = projects.value.find(x => x.id === val);
     selectedProject.value = p || null;
     if (p && !expandedProjects.has(p.id)) expandedProjects.add(p.id);
     saveCodingState();
+  }
+}
+
+async function createProjectFromSidebar() {
+  try {
+    const dir = await API.dialog.openDirectory();
+    if (!dir) return;
+    const folderName = dir.split(/[/\\]/).pop() || dir;
+    const projectName = folderName || '新项目';
+    const newProj = await API.project.add(projectName, 'code', dir, '', '');
+    await loadProjects();
+    selectedProjectIdForChat.value = newProj.id;
+    selectedProject.value = newProj;
+    expandedProjects.add(newProj.id);
+    saveCodingState();
+    // 同时打开草稿对话
+    currentSessionId.value = '';
+    currentSession.value = null;
+    messages.value = [];
+    inputText.value = '';
+    nextTick(() => inputRef.value?.focus());
+  } catch (e: any) {
+    alert('创建项目失败: ' + (e.message || ''));
   }
 }
 
@@ -1101,10 +1142,6 @@ async function newSession(projectId: number) {
 }
 
 function quickNewSession() {
-  if (!projects.value.length) {
-    openAddProject();
-    return;
-  }
   // 草稿模式：不立即创建session。
   // 清空当前对话态，展示空对话。
   currentSessionId.value = '';
@@ -1113,12 +1150,17 @@ function quickNewSession() {
   inputText.value = '';
   thinkingText.value = '';
   pendingImages.value = [];
-  // 项目选择器默认第一个项目，但用户可改（草稿态未锁定）
-  selectedProjectIdForChat.value = projects.value[0].id;
-  selectedProject.value = projects.value[0];
-  // 确保第一个项目展开
-  const firstId = projects.value[0].id;
-  if (!expandedProjects.has(firstId)) expandedProjects.add(firstId);
+  if (projects.value.length) {
+    // 有项目时默认选第一个项目，但用户可改（草稿态未锁定）
+    selectedProjectIdForChat.value = projects.value[0].id;
+    selectedProject.value = projects.value[0];
+    const firstId = projects.value[0].id;
+    if (!expandedProjects.has(firstId)) expandedProjects.add(firstId);
+  } else {
+    // 无项目时留空，用户可在下方选择器中点击"+ 新建项目…"创建
+    selectedProjectIdForChat.value = '';
+    selectedProject.value = null;
+  }
   saveCodingState();
   nextTick(() => inputRef.value?.focus());
 }
@@ -1247,19 +1289,21 @@ async function sendMessage() {
 
   if (!currentSessionId.value) {
     // 草稿模式：尚未创建 session
-    if (projects.value.length === 0) {
-      openAddProject();
+    // 必须先选好项目（绑定项目）
+    let pid = selectedProjectIdForChat.value;
+    if (pid == null || pid === '' || pid === '__new__') {
+      alert('请先在下方选择一个项目（或点击「+ 新建项目…」创建）');
       return;
     }
-    // 必须先选好项目（绑定项目）
-    let pid = selectedProjectIdForChat.value ?? projects.value[0]?.id;
-    if (pid == null) {
+    // 确保是有效数字
+    pid = Number(pid);
+    if (!pid || !projects.value.find(p => p.id === pid)) {
       alert('请先选择一个项目');
       return;
     }
-    // 同步选中项（防止用户把项目选择器选空的边缘情况）
+    // 同步选中项
     selectedProjectIdForChat.value = pid;
-    selectedProject.value = projects.value.find(p => p.id === pid) || projects.value[0];
+    selectedProject.value = projects.value.find(p => p.id === pid)!;
     // 加载该项目会话列表，再创建 session，然后发消息
     await loadSessions(pid);
     await newSession(pid);
@@ -2939,6 +2983,12 @@ onBeforeUnmount(() => {
   background: white;
   color: #374151;
   font-size: 13px;
+}
+
+.project-select option.new-project-option {
+  color: #4f46e5;
+  font-weight: 500;
+  border-top: 1px solid #e5e7eb;
 }
 
 .select-chevron {
