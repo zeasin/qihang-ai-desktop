@@ -1,14 +1,7 @@
 <template>
   <div class="planner-view">
-    <!-- ========== 顶部视图切换 ========== -->
-    <div class="view-tabs">
-      <button class="view-tab" :class="{ active: activeView === 'notes' }" @click="activeView = 'notes'">📚 笔记任务</button>
-      <button class="view-tab" :class="{ active: activeView === 'code-tasks' }" @click="activeView = 'code-tasks'">💻 代码任务</button>
-      <button class="view-tab" :class="{ active: activeView === 'coding' }" @click="activeView = 'coding'">💻 代码库</button>
-    </div>
-
     <!-- ========== 笔记任务视图 ========== -->
-    <div v-show="activeView === 'notes'" class="planner-body">
+    <div class="planner-body">
       <!-- 左：任务列表 -->
       <div class="task-list-pane">
         <div class="list-pane-header">
@@ -187,13 +180,10 @@
             <button class="btn btn-secondary" @click="showTaskModal = false">✕</button>
           </div>
           <div class="modal-body">
-            <div class="form-group">
+            <div class="form-group" v-if="noteProjects.length > 1">
               <label>归属项目 *</label>
               <select class="form-control" v-model="editing.project_id" :disabled="isEditing">
                 <option :value="null" disabled>请选择项目</option>
-                <optgroup label="💻 代码项目">
-                  <option v-for="p in codeProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
-                </optgroup>
                 <optgroup label="📚 笔记库">
                   <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
                 </optgroup>
@@ -294,43 +284,14 @@
         </div>
       </div>
     </div>
-
-    <!-- ========== 代码任务视图 ========== -->
-    <div v-show="activeView === 'code-tasks'" class="planner-body coding-body">
-      <ProjectWorkbenchView ref="codeTasksRef" view="tasks" @go-chat="onGoChat" />
-    </div>
-
-    <!-- ========== 编程AI视图 ========== -->
-    <div v-show="activeView === 'coding'" class="planner-body coding-body">
-      <ProjectWorkbenchView ref="codingAiRef" view="chat" />
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, defineAsyncComponent, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
 
-const ProjectWorkbenchView = defineAsyncComponent(() => import('@/views/ProjectWorkbenchView.vue'));
-
-const codingAiRef = ref<any>(null);
-
-function onGoChat(task: any) {
-  activeView.value = 'coding';
-  const tryOpen = () => {
-    if (codingAiRef.value?.openTaskSession) {
-      codingAiRef.value.openTaskSession(task);
-    } else {
-      setTimeout(tryOpen, 100);
-    }
-  };
-  tryOpen();
-}
-
 const API = window.electronAPI;
-
-// ========== 顶部视图切换 ==========
-const activeView = ref<'notes' | 'code-tasks' | 'coding'>('notes');
 
 interface AiTask {
   id: number; title: string; prompt: string; description: string; priority: string;
@@ -348,7 +309,6 @@ interface Project { id: number; name: string; type: string; dir: string; }
 const tasks = ref<AiTask[]>([]);
 const projects = ref<Project[]>([]);
 
-const codeProjects = computed(() => projects.value.filter(p => p.type === 'code'));
 const noteProjects = computed(() => projects.value.filter(p => p.type === 'note'));
 
 // ========== 左栏：任务列表 ==========
@@ -662,54 +622,11 @@ onBeforeUnmount(() => {
 <style scoped>
 .planner-view { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
-/* ========== 顶部视图切换 ========== */
-.view-tabs {
-  display: flex;
-  border-bottom: 1px solid #e8ecf1;
-  background: white;
-  flex-shrink: 0;
-  padding: 0 16px;
-  gap: 4px;
-}
-
-.view-tab {
-  padding: 10px 20px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border: none;
-  background: none;
-  border-bottom: 2px solid transparent;
-  transition: all 0.15s;
-  border-radius: 0;
-}
-
-.view-tab:hover {
-  color: var(--text-primary);
-  background: var(--hover);
-}
-
-.view-tab.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
-}
-
 .planner-body {
   flex: 1;
   min-height: 0;
   display: flex;
   overflow: hidden;
-}
-
-.coding-body {
-  background: white;
-}
-
-.coding-body :deep(.coding-workbench) {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
 }
 
 /* ========== 左：任务列表 ========== */
