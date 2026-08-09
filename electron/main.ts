@@ -1482,7 +1482,27 @@ ipcMain.handle('archive:moduleOverview', async (_, { moduleId }) => {
   return { ok: true, module: mod, datasets, analysis };
 });
 
+/** 递归统计笔记库目录中的 Markdown 文件数（忽略常见非内容目录） */
+function countMarkdownFiles(dir: string): number {
+  const IGNORED_DIRS = new Set(['node_modules', '.git', '.svn', '.hg', '__pycache__', '.cache']);
+  let count = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+      count += countMarkdownFiles(path.join(dir, entry.name));
+    } else if (entry.name.endsWith('.md')) {
+      count++;
+    }
+  }
+  return count;
+}
+
 ipcMain.handle('insights:stats', () => {
+  const notesDir = appConfig.getNotesDir();
+  let notesFileCount = 0;
+  if (notesDir && fs.existsSync(notesDir)) {
+    try { notesFileCount = countMarkdownFiles(notesDir); } catch {}
+  }
   const fileCount = (db.qOne("SELECT COUNT(*) as c FROM kb_documents") || {}).c || 0;
   const chunkCount = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0;
   const totalChats = (db.qOne("SELECT COUNT(*) as c FROM prj_messages") || {}).c || 0;
@@ -1493,7 +1513,7 @@ ipcMain.handle('insights:stats', () => {
   const todoOverdue = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE scheduled_start != '' AND scheduled_start < datetime('now', '+8 hours') AND status IN ('pending','in_progress')") || {}).c || 0;
   const remindersActive = (db.qOne("SELECT COUNT(*) as c FROM plan_reminders WHERE enabled = 1") || {}).c || 0;
   const todayDataRecords = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE created_at >= datetime('now', '+8 hours', 'start of day')") || {}).c || 0;
-  return { fileCount, chunkCount, totalChats, todayModified, projectCount, codeProjectCount, todoPending, todoOverdue, remindersActive, todayDataRecords };
+  return { fileCount, notesFileCount, chunkCount, totalChats, todayModified, projectCount, codeProjectCount, todoPending, todoOverdue, remindersActive, todayDataRecords };
 });
 ipcMain.handle('insights:reports', () => {
   return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'daily_report' ORDER BY created_at DESC LIMIT 10");

@@ -1,6 +1,11 @@
 <template>
   <div class="overview-view">
     <div class="stats-grid">
+      <div class="stat-card kb-card" @click="openNotes" title="浏览知识库">
+        <div class="stat-icon" style="background:rgba(16,185,129,0.1);color:#10b981;">📚</div>
+        <div class="stat-num">{{ stats.notesFileCount }}</div>
+        <div class="stat-label">笔记库<span class="kb-settings" @click.stop="openConfig" title="设置笔记库目录">⚙</span></div>
+      </div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(59,130,246,0.1);color:#3b82f6;">📂</div><div class="stat-num">{{ stats.codeProjectCount }}</div><div class="stat-label">项目</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
@@ -84,11 +89,16 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 
 const API = window.electronAPI;
+const router = useRouter();
+
+const openNotes = () => router.push('/notes');
+const openConfig = () => router.push('/config');
 
 const stats = ref({
-  fileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, codeProjectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
+  fileCount: 0, notesFileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, codeProjectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
 });
 
 const reports = ref<any[]>([]);
@@ -260,6 +270,24 @@ onUnmounted(() => {
   align-items: center;
   text-align: center;
   gap: 2px;
+}
+.kb-card {
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.kb-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.kb-settings {
+  margin-left: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.kb-settings:hover {
+  opacity: 1;
 }
 .stat-icon {
   width: 28px;

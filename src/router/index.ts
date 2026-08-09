@@ -12,7 +12,8 @@ const routes = [
   },
   {
     path: '/notes',
-    redirect: '/chat'
+    name: 'Notes',
+    component: () => import('@/views/NotesView.vue')
   },
   {
     path: '/data',
