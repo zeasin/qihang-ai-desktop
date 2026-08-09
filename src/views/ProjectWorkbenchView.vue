@@ -178,32 +178,52 @@
       <div class="workbench-sidebar wb-sidebar-tasks">
         <div class="sidebar-header">
           <h3 class="sidebar-title">任务列表</h3>
-          <button class="btn btn-sm btn-primary" :disabled="taskTabProjectId === null" @click="openTaskModal(taskTabProjectId || 0)">+ 新建任务</button>
+          <button class="btn btn-primary btn-xs" @click="openAddProject">+ 代码库</button>
         </div>
-        <div class="tasks-list-filter">
-          <select class="filter-select" v-model="taskTabProjectId">
-            <option v-for="p in projects" :key="p.id" :value="p.id">📁 {{ p.name }}</option>
-          </select>
-        </div>
-        <div class="tasks-list-scroll">
-          <div v-if="taskTabTasks.length === 0" class="tasks-list-empty">
-            <div class="empty-icon">🗂️</div>
-            <div class="empty-text">暂无任务，点击「+ 新建任务」创建</div>
+        <div class="tasks-tree-list">
+          <div v-if="projects.length === 0" class="tasks-list-empty">
+            <div class="empty-icon">📁</div>
+            <div class="empty-text">暂无代码库，点击「+ 代码库」创建</div>
           </div>
           <div
-            v-for="t in taskTabTasks"
-            :key="t.id"
-            class="tasks-list-item"
-            :class="{ active: taskSelectedId === t.id }"
-            @click="selectWorkbenchTask(t)"
+            v-for="project in projects"
+            :key="project.id"
+            class="project-node"
           >
-            <div class="list-item-head">
-              <span class="list-item-title">{{ t.title }}</span>
-              <span class="task-status-badge" :class="'status-' + t.status">{{ taskStatusText(t.status) }}</span>
+            <div
+              class="project-header"
+              :class="{ expanded: taskExpandedProjects.has(project.id), active: projectHasSelectedTask(project.id) }"
+              @click="toggleTaskProject(project.id)"
+            >
+              <span class="project-arrow">{{ taskExpandedProjects.has(project.id) ? '▼' : '▶' }}</span>
+              <span class="project-icon">📁</span>
+              <span class="project-name">{{ project.name }}</span>
+              <span v-if="projectTaskList(project.id).length" class="project-count">{{ projectTaskList(project.id).length }}</span>
+              <span class="project-actions">
+                <span class="project-edit-btn" @click.stop="openEditProject(project)" title="编辑代码库">✏️</span>
+                <span class="project-delete-btn" @click.stop="deleteProject(project)" title="删除代码库">🗑️</span>
+              </span>
             </div>
-            <div class="list-item-meta">{{ taskTriggerText(t) }}</div>
-            <div v-if="t.last_run_at" class="list-item-meta list-item-last">
-              最近执行：{{ t.last_run_at }}（{{ t.last_status === 'SUCCESS' ? '成功' : t.last_status === 'FAILED' ? '失败' : t.last_status || '未执行' }}）
+
+            <div v-if="taskExpandedProjects.has(project.id)" class="task-project-body">
+              <div v-if="projectTaskList(project.id).length === 0" class="tasks-proj-empty">暂无任务</div>
+              <div
+                v-for="t in projectTaskList(project.id)"
+                :key="t.id"
+                class="tasks-list-item"
+                :class="{ active: taskSelectedId === t.id, running: t.status === 'in_progress' }"
+                @click="selectWorkbenchTask(t)"
+              >
+                <div class="list-item-head">
+                  <span class="list-item-title">{{ t.title }}</span>
+                  <span class="task-status-badge" :class="'status-' + t.status">{{ taskStatusText(t.status) }}</span>
+                  <span v-if="t.status === 'in_progress'" class="running-dot"></span>
+                </div>
+                <div class="list-item-meta">{{ taskTriggerText(t) }}</div>
+                <div v-if="t.last_run_at" class="list-item-meta list-item-last">
+                  最近执行：{{ t.last_run_at }}（{{ t.last_status === 'SUCCESS' ? '成功' : t.last_status === 'FAILED' ? '失败' : t.last_status || '未执行' }}）
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -492,7 +512,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, nextTick, onBeforeUnmount } from 'vue';
+import { ref, reactive, computed, onMounted, nextTick, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
 
 const API = window.electronAPI;
@@ -568,9 +588,12 @@ async function loadTasks() {
   try {
     const list = await API.task.list();
     const codeIds = new Set(projects.value.map(p => p.id));
-    codeTasks.value = (list || []).filter(t => codeIds.has(Number(t.project_id)));
+    codeTasks.value = (list || []).filter(t => codeIds.has(Number(t.project_id)) && t.source === 'feishu');
     if (codeTasks.value.length) {
-      for (const t of codeTasks.value) expandedProjects.add(Number(t.project_id));
+      for (const t of codeTasks.value) {
+        expandedProjects.add(Number(t.project_id));
+        taskExpandedProjects.add(Number(t.project_id));
+      }
     }
   } catch { codeTasks.value = []; }
 }
@@ -601,20 +624,29 @@ function sessionsWithoutTask(projectId: number) {
 // ========== 右侧任务 Tab ==========
 const rightTab = ref<'chat' | 'tasks'>('chat');
 
-const taskTabProjectId = ref<number | null>(null);
 const taskSelectedId = ref<number | null>(null);
 const taskMessages = ref<any[]>([]);
 const taskExecutions = ref<any[]>([]);
-
-const taskTabTasks = computed(() => {
-  if (taskTabProjectId.value === null) return [];
-  return projectTaskList(taskTabProjectId.value);
-});
+const taskExpandedProjects = reactive(new Set<number>());
 
 const taskSelected = computed(() => {
   if (taskSelectedId.value === null) return null;
   return codeTasks.value.find(t => t.id === taskSelectedId.value) || null;
 });
+
+function toggleTaskProject(projectId: number) {
+  if (taskExpandedProjects.has(projectId)) {
+    taskExpandedProjects.delete(projectId);
+  } else {
+    taskExpandedProjects.add(projectId);
+  }
+}
+
+function projectHasSelectedTask(projectId: number): boolean {
+  if (taskSelectedId.value === null) return false;
+  const t = codeTasks.value.find(x => x.id === taskSelectedId.value);
+  return !!t && Number(t.project_id) === Number(projectId);
+}
 
 function selectWorkbenchTask(t: any) {
   taskSelectedId.value = t.id;
@@ -637,7 +669,7 @@ async function loadTaskDetail() {
 }
 
 function ensureTaskSelected() {
-  const list = taskTabTasks.value;
+  const list = codeTasks.value;
   if (list.length === 0) {
     taskSelectedId.value = null;
     taskMessages.value = [];
@@ -649,8 +681,6 @@ function ensureTaskSelected() {
   }
   loadTaskDetail();
 }
-
-watch(taskTabProjectId, () => { ensureTaskSelected(); });
 
 async function gotoTaskSession(task: any) {
   let session = matchedSessionForTask(task);
@@ -1399,10 +1429,6 @@ onMounted(async () => {
   await loadProjects();
   await loadPiModels();
   await loadTasks();
-  if (taskTabProjectId.value === null) {
-    const withTasks = codeTasks.value[0]?.project_id;
-    taskTabProjectId.value = withTasks ?? projects.value[0]?.id ?? null;
-  }
   ensureTaskSelected();
   if (projects.value.length > 0) {
     const firstProject = projects.value[0];
@@ -1727,28 +1753,36 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.tasks-list-filter {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.filter-select {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  outline: none;
-  background: white;
-  cursor: pointer;
-  color: var(--text-secondary);
-}
-
-.tasks-list-scroll {
+.tasks-tree-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 4px 8px 8px;
+}
+
+.task-project-body {
+  padding: 2px 0 6px;
+}
+
+.tasks-proj-empty {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.project-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tasks-list-empty {
@@ -1765,16 +1799,17 @@ onBeforeUnmount(() => {
 }
 
 .tasks-list-item {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  margin-bottom: 2px;
+  margin: 0 2px 2px;
   transition: background 0.15s;
   border: 1px solid transparent;
 }
 
 .tasks-list-item:hover { background: rgba(99, 102, 241, 0.05); }
 .tasks-list-item.active { background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.25); }
+.tasks-list-item.running { border-color: var(--primary); }
 
 .list-item-head {
   display: flex;
