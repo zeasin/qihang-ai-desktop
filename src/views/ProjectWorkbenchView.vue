@@ -23,7 +23,9 @@
               class="project-header"
               :class="{ expanded: expandedProjects.has(project.id) }"
             >
-              <span class="project-arrow" @click="toggleProject(project.id)">{{ expandedProjects.has(project.id) ? '▼' : '▶' }}</span>
+              <span class="project-arrow" @click="toggleProject(project.id)">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 10 8 6 12"/></svg>
+              </span>
               <span class="project-icon" @click="selectProject(project)">📁</span>
               <span class="project-name" @click="selectProject(project)">{{ project.name }}</span>
               <span class="project-actions">
@@ -195,7 +197,9 @@
               :class="{ expanded: taskExpandedProjects.has(project.id), active: projectHasSelectedTask(project.id) }"
               @click="toggleTaskProject(project.id)"
             >
-              <span class="project-arrow">{{ taskExpandedProjects.has(project.id) ? '▼' : '▶' }}</span>
+              <span class="project-arrow">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 10 8 6 12"/></svg>
+              </span>
               <span class="project-icon">📁</span>
               <span class="project-name">{{ project.name }}</span>
               <span v-if="projectTaskList(project.id).length" class="project-count">{{ projectTaskList(project.id).length }}</span>
@@ -1520,14 +1524,14 @@ onBeforeUnmount(() => {
 }
 
 .project-node {
-  margin-bottom: 2px;
+  margin-bottom: 6px;
 }
 
 .project-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 9px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s;
@@ -1536,13 +1540,38 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
 }
 
-.project-header:hover {
-  background: rgba(99,102,241,0.06);
+.project-header:hover,
+.project-header.expanded {
+  background: var(--hover);
 }
+
 .project-header.active {
-  background: rgba(99,102,241,0.12);
+  background: rgba(99,102,241,0.1);
   color: var(--primary);
   font-weight: 500;
+}
+
+.project-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+
+.project-arrow svg {
+  transition: transform 0.2s ease;
+}
+
+.project-header.expanded .project-arrow svg {
+  transform: rotate(90deg);
+}
+
+.project-header:hover .project-arrow {
+  color: var(--text-secondary);
 }
 
 .project-icon {
@@ -1756,11 +1785,13 @@ onBeforeUnmount(() => {
 .tasks-tree-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 8px;
+  padding: 8px;
 }
 
 .task-project-body {
-  padding: 2px 0 6px;
+  margin: 2px 0 4px 14px;
+  padding: 2px 0 2px 12px;
+  border-left: 1px solid var(--border);
 }
 
 .tasks-proj-empty {
@@ -1772,17 +1803,24 @@ onBeforeUnmount(() => {
 
 .project-count {
   flex-shrink: 0;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--primary);
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--hover);
+  color: var(--text-secondary);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.15s;
+}
+
+.project-header:hover .project-count,
+.project-header.active .project-count {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--primary);
 }
 
 .tasks-list-empty {
@@ -1799,16 +1837,19 @@ onBeforeUnmount(() => {
 }
 
 .tasks-list-item {
-  padding: 8px 10px;
+  padding: 9px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  margin: 0 2px 2px;
-  transition: background 0.15s;
-  border: 1px solid transparent;
+  margin-bottom: 6px;
+  transition: all 0.15s;
+  border: 1px solid var(--border);
+  background: white;
+  box-shadow: var(--shadow-sm);
 }
 
-.tasks-list-item:hover { background: rgba(99, 102, 241, 0.05); }
-.tasks-list-item.active { background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.25); }
+.tasks-list-item:last-child { margin-bottom: 0; }
+.tasks-list-item:hover { border-color: rgba(99, 102, 241, 0.35); box-shadow: var(--shadow-md); }
+.tasks-list-item.active { background: rgba(99, 102, 241, 0.06); border-color: var(--primary); }
 .tasks-list-item.running { border-color: var(--primary); }
 
 .list-item-head {
