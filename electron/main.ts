@@ -960,6 +960,26 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
 
     db.chat.addMessage(sid, 'user', question, activeAgent, images);
 
+    // ===== 笔记库前置检查 =====
+    // 查询事务/笔记/记录等本地知识类问题，若未配置笔记库则先引导用户配置，不再调用 AI
+    if (isKBQuery(question) && !appConfig.getNotesDir()) {
+      sendToRenderer('chat:status', { sessionId: sid, text: '需要笔记库支持...' });
+      const guide = [
+        '🤖 我需要先「📚 笔记库」来查询这类本地知识/事务类内容。',
+        '',
+        '当前尚未配置笔记库，请先完成以下设置：',
+        '',
+        '1️⃣ 点击左侧「⚙️ 设置」进入设置页',
+        '2️⃣ 在「📚 笔记库设置」中选择你的笔记目录并保存',
+        '',
+        '配置完成后，再问我一次相同的问题就能正常查询啦。',
+      ].join('\n');
+      sendToRenderer('chat:delta', { sessionId: sid, text: guide });
+      sendToRenderer('chat:done', { sessionId: sid });
+      db.chat.addMessage(sid, 'assistant', guide, activeAgent);
+      return;
+    }
+
     // ===== pi agent 引擎（与工作台一致） =====
     sendToRenderer('chat:status', { sessionId: sid, text: 'AI 正在分析问题...' });
 
@@ -1138,6 +1158,17 @@ ipcMain.handle('coding:changes:discard', async (_, { sessionId, projectId }) => 
 });
 ipcMain.handle('coding:projects', () => listCodingProjects(db));
 ipcMain.handle('coding:sessions', (_, { limit } = {}) => latestCodingSessions(db, limit));
+
+// 判断是否为「查询本地知识」类问题（如事务/笔记/待办/记录/知识检索）。
+// 这类问题依赖笔记库，若未配置笔记库则先引导用户去设置。
+function isKBQuery(text) {
+  const t = String(text || '');
+  if (t.length < 3) return false;
+  // 含查询动作 且 主题与本地知识/事务相关
+  const action = /(查|查询|查一下|查看|找|找找|看看|搜索|搜|回顾|找一下|查看|了解|翻翻|搜一搜|查一下)/;
+  const subject = /(事务|笔记|记录|待办|日程|计划|资料|文档|文件|目录|安排|总结|周报|项目|会议|事项|知识|数据记录)/;
+  return action.test(t) && subject.test(t);
+}
 
 // 模型映射：pi 原生 pattern 直传，其余用 pi 默认模型
 function piModelPattern(modelName) {
