@@ -176,6 +176,28 @@ export interface PiModelInfo {
 }
 
 /**
+ * 把 pi SDK 的原始错误信息转换为对用户友好的中文提示。
+ * 主要是把「未配置 API Key / 认证失败 / 无可用模型」等机器可读报错
+ * 转成「请设置模型」这类可操作提示，其余错误保留原信息。
+ */
+function friendlyPiError(message: string | undefined): string {
+  const m = (message || '').toString();
+  if (/No API key found/i.test(m)) {
+    return '请先设置模型：当前模型未配置 API Key，请在「设置 → 对话模型配置」中填写服务地址与 API Key 后重试';
+  }
+  if (/No model selected/i.test(m)) {
+    return '请先设置模型：请在「设置 → 对话模型配置」中选择一个可用模型后重试';
+  }
+  if (/No models available/i.test(m)) {
+    return '请先设置模型：当前没有可用的模型，请在「设置 → 对话模型配置」中配置后重试';
+  }
+  if (/Authentication failed/i.test(m)) {
+    return '模型认证失败：凭据可能已过期或网络不可用，请检查「设置 → 对话模型配置」中的配置后重试';
+  }
+  return m || '未知错误';
+}
+
+/**
  * 列出 pi agent 可用的模型（来自 ~/.pi/agent 的 ModelRegistry）。
  * 优先返回已配置认证的模型（getAvailable），一个都没有时兜底列出全部内置模型。
  */
@@ -277,7 +299,7 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
   try {
     handle = await getSession({ sessionId, cwd, modelPattern, customTools });
   } catch (e: any) {
-    onError(`pi 会话初始化失败: ${e.message}`);
+    onError(`会话初始化失败：${friendlyPiError(e.message)}`);
     return;
   }
   const { session } = handle;
@@ -352,7 +374,7 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
       (err: Error) => {
         if (settled) return; // 超时/中止已处理
         logger.error('[PiAgent] prompt error: %s', err.message);
-        onError(`pi 调用出错: ${err.message}`);
+        onError(friendlyPiError(err.message));
       },
     );
     await handle.tail;
@@ -362,7 +384,7 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
       const msgs = session.agent?.state?.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === 'assistant' && last.stopReason === 'error') {
-        onError(last.errorMessage || 'pi 处理出错');
+        onError(last.errorMessage ? friendlyPiError(last.errorMessage) : 'pi 处理出错');
       } else if (!finalText && last && last.role === 'assistant') {
         const textParts = (last.content || [])
           .filter((c: any) => c.type === 'text')
@@ -376,7 +398,7 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
   } catch (e: any) {
     if (!settled) {
       settle();
-      onError(`pi 调用出错: ${e.message}`);
+      onError(friendlyPiError(e.message));
     }
   } finally {
     if (hardTimeout) clearTimeout(hardTimeout);
