@@ -53,9 +53,9 @@ onMounted(async () => {
 
 .main-content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  min-width: 1500px;
 }
 </style>
