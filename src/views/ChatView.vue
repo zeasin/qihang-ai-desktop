@@ -247,7 +247,13 @@ async function loadPiModels() {
     const res = await API.pi.models();
     piModels.value = (res?.models || []).filter((m) => m.pattern);
     const saved = localStorage.getItem(CHAT_MODEL_KEY);
-    if (saved && piModels.value.some((m) => m.pattern === saved)) selectedModel.value = saved;
+    if (saved && piModels.value.some((m) => m.pattern === saved)) {
+      selectedModel.value = saved;
+    } else if (!selectedModel.value && piModels.value.some((m) => m.configured)) {
+      // 已配置模型但没有历史选择时，默认选中第一个，降低使用门槛
+      const first = piModels.value.find((m) => m.configured);
+      if (first) selectedModel.value = first.pattern;
+    }
   } catch { piModels.value = []; }
   modelsLoaded.value = true;
 }

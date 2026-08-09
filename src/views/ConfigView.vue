@@ -26,11 +26,11 @@
       <!-- 对话模型配置 -->
       <div class="card">
         <h2>💬 对话模型配置</h2>
-        <div class="text-muted mb-2">配置 AI 对话使用的接入点（OpenAI 兼容接口，如 DeepSeek、Ollama、LM Studio 等）。支持配置多个接入，每个接入可包含多个模型。配置完成后所有 AI 对话、日报生成即可直接使用，无需安装终端工具。</div>
+        <div class="text-muted mb-2">配置 AI 对话使用的模型接入点。选择「默认（DeepSeek）」只需填入 API Key 即可快速开始；选择「自定义」可配置任意 OpenAI 兼容接口（如 DeepSeek、Ollama、LM Studio 等）。配置完成后所有 AI 对话、日报生成即可直接使用，无需安装终端工具。</div>
 
         <div v-if="!llmProviders.length" class="llm-empty">
           <div class="llm-empty-icon">🤖</div>
-          <div class="text-muted" style="font-size:13px;">尚未配置任何 AI 接入点，点击下方按钮添加</div>
+          <div class="text-muted" style="font-size:13px;">尚未配置任何 AI 接入点，使用下方「⚡ 快速配置」选择供应商并填入 API Key</div>
         </div>
 
         <div v-else class="llm-provider-table">
@@ -65,12 +65,41 @@
 
         <div v-if="llmStatus" class="text-muted" :style="{ color: llmStatus.startsWith('✅') ? '#22c55e' : llmStatus.startsWith('⏳') ? '#f59e0b' : '#ef4444' }" style="margin-top:8px;display:block;">{{ llmStatus }}</div>
 
-        <div class="text-muted" style="font-size:12px;margin-top:10px;">⚡ 快速添加常用 Provider（点击后可继续编辑 API Key）</div>
-        <div class="flex" style="gap:6px;flex-wrap:wrap;margin-top:4px;">
-          <button class="btn btn-sm btn-outline" @click="quickAddProvider('deepseek')">🔷 DeepSeek (Responses API)</button>
-          <button class="btn btn-sm btn-outline" @click="quickAddProvider('siliconflow')">🟣 硅基流动 SiliconFlow</button>
-          <button class="btn btn-sm btn-outline" @click="quickAddProvider('ollama')">🐳 Ollama 本地</button>
-          <button class="btn btn-sm btn-outline" @click="quickAddProvider('sensenova')">🟦 SensNova (端侧)</button>
+        <div class="text-muted" style="font-size:12px;margin-top:12px;">⚡ 快速配置：选择供应商，填写对应字段后点击「添加并生效」</div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:4px;">
+          <div class="form-group" style="flex:0 0 210px;">
+            <label style="font-size:12px;">供应商</label>
+            <select v-model="quickKey" class="form-control" @change="onQuickKeyChange">
+              <option v-for="(opt, k) in QUICK_OPTIONS" :key="k" :value="k">{{ opt.label }}</option>
+            </select>
+          </div>
+          <template v-if="quickKey === 'custom'">
+            <div class="form-group" style="flex:1;min-width:130px;">
+              <label style="font-size:12px;">接入名称</label>
+              <input v-model="quickName" type="text" class="form-control" placeholder="如 my-llm">
+            </div>
+            <div class="form-group" style="flex:1;min-width:220px;">
+              <label style="font-size:12px;">服务地址（API Base URL）</label>
+              <input v-model="quickBaseUrl" type="text" class="form-control" placeholder="https://api.example.com/v1">
+            </div>
+            <div class="form-group" style="flex:1;min-width:180px;">
+              <label style="font-size:12px;">模型 ID（逗号分隔）</label>
+              <input v-model="quickModels" type="text" class="form-control" placeholder="deepseek-chat, deepseek-reasoner">
+            </div>
+            <div class="form-group" style="flex:0 0 170px;">
+              <label style="font-size:12px;">API 类型</label>
+              <select v-model="quickApi" class="form-control">
+                <option value="openai-completions">Chat Completions</option>
+                <option value="openai-responses">Responses API</option>
+                <option value="ollama">Ollama</option>
+              </select>
+            </div>
+          </template>
+          <div class="form-group" :style="quickKey === 'custom' ? 'flex:1;min-width:200px;' : 'flex:1;min-width:280px;'">
+            <label style="font-size:12px;">API Key{{ quickKey === 'ollama' ? '（本地可留空）' : '' }}</label>
+            <input v-model="quickApiKey" type="password" class="form-control" :placeholder="quickApiKeyPlaceholder">
+          </div>
+          <button class="btn btn-primary" @click="applyQuickConfig" :disabled="quickBusy">{{ quickBusy ? '保存中...' : quickKey === 'custom' ? '添加并生效' : '填入并生效' }}</button>
         </div>
 
         <div class="flex" style="gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center;">
@@ -629,27 +658,101 @@ const PROVIDER_PRESETS: Record<ProviderPresetKey, Partial<LlmProviderRow> & { pr
   },
 };
 
-function quickAddProvider(key: ProviderPresetKey) {
+/** 按预设键构建一个完整的 Provider 行（含模型列表），未配置 API Key */
+function buildPresetProvider(key: ProviderPresetKey): LlmProviderRow {
   const preset = PROVIDER_PRESETS[key];
-  if (!preset) return;
-  const existing = llmProviders.value.find((p) => p.name === preset.name);
-  if (existing) {
-    llmStatus.value = `⏭ Provider「${preset.name}」已存在，可点击「编辑」修改`;
-    setTimeout(() => { if (llmStatus.value.startsWith('⏭')) llmStatus.value = ''; }, 3000);
-    return;
-  }
-  const models = [...(preset.presetModels || [])];
-  llmProviders.value.push({
-    name: preset.name || '',
-    baseUrl: preset.baseUrl || '',
-    apiKey: preset.apiKey || '',
-    api: preset.api || 'openai-completions',
+  const models = [...(preset?.presetModels || [])];
+  return {
+    name: preset?.name || '',
+    baseUrl: preset?.baseUrl || '',
+    apiKey: preset?.apiKey || '',
+    api: preset?.api || 'openai-completions',
     models,
     modelNamesText: models.map((m: any) => m.id).join('\n'),
     testing: false,
     status: '',
-  });
-  llmStatus.value = `✅ 已添加「${preset.name}」预设，请填写 API Key 后点击「保存配置」`;
+  };
+}
+
+// ---- 快速配置（供应商下拉） ----
+type QuickProviderKey = ProviderPresetKey | 'custom';
+const QUICK_OPTIONS: Record<QuickProviderKey, { label: string }> = {
+  deepseek: { label: '🔷 DeepSeek' },
+  siliconflow: { label: '🟣 硅基流动 SiliconFlow' },
+  ollama: { label: '🐳 Ollama 本地' },
+  sensenova: { label: '🟦 SensNova' },
+  custom: { label: '⚙️ 自定义' },
+};
+const quickKey = ref<QuickProviderKey>('deepseek');
+const quickApiKey = ref('');
+const quickName = ref('');
+const quickBaseUrl = ref('');
+const quickApi = ref('openai-completions');
+const quickModels = ref('');
+const quickBusy = ref(false);
+
+const quickApiKeyPlaceholder = computed(() => {
+  if (quickKey.value === 'ollama') return '本地 Ollama 可留空';
+  if (quickKey.value === 'deepseek') return 'sk-...（仅需填 API Key，服务地址与模型已内置）';
+  return 'sk-...';
+});
+
+const quickApiKeyRequired = computed(() => quickKey.value !== 'ollama');
+
+function onQuickKeyChange() {
+  // 切到非自定义时，清掉自定义专用字段，避免误带
+  quickName.value = '';
+  quickBaseUrl.value = '';
+  quickModels.value = '';
+  quickApi.value = quickKey.value === 'deepseek' ? 'openai-responses' : 'openai-completions';
+}
+
+async function applyQuickConfig() {
+  quickBusy.value = true;
+  try {
+    if (quickKey.value !== 'custom') {
+      const key = quickKey.value;
+      const preset = PROVIDER_PRESETS[key];
+      if (!preset) return;
+      if (quickApiKeyRequired.value && !quickApiKey.value.trim()) {
+        llmStatus.value = key === 'deepseek' ? '❌ 请填写 DeepSeek API Key' : `❌ 请填写「${preset.name}」的 API Key`;
+        return;
+      }
+      let row = llmProviders.value.find((p) => p.name === preset.name);
+      if (!row) {
+        row = buildPresetProvider(key);
+        llmProviders.value.push(row);
+      }
+      if (!row.models || !row.models.length) row.models = [...(preset.presetModels || [])];
+      if (quickApiKey.value.trim()) row.apiKey = quickApiKey.value.trim();
+      llmStatus.value = `✅ 已填写「${preset.name}」配置，正在保存生效`;
+    } else {
+      if (!quickName.value.trim()) { llmStatus.value = '❌ 请填写接入名称'; return; }
+      if (!quickBaseUrl.value.trim()) { llmStatus.value = '❌ 请填写服务地址'; return; }
+      const modelIds = quickModels.value.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
+      if (!modelIds.length) { llmStatus.value = '❌ 请至少填写一个模型 ID'; return; }
+      llmProviders.value.push({
+        name: quickName.value.trim(),
+        baseUrl: quickBaseUrl.value.trim(),
+        apiKey: quickApiKey.value.trim(),
+        api: quickApi.value,
+        models: modelIds.map((id) => ({ id, input: ['text'] })),
+        modelNamesText: modelIds.join('\n'),
+        testing: false,
+        status: '',
+      });
+      llmStatus.value = '✅ 已添加自定义 Provider，正在保存...';
+    }
+    await saveLlmConfig();
+    quickApiKey.value = '';
+    quickName.value = '';
+    quickBaseUrl.value = '';
+    quickModels.value = '';
+  } catch (e: any) {
+    llmStatus.value = '❌ ' + (e.message || '保存失败');
+  } finally {
+    quickBusy.value = false;
+  }
 }
 
 // Backup
