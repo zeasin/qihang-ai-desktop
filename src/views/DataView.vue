@@ -505,7 +505,7 @@ interface ModuleData {
 }
 
 interface DatasetData {
-  datasetId: string;
+  datasetId: string | number;
   name: string;
   description: string;
   schema: any;
@@ -673,7 +673,7 @@ async function deleteModule(mod: ModuleData) {
 // ========== 数据集管理 ==========
 
 const showDsModal = ref(false);
-const editingDsId = ref('');
+const editingDsId = ref<string | number>('');
 const dsForm = ref({ name: '', moduleId: '', description: '', fields: [] as FieldDef[], typeOptions: '', statusOptions: '' });
 
 function showAddDataset() {

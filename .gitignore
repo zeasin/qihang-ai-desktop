@@ -24,3 +24,4 @@ src/main/resources/application-dev.yml
 日报_*.md
 analysis
 .aider*
+.DS_Store

@@ -83,7 +83,7 @@
             <label class="form-label">存到数据集（可选）</label>
             <select v-model="form.datasetId" class="form-input">
               <option value="">不存储，仅预览</option>
-              <option v-for="d in datasets" :key="d.dataset_id" :value="d.dataset_id">{{ d.name }}</option>
+              <option v-for="d in datasets" :key="d.id" :value="d.id">{{ d.name }}</option>
             </select>
           </div>
 

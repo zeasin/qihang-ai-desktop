@@ -430,10 +430,10 @@ async function queryDocumentsTool({ date_from, date_to, limit }) {
 }
 
 async function queryDataRecordsTool({ dataset_name, date_from, date_to, limit }) {
-  let sql = "SELECT r.*, d.name as dataset_name FROM data_center_records r LEFT JOIN data_center_datasets d ON r.dataset_id = d.dataset_id WHERE 1=1";
+  let sql = "SELECT r.*, d.name as dataset_name FROM data_center_records r LEFT JOIN data_center_datasets d ON r.dataset_id = d.id WHERE 1=1";
   const p: any[] = [];
   if (dataset_name) {
-    sql += ' AND (d.name LIKE ? OR r.dataset_id IN (SELECT dataset_id FROM data_center_datasets WHERE name LIKE ?))';
+    sql += ' AND (d.name LIKE ? OR r.dataset_id IN (SELECT id FROM data_center_datasets WHERE name LIKE ?))';
     p.push('%' + dataset_name + '%', '%' + dataset_name + '%');
   }
   if (date_from) { sql += ' AND r.created_at >= ?'; p.push(date_from); }
