@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { execSync } from 'child_process';
 import * as db from './database';
+import { normalizeDatasetRecord } from './dataset-normalize';
 import logger from './logger';
 
 // typebox 是 ESM-only 包，而本文件编译为 CJS，用 Function 构造器保留运行时真正的动态 import()
@@ -235,18 +236,18 @@ async function insertDatasetRecordTool({ datasetName, data }) {
   }
   const obj = parseJsonArg(data, 'data');
   if (obj.error) return obj.error;
-  db.ds.insert(ds.id, obj);
+  db.ds.insert(ds.id, normalizeDatasetRecord(ds.id, obj));
   const r = db.qOne("SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1", ds.id);
   logger.info('[Tools] insert_dataset_record: %s → id %s', datasetName, r ? r.id : '?');
   return `已向数据集 "${ds.name}" 插入一条记录 (id: ${r ? r.id : '?'})`;
 }
 
 async function updateDatasetRecordTool({ id, data }) {
-  const exists = db.qOne("SELECT id FROM data_center_records WHERE id = ?", id);
+  const exists = db.qOne("SELECT dataset_id FROM data_center_records WHERE id = ?", id);
   if (!exists) return `记录 id=${id} 不存在。可先用 query_dataset 查询记录 id。`;
   const obj = parseJsonArg(data, 'data');
   if (obj.error) return obj.error;
-  db.ds.updateRecord(id, obj);
+  db.ds.updateRecord(id, normalizeDatasetRecord(exists.dataset_id, obj));
   return `已更新数据集记录 id=${id}`;
 }
 

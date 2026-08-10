@@ -33,6 +33,7 @@ try {
   }
 } catch {} // worker_threads not available
 import * as db from './services/database';
+import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection } from './services/pi-agent';
 import { buildNoteToolDefs, buildDataToolDefs, buildCodingToolDefs } from './services/tools';
@@ -826,12 +827,14 @@ function normalizeRecordBySchema(datasetId: string | number, record: any): any {
 }
 
 ipcMain.handle('ds:insert', (_, { datasetId, data }) => {
-  const record = normalizeRecordBySchema(datasetId, data || {});
+  const record = normalizeRecordBySchema(datasetId, normalizeDatasetRecord(datasetId, data || {}));
   return db.ds.insert(datasetId, record);
 });
 ipcMain.handle('ds:updateRecord', (_, { id, data }) => {
   const dsRow = db.qOne('SELECT dataset_id FROM data_center_records WHERE id = ?', id);
-  const record = dsRow ? normalizeRecordBySchema(dsRow.dataset_id, data || {}) : data;
+  const record = dsRow
+    ? normalizeRecordBySchema(dsRow.dataset_id, normalizeDatasetRecord(dsRow.dataset_id, data || {}))
+    : data;
   return db.ds.updateRecord(id, record);
 });
 ipcMain.handle('ds:deleteRecord', (_, { id }) => db.ds.deleteRecord(id));
