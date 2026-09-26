@@ -571,7 +571,7 @@ function buildReportCard(data) {
       const name = data.name || data.名称 || data.title || data.标题 || '';
       const status = data.status || data.状态 || '';
       if (name) {
-        const ds = db.qOne("SELECT name FROM data_center_datasets WHERE dataset_id = ?", rec.dataset_id);
+        const ds = db.qOne("SELECT name FROM data_center_datasets WHERE id = ?", rec.dataset_id);
         md += `📌 [${ds ? ds.name : '数据集'}] ${name}${status ? '（' + status + '）' : ''}\n`;
       }
     });

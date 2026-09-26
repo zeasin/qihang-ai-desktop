@@ -697,8 +697,10 @@ export function applyBuiltinSuites(ids: string[]): { applied: string[]; skipped:
           'INSERT INTO data_center_datasets (dataset_id, name, description, type, status, schema_json, module_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
           ds.datasetId, ds.name, ds.description, '内置', '', JSON.stringify(ds.schema), mod.moduleId
         );
+        const dsRow = qOne<{ id: number }>('SELECT id FROM data_center_datasets WHERE module_id = ? AND dataset_id = ? ORDER BY id DESC LIMIT 1', mod.moduleId, ds.datasetId);
+        const datasetPk = dsRow ? dsRow.id : null;
         for (const rec of ds.records) {
-          run('INSERT INTO data_center_records (dataset_id, data_json) VALUES (?, ?)', ds.datasetId, JSON.stringify(rec));
+          run('INSERT INTO data_center_records (dataset_id, data_json) VALUES (?, ?)', datasetPk, JSON.stringify(rec));
         }
       }
       applied.push(`${suite.name}/${mod.name}`);

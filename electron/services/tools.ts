@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as db from './database';
+import { normalizeDatasetRecord } from './dataset-normalize';
 import logger from './logger';
 import * as pending from './pending';
 
@@ -249,18 +250,18 @@ async function insertDatasetRecordTool({ datasetName, data }) {
   }
   const obj = parseJsonArg(data, 'data');
   if (obj.error) return obj.error;
-  db.ds.insert(ds.id, obj);
+  db.ds.insert(ds.id, normalizeDatasetRecord(ds.id, obj));
   const r = db.qOne("SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1", ds.id);
   logger.info('[Tools] insert_dataset_record: %s → id %s', datasetName, r ? r.id : '?');
   return `已向数据集 "${ds.name}" 插入一条记录 (id: ${r ? r.id : '?'})`;
 }
 
 async function updateDatasetRecordTool({ id, data }) {
-  const exists = db.qOne("SELECT id FROM data_center_records WHERE id = ?", id);
+  const exists = db.qOne("SELECT dataset_id FROM data_center_records WHERE id = ?", id);
   if (!exists) return `记录 id=${id} 不存在。可先用 query_dataset 查询记录 id。`;
   const obj = parseJsonArg(data, 'data');
   if (obj.error) return obj.error;
-  db.ds.updateRecord(id, obj);
+  db.ds.updateRecord(id, normalizeDatasetRecord(exists.dataset_id, obj));
   return `已更新数据集记录 id=${id}`;
 }
 
@@ -342,10 +343,10 @@ async function queryDocumentsTool({ date_from, date_to, limit }) {
 }
 
 async function queryDataRecordsTool({ dataset_name, date_from, date_to, limit }) {
-  let sql = "SELECT r.*, d.name as dataset_name FROM data_center_records r LEFT JOIN data_center_datasets d ON r.dataset_id = d.dataset_id WHERE 1=1";
+  let sql = "SELECT r.*, d.name as dataset_name FROM data_center_records r LEFT JOIN data_center_datasets d ON r.dataset_id = d.id WHERE 1=1";
   const p: any[] = [];
   if (dataset_name) {
-    sql += ' AND (d.name LIKE ? OR r.dataset_id IN (SELECT dataset_id FROM data_center_datasets WHERE name LIKE ?))';
+    sql += ' AND (d.name LIKE ? OR r.dataset_id IN (SELECT id FROM data_center_datasets WHERE name LIKE ?))';
     p.push('%' + dataset_name + '%', '%' + dataset_name + '%');
   }
   if (date_from) { sql += ' AND r.created_at >= ?'; p.push(date_from); }

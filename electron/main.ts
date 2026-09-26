@@ -33,6 +33,7 @@ try {
   }
 } catch {} // worker_threads not available
 import * as db from './services/database';
+import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings } from './services/pi-agent';
 import { buildNoteToolDefs, buildDataToolDefs } from './services/tools';
@@ -795,9 +796,9 @@ ipcMain.handle('ds:add', (_, params) => db.ds.add(params));
 ipcMain.handle('ds:updateMeta', (_, { id, data }) => db.ds.updateMeta(id, data));
 
 /** 按数据集 schema 的字段类型对记录值做校验与归一化（非法值抛错，由前端提示） */
-function normalizeRecordBySchema(datasetId: string, record: any): any {
+function normalizeRecordBySchema(datasetId: string | number, record: any): any {
   if (!record) return record;
-  const dsRow = db.qOne('SELECT schema_json FROM data_center_datasets WHERE dataset_id = ?', datasetId);
+  const dsRow = db.qOne('SELECT schema_json FROM data_center_datasets WHERE id = ? OR dataset_id = ?', datasetId, datasetId);
   if (!dsRow || !dsRow.schema_json) return record;
   let schema: any = null;
   try { schema = JSON.parse(dsRow.schema_json); } catch { return record; }
@@ -833,12 +834,14 @@ function normalizeRecordBySchema(datasetId: string, record: any): any {
 }
 
 ipcMain.handle('ds:insert', (_, { datasetId, data }) => {
-  const record = normalizeRecordBySchema(datasetId, data || {});
+  const record = normalizeRecordBySchema(datasetId, normalizeDatasetRecord(datasetId, data || {}));
   return db.ds.insert(datasetId, record);
 });
 ipcMain.handle('ds:updateRecord', (_, { id, data }) => {
   const dsRow = db.qOne('SELECT dataset_id FROM data_center_records WHERE id = ?', id);
-  const record = dsRow ? normalizeRecordBySchema(dsRow.dataset_id, data || {}) : data;
+  const record = dsRow
+    ? normalizeRecordBySchema(dsRow.dataset_id, normalizeDatasetRecord(dsRow.dataset_id, data || {}))
+    : data;
   return db.ds.updateRecord(id, record);
 });
 ipcMain.handle('ds:deleteRecord', (_, { id }) => db.ds.deleteRecord(id));
@@ -937,14 +940,14 @@ ipcMain.handle('db:migrate', async () => migrateLocalToCloud());
 
 
 ipcMain.handle('ds:pendingRecords', () => {
-  const datasets = db.q("SELECT dataset_id, name FROM data_center_datasets ORDER BY name");
+  const datasets = db.q("SELECT id, name FROM data_center_datasets ORDER BY name");
   const result: any[] = [];
   for (const ds of datasets) {
-    const records = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? AND (record_status IS NULL OR record_status = '' OR record_status = 'pending') ORDER BY created_at DESC LIMIT 5", ds.dataset_id);
+    const records = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? AND (record_status IS NULL OR record_status = '' OR record_status = 'pending') ORDER BY created_at DESC LIMIT 5", ds.id);
     if (records.length) {
       result.push({
         datasetName: ds.name,
-        datasetId: ds.dataset_id,
+        datasetId: ds.id,
         records: records.map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at })),
       });
     }
@@ -1196,12 +1199,12 @@ ipcMain.handle('reminder:test', (_, id) => scheduler.triggerReminderNow(id));
 ipcMain.handle('archive:report', async (_, { moduleId }) => {
   const mod = db.dm.get(moduleId);
   if (!mod) return { ok: false, error: '模块不存在' };
-  const dsRows = db.q('SELECT dataset_id, name, description FROM data_center_datasets WHERE module_id = ?', moduleId);
+  const dsRows = db.q('SELECT id, name, description FROM data_center_datasets WHERE module_id = ?', moduleId);
   if (!dsRows.length) return { ok: false, error: '该模块下无数据集' };
   let businessData = '';
   let totalRecords = 0;
   for (const dsRow of dsRows) {
-    const rows = db.ds.query(dsRow.dataset_id, null);
+    const rows = db.ds.query(dsRow.id, null);
     totalRecords += rows.length;
     if (rows.length > 0) {
       businessData += `\n\n### 数据集：${dsRow.name}${dsRow.description ? '（' + dsRow.description + '）' : ''}\n\n`;
@@ -1239,7 +1242,7 @@ ipcMain.handle('archive:moduleAnalysis', async (_, { moduleId, force }) => {
     }
   }
 
-  const dsRows = db.q('SELECT dataset_id, name, description, schema_json FROM data_center_datasets WHERE module_id = ?', moduleId);
+  const dsRows = db.q('SELECT id, name, description, schema_json FROM data_center_datasets WHERE module_id = ?', moduleId);
   if (!dsRows.length) return { ok: false, error: '该模块下无数据集' };
 
   let businessData = '';
@@ -1247,8 +1250,8 @@ ipcMain.handle('archive:moduleAnalysis', async (_, { moduleId, force }) => {
   let dsSummary: any[] = [];
 
   for (const dsRow of dsRows) {
-    const rows = db.ds.query(dsRow.dataset_id, null);
-    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", dsRow.dataset_id) || {}).c || 0;
+    const rows = db.ds.query(dsRow.id, null);
+    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", dsRow.id) || {}).c || 0;
     totalRecords += count;
     dsSummary.push({ name: dsRow.name, count, description: dsRow.description });
 
@@ -1339,13 +1342,13 @@ ipcMain.handle('archive:saveAnalysisToNotes', async (_, { moduleId, analysisId }
 ipcMain.handle('archive:moduleOverview', async (_, { moduleId }) => {
   const mod = db.dm.get(moduleId);
   if (!mod) return { ok: false, error: '模块不存在' };
-  const dsRows = db.q('SELECT dataset_id, name, description, schema_json, created_at FROM data_center_datasets WHERE module_id = ? ORDER BY created_at DESC', moduleId);
+  const dsRows = db.q('SELECT id, name, description, schema_json, created_at FROM data_center_datasets WHERE module_id = ? ORDER BY created_at DESC', moduleId);
   const datasets = dsRows.map(dsRow => {
-    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", dsRow.dataset_id) || {}).c || 0;
-    const recentRows = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY created_at DESC LIMIT 5", dsRow.dataset_id);
+    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", dsRow.id) || {}).c || 0;
+    const recentRows = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY created_at DESC LIMIT 5", dsRow.id);
     const recentRecords = recentRows.map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
     return {
-      datasetId: dsRow.dataset_id,
+      datasetId: dsRow.id,
       name: dsRow.name,
       description: dsRow.description,
       schema: dsRow.schema_json ? JSON.parse(dsRow.schema_json) : null,
@@ -1853,6 +1856,19 @@ app.whenReady().then(async () => {
     await syncDefaultModelSettings();
   } catch (e) {
     logger.error('syncDefaultModelSettings error: %s', e);
+  }
+
+  // 数据中心记录迁移：data_center_records.dataset_id 改为关联 data_center_datasets 主键 id（幂等）
+  // 历史数据中 records.dataset_id 可能存的是旧 dataset_id 字符串，这里统一改为主键 id。
+  try {
+    const r = db.q("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id IN (SELECT dataset_id FROM data_center_datasets)");
+    const n = (r[0] || {}).c || 0;
+    if (n > 0) {
+      db.run("UPDATE data_center_records SET dataset_id = (SELECT id FROM data_center_datasets WHERE dataset_id = data_center_records.dataset_id) WHERE dataset_id IN (SELECT dataset_id FROM data_center_datasets)");
+      logger.info('[Migrate] 已迁移 %d 条数据中心记录的 dataset_id 为主键 id', n);
+    }
+  } catch (e) {
+    logger.error('migrate data_center_records.dataset_id error: %s', e);
   }
 
   // 配置嵌入模型（从 config.json 读取）

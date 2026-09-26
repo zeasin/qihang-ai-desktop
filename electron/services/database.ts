@@ -626,8 +626,8 @@ const dm = {
   remove: (id) => {
     const mod = dm.get(id);
     const moduleId = mod && mod.module_id ? String(mod.module_id) : String(id);
-    const dsList = q<{dataset_id: string}>('SELECT dataset_id FROM data_center_datasets WHERE module_id = ?', moduleId);
-    for (const d of dsList) { run('DELETE FROM data_center_records WHERE dataset_id = ?', d.dataset_id); }
+    const dsList = q<{id: number}>('SELECT id FROM data_center_datasets WHERE module_id = ?', moduleId);
+    for (const d of dsList) { run('DELETE FROM data_center_records WHERE dataset_id = ?', d.id); }
     run('DELETE FROM data_center_datasets WHERE module_id = ?', moduleId);
     const w = dmWhere(id);
     run(`DELETE FROM data_center_modules WHERE ${w.where}`, ...w.params);
@@ -647,12 +647,12 @@ function dsWhere(id: any): { where: string; params: any[] } {
 
 const ds = {
   list: () => {
-    const rows = q('SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.dataset_id) as record_count FROM data_center_datasets d ORDER BY d.created_at DESC');
+    const rows = q('SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.id) as record_count FROM data_center_datasets d ORDER BY d.created_at DESC');
     return rows.map(r => ({ ...r, recordCount: r.record_count, schema: r.schema_json ? JSON.parse(r.schema_json) : null }));
   },
   get: (id) => {
     const w = dsWhere(id);
-    const r = qOne(`SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.dataset_id) as record_count FROM data_center_datasets d WHERE ${w.where}`, ...w.params);
+    const r = qOne(`SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.id) as record_count FROM data_center_datasets d WHERE ${w.where}`, ...w.params);
     return r ? { ...r, recordCount: r.record_count, schema: r.schema_json ? JSON.parse(r.schema_json) : null } : null;
   },
   add: (params) => {
@@ -678,8 +678,8 @@ const ds = {
   },
   remove: (id) => {
     const w = dsWhere(id);
-    const dsRow = qOne<{dataset_id: string}>(`SELECT dataset_id FROM data_center_datasets WHERE ${w.where}`, ...w.params);
-    if (dsRow) { run('DELETE FROM data_center_records WHERE dataset_id = ?', dsRow.dataset_id); }
+    const dsRow = qOne<{id: number}>(`SELECT id FROM data_center_datasets WHERE ${w.where}`, ...w.params);
+    if (dsRow) { run('DELETE FROM data_center_records WHERE dataset_id = ?', dsRow.id); }
     run(`DELETE FROM data_center_datasets WHERE ${w.where}`, ...w.params);
   },
   query: (datasetId, conditions) => {
