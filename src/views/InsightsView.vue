@@ -6,7 +6,6 @@
     <div class="content-body">
       <div class="stats-grid">
         <div class="stat-card"><div class="stat-icon" style="background:rgba(139,92,246,0.1);color:#8b5cf6;">📦</div><div class="stat-num">{{ stats.projectCount }}</div><div class="stat-label">笔记库</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(59,130,246,0.1);color:#3b82f6;">💻</div><div class="stat-num">{{ stats.codeProjectCount }}</div><div class="stat-label">代码库</div></div>
         <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
         <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
         <div class="stat-card"><div class="stat-icon" style="background:rgba(99,102,241,0.1);color:#6366f1;">💬</div><div class="stat-num">{{ stats.totalChats }}</div><div class="stat-label">对话</div></div>
@@ -212,7 +211,7 @@ const pendingRecords = ref<any[]>([]);
 const todayStr = ref('');
 
 const stats = ref({
-  fileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, codeProjectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
+  fileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
 });
 
 const noteProjects = computed(() => kbList.value.filter(k => k.type === 'note'));

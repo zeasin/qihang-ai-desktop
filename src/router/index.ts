@@ -51,15 +51,6 @@ const routes = [
     component: () => import('@/views/OverviewView.vue')
   },
   {
-    path: '/projects',
-    name: 'Projects',
-    component: () => import('@/views/ProjectsView.vue')
-  },
-  {
-    path: '/coding',
-    redirect: '/planner'
-  },
-  {
     path: '/config',
     name: 'Config',
     component: () => import('@/views/ConfigView.vue')

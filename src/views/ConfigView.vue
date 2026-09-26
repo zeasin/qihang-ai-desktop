@@ -104,8 +104,8 @@
 
         <div class="flex" style="gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center;">
           <button class="btn btn-primary" @click="openProviderModal(-1)">+ 自定义 Provider</button>
-          <button class="btn btn-primary" @click="saveLlmConfig">💾 保存配置</button>
           <span v-if="llmProviders.length" class="badge badge-success">● 已配置 {{ llmProviders.length }} 个 Provider</span>
+          <span class="text-muted" style="font-size:12px;">改动自动保存并立即生效</span>
         </div>
       </div>
 
@@ -524,11 +524,12 @@ function closeProviderModal() {
   providerModalOpen.value = false;
 }
 
-function saveProviderFromModal() {
+async function saveProviderFromModal() {
   const form = providerForm.value;
   if (!form.name.trim()) { llmStatus.value = '❌ 请填写接入名称'; return; }
   if (!form.baseUrl.trim()) { llmStatus.value = '❌ 请填写服务地址'; return; }
-  if (editingProviderIndex.value === -1) {
+  const isNew = editingProviderIndex.value === -1;
+  if (isNew) {
     const entry: LlmProviderRow = {
       name: form.name.trim(),
       baseUrl: form.baseUrl.trim(),
@@ -548,7 +549,7 @@ function saveProviderFromModal() {
     p.api = form.api;
   }
   providerModalOpen.value = false;
-  llmStatus.value = '✅ 已保存到本地，配置完模型后点击「保存配置」生效';
+  await saveLlmConfig(isNew ? '✅ 已新增接入点并生效' : '✅ 已保存接入点并生效');
 }
 
 function openModelModal(idx: number) {
@@ -593,8 +594,16 @@ function toggleImageInput(m: LlmModelEntry) {
   else m.input.push('image');
 }
 
-function saveModelsFromModal() {
+async function saveModelsFromModal() {
+  const p = llmProviders.value[modelModalProviderIndex.value];
+  if (!p) { modelModalOpen.value = false; return; }
   const cleanList = modelEditList.value.filter((m) => m.id && m.id.trim());
+  if (!cleanList.length) {
+    llmProviders.value.splice(modelModalProviderIndex.value, 1);
+    modelModalOpen.value = false;
+    await saveLlmConfig(`✅ 「${p.name || '未命名'}」模型已清空，接入点已一并删除`);
+    return;
+  }
   const models = cleanList.map((m) => {
     const entry: any = { id: m.id.trim() };
     if (m.name && m.name.trim()) entry.name = m.name.trim();
@@ -604,13 +613,10 @@ function saveModelsFromModal() {
     if (m.maxTokens) entry.maxTokens = Number(m.maxTokens);
     return entry;
   });
-  const p = llmProviders.value[modelModalProviderIndex.value];
-  if (p) {
-    p.models = models;
-    p.modelNamesText = models.map((m: any) => m.id).join('\n');
-  }
+  p.models = models;
+  p.modelNamesText = models.map((m: any) => m.id).join('\n');
   modelModalOpen.value = false;
-  llmStatus.value = '✅ 模型已更新，点击「保存配置」生效';
+  await saveLlmConfig('✅ 模型变更已生效');
 }
 
 type ProviderPresetKey = 'deepseek' | 'siliconflow' | 'ollama' | 'sensenova';
@@ -1134,9 +1140,12 @@ async function loadLlmConfig() {
   } catch { llmProviders.value = []; }
 }
 
-function removeLlmProvider(idx: number) {
-  if (!llmProviders.value[idx]) return;
+async function removeLlmProvider(idx: number) {
+  const p = llmProviders.value[idx];
+  if (!p) return;
+  if (!confirm(`删除接入点「${p.name || '未命名'}」？删除后立即生效。`)) return;
   llmProviders.value.splice(idx, 1);
+  await saveLlmConfig(`✅ 已删除接入点「${p.name || '未命名'}」并生效`);
 }
 
 async function loadSearchConfig() {
@@ -1178,7 +1187,7 @@ async function testSearchConfig() {
   setTimeout(() => { if (searchStatus.value.startsWith('✅')) searchStatus.value = ''; }, 8000);
 }
 
-async function saveLlmConfig() {
+async function saveLlmConfig(okMsg = '✅ 已保存并生效') {
   const providers = llmProviders.value
     .map((p) => ({
       name: p.name.trim(),
@@ -1199,18 +1208,12 @@ async function saveLlmConfig() {
         return entry;
       }).filter((m: any) => m.id),
     }))
-    .filter((p) => p.name || p.baseUrl || p.modelNames.length);
-  if (!providers.length) { llmStatus.value = '❌ 请至少配置一个 Provider'; return; }
-  const bad = providers.find((p) => !p.name || !p.baseUrl || !p.modelNames.length);
-  if (bad) {
-    llmStatus.value = `❌ Provider「${bad.name || '未命名'}」需要填写接入名称、服务地址和至少一个模型`;
-    return;
-  }
+    .filter((p) => p.name && p.baseUrl);
   llmStatus.value = '⏳ 正在保存...';
   try {
     const r = await API.pi.configSet(JSON.parse(JSON.stringify(providers)));
     if (r.ok) {
-      llmStatus.value = '✅ 配置已保存，立即生效';
+      llmStatus.value = okMsg;
       await loadLlmConfig();
       setTimeout(() => { if (llmStatus.value.startsWith('✅')) llmStatus.value = ''; }, 4000);
     } else {

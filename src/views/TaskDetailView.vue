@@ -1,6 +1,9 @@
 <template>
   <div class="task-detail-view">
-    <div class="content-header">
+    <!-- 未配置笔记库：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !notesDir" @ready="loadNotesDir" />
+
+    <div v-if="!notesLoaded || notesDir" class="content-header">
       <button class="btn btn-secondary btn-sm" @click="$router.push('/planner')">← 返回任务中心</button>
       <div class="header-actions">
         <span v-if="task" :class="['status-badge', 'status-' + task.status]">{{ statusText(task.status) }}</span>
@@ -11,11 +14,11 @@
       </div>
     </div>
 
-    <div v-if="!task" class="content-body">
+    <div v-if="(!notesLoaded || notesDir) && !task" class="content-body">
       <div class="empty-state">加载中...</div>
     </div>
 
-    <div v-else class="content-body">
+    <div v-else-if="!notesLoaded || notesDir" class="content-body">
       <!-- 基本信息 -->
       <div class="detail-section">
         <h3 class="section-title">基本信息</h3>
@@ -26,7 +29,7 @@
           </div>
           <div class="info-item">
             <span class="info-label">任务类型</span>
-            <span class="info-value">{{ task.task_type === 'coding' ? '💻 编程' : '📚 知识' }}</span>
+            <span class="info-value">📚 知识</span>
           </div>
           <div class="info-item">
             <span class="info-label">归属项目</span>
@@ -122,9 +125,6 @@
             <label>归属项目 *</label>
             <select class="form-control" v-model="editing.project_id" disabled>
               <option :value="null" disabled>请选择项目</option>
-              <optgroup label="💻 代码项目">
-                <option v-for="p in codeProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
-              </optgroup>
               <optgroup label="📚 笔记库">
                 <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
               </optgroup>
@@ -132,7 +132,7 @@
           </div>
           <div class="form-group">
             <label>任务标题 *</label>
-            <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 修复登录超时">
+            <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 整理本周笔记">
           </div>
           <div class="form-group">
             <label>任务诉求（AI 将据此执行）</label>
@@ -230,6 +230,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
+import NotesGate from '@/components/NotesGate.vue';
 
 const API = window.electronAPI;
 const route = useRoute();
@@ -239,6 +240,8 @@ const task = ref<any>(null);
 const projects = ref<any[]>([]);
 const executions = ref<any[]>([]);
 const messages = ref<any[]>([]);
+const notesDir = ref('');
+const notesLoaded = ref(false);
 
 const showTaskModal = ref(false);
 const editing = ref<any>({});
@@ -252,7 +255,6 @@ const weekDays = [
   { label: '周日', value: 0 },
 ];
 
-const codeProjects = computed(() => projects.value.filter(p => p.type === 'code'));
 const noteProjects = computed(() => projects.value.filter(p => p.type === 'note'));
 
 const projectName = computed(() => {
@@ -313,7 +315,7 @@ function statusText(status: string): string {
 }
 
 function getTriggerText(t: any): string {
-  const type = t.task_type === 'coding' ? '💻 编程' : '📚 知识';
+  const type = '📚 知识';
   if (t.trigger_type === 'once') return type + ' · 指定时间：' + (t.scheduled_start || '未设置');
   if (t.trigger_type === 'cycle') {
     switch (t.cycle_type) {
@@ -356,14 +358,13 @@ async function saveTask() {
   if (!t.project_id) { alert('请选择归属项目'); return; }
   if (!t.title.trim()) { alert('请输入任务标题'); return; }
   if (t.trigger_type === 'once' && !t.scheduled_start) { alert('指定时间任务请选择执行时间'); return; }
-  const proj = projects.value.find(p => p.id === Number(t.project_id));
   let cycleValue = t.cycle_value || '';
   if (t.cycle_type === 'weekly') cycleValue = editingWeekDays.value.join(',');
   if (t.cycle_type === 'monthly') cycleValue = String(editingMonthDays.value || 1);
   const data = {
     title: t.title,
     prompt: t.prompt,
-    task_type: proj && proj.type === 'code' ? 'coding' : 'note',
+    task_type: 'note',
     project_id: t.project_id,
     trigger_type: t.trigger_type,
     scheduled_start: t.trigger_type === 'once' ? t.scheduled_start : '',
@@ -451,8 +452,13 @@ async function refresh() {
   await loadMessages();
 }
 
+async function loadNotesDir() {
+  try { notesDir.value = await API.kb.getDir(); } catch { notesDir.value = ''; }
+  notesLoaded.value = true;
+}
+
 onMounted(async () => {
-  await Promise.all([loadTask(), loadProjects(), loadExecutions()]);
+  await Promise.all([loadTask(), loadProjects(), loadExecutions(), loadNotesDir()]);
   await loadMessages();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
   window.electronAPI?.on?.('task:followup:delta', handleFollowupDelta);

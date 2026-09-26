@@ -34,9 +34,10 @@ try {
 } catch {} // worker_threads not available
 import * as db from './services/database';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection } from './services/pi-agent';
-import { buildNoteToolDefs, buildDataToolDefs, buildCodingToolDefs } from './services/tools';
-import { initCodingTasks, isCodingMessage, handleFeishuCodingMessage, getWorktreeService, listCodingProjects, collectSessionChanges, applySessionChanges, commitSessionChanges, abortSessionChanges, discardSessionChanges, latestCodingSessions, recordFeishuTask, followUpTask } from './services/coding-task';
+import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings } from './services/pi-agent';
+import { buildNoteToolDefs, buildDataToolDefs } from './services/tools';
+import { recordFeishuTask, followUpTask } from './services/task-runner';
+import * as pending from './services/pending';
 import * as aitool from './services/ai-tools';
 import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './services/builtin-datasets';
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
@@ -251,20 +252,10 @@ function sendToRenderer(channel, data) {
 // ========== Feishu message handler (shared) ==========
 
 function parseFeishuContext(text, db) {
-  const projects = db.project.list();
-  const noteProjects = projects.filter(p => p.type === 'note');
+  const noteProjects = db.project.list('note');
   let cleanText = text;
-  let projectDir = '';
   const projectIds: any[] = [];
   let explicit = false;
-
-  const projectMatch = text.match(/\/code\s*[：:]\s*(\S+)/);
-  if (projectMatch) {
-    const projectName = projectMatch[1];
-    const found = projects.find(p => p.name.includes(projectName));
-    if (found) { projectDir = found.dir; explicit = true; }
-    cleanText = cleanText.replace(projectMatch[0], '').trim();
-  }
 
   const bracketMatch = text.match(/\[笔记库\s*[：:]\s*([^\]]+)\]/);
   if (bracketMatch) {
@@ -286,10 +277,9 @@ function parseFeishuContext(text, db) {
     const idMatch = text.match(/^(\d+)\b/);
     if (idMatch) {
       const numId = parseInt(idMatch[1], 10);
-      const found = projects.find(p => p.id === numId);
+      const found = noteProjects.find(p => p.id === numId);
       if (found) {
-        if (found.type === 'code') projectDir = found.dir;
-        else projectIds.push(found.id);
+        projectIds.push(found.id);
         explicit = true;
         cleanText = cleanText.replace(idMatch[1], '').trim();
       }
@@ -297,10 +287,9 @@ function parseFeishuContext(text, db) {
   }
 
   if (!explicit) {
-    for (const p of projects) {
+    for (const p of noteProjects) {
       if (text.startsWith(p.name)) {
-        if (p.type === 'code') projectDir = p.dir;
-        else projectIds.push(p.id);
+        projectIds.push(p.id);
         explicit = true;
         cleanText = cleanText.replace(p.name, '').trim();
         break;
@@ -308,7 +297,7 @@ function parseFeishuContext(text, db) {
     }
   }
 
-  return { projectDir, projectIds, cleanText: cleanText || text, explicit };
+  return { projectIds, cleanText: cleanText || text, explicit };
 }
 
 // ========== 工单记录路由（确定性落库，不依赖 AI 自主行为） ==========
@@ -353,26 +342,84 @@ const feishuMessageHandler = async (msg) => {
     mainWindow.webContents.send('feishu:message', msg);
   }
 
-  // 编程消息（识别到代码项目 或 命中编程关键词）→ 走 worktree 隔离任务
-  try {
-    if (isCodingMessage(msg.text, db)) {
-      const result = await handleFeishuCodingMessage(msg, { db, feishu, appConfig });
-      if (result.handled) {
-        if (result.reply) feishu.replyCard(msg, convertMarkdownForFeishu(result.reply), '🤖 启航AI·编程');
-        return;
-      }
-    }
-  } catch (e) {
-    logger.error('[Feishu] Coding task error: %s', e.message);
-    feishu.replyCard(msg, `编程任务出错: ${e.message}`, '❌ 错误');
-    return;
-  }
-
   const fTs = () => { const d = new Date(Date.now() + 8 * 3600 * 1000); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`; };
   const fNotifyUI = () => { try { for (const w of BrowserWindow.getAllWindows()) w.webContents.send('task:changed'); } catch {} };
 
   let feishuTaskId: any = null;
   let feishuExecId: any = null;
+
+  // ===== 工作流指令：确认落地 / 放弃暂存 / 继续追问 =====
+  const cmd = String(msg.text || '').trim();
+
+  // 「确认」：把最新暂存产物写入笔记库
+  if (/^(确认|确认落地|确认写入|确定)$/.test(cmd)) {
+    const stage = pending.latestPendingStage();
+    if (!stage) {
+      feishu.replyCard(msg, '当前没有待确认的暂存产物。', '📥 暂存区为空');
+      return;
+    }
+    const notesDir = appConfig.getConfig('notesDir') || '';
+    const r = pending.applyStage(stage.taskId, notesDir);
+    if (r.ok) {
+      const lines = [...r.written.map(p => '✍️ ' + p), ...r.deleted.map(p => '🗑️ ' + p)];
+      const more = pending.latestPendingStage();
+      feishu.replyCard(msg,
+        `已将暂存产物写入笔记库（任务：${stage.taskTitle || stage.taskId}）：\n\n${lines.join('\n') || '（无文件变更）'}` +
+        (more ? `\n\n仍有其他暂存待确认（任务：${more.taskTitle || more.taskId}），可再次回复「确认」。` : ''),
+        '✅ 已确认落地');
+    } else {
+      feishu.replyCard(msg, `落地失败：${r.error || '未知错误'}`, '❌ 确认失败');
+    }
+    fNotifyUI();
+    return;
+  }
+
+  // 「放弃」：丢弃最新暂存产物，笔记库不受影响
+  if (/^(放弃|丢弃|取消)$/.test(cmd)) {
+    const stage = pending.latestPendingStage();
+    if (!stage) {
+      feishu.replyCard(msg, '当前没有待确认的暂存产物。', '📥 暂存区为空');
+      return;
+    }
+    const n = pending.discardStage(stage.taskId);
+    feishu.replyCard(msg, `已放弃暂存产物（任务：${stage.taskTitle || stage.taskId}，共 ${n} 项变更），笔记库未做任何修改。`, '🗑️ 已放弃');
+    fNotifyUI();
+    return;
+  }
+
+  // 「继续 <内容>」：对最近的飞书任务追问，产物继续进暂存区
+  const cont = cmd.match(/^继续\s*[:：]?\s*([\s\S]*)$/);
+  if (cont) {
+    const question = (cont[1] || '').trim();
+    if (!question) {
+      feishu.replyCard(msg, '请在「继续」后写上你的要求，例如：继续 把刚才的报告补充一段风险说明', '💡 用法');
+      return;
+    }
+    const lastTask: any = db.qOne("SELECT * FROM plan_tasks WHERE source = 'feishu' AND IFNULL(task_type, '') != 'coding' ORDER BY id DESC LIMIT 1");
+    if (!lastTask) {
+      feishu.replyCard(msg, '还没有可继续的飞书任务，请先派一个任务。', '⚠️ 无任务');
+      return;
+    }
+    try {
+      pending.ensureStage(lastTask.id, lastTask.title || '');
+      const ok = await followUpTask(lastTask.id, question, db, {
+        stage: { taskId: lastTask.id },
+        onDone: (text) => {
+          const ops = pending.listOps(lastTask.id);
+          const hint = ops.length
+            ? `\n\n📥 本次产物已暂存 ${ops.length} 项（尚未写入笔记库）：\n${ops.map(o => (o.op === 'delete' ? '🗑️ ' : '✍️ ') + o.path).join('\n')}\n\n回复「确认」写入笔记库，回复「放弃」丢弃。`
+            : '';
+          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）') + hint, '🤖 启航AI');
+        },
+        onError: (err) => feishu.replyCard(msg, `处理出错: ${err}`, '❌ 错误'),
+      });
+      feishu.replyCard(msg, ok ? '已接单，执行中…' : '该任务正在执行中，请稍后再试。', ok ? '🤖 启航AI' : '⚠️ 任务执行中');
+    } catch (e) {
+      logger.error('[Feishu] Continue command error: %s', e.message);
+      feishu.replyCard(msg, `处理出错: ${e.message}`, '❌ 错误');
+    }
+    return;
+  }
 
   // 工单记录指令 → 确定性写入"项目工单"数据集（不经过 AI，保证落库）
   try {
@@ -422,48 +469,35 @@ const feishuMessageHandler = async (msg) => {
     }
   } catch (e) {
     logger.error('[Feishu] Work order record error: %s', e.message);
+    feishu.replyCard(msg, `❌ 工单记录失败：${e.message}`, '❌ 执行失败');
   }
 
   try {
     const context = parseFeishuContext(msg.text, db);
 
-    let feishuProjectId: any = null;
-    if (context.projectIds.length > 0) {
-      feishuProjectId = context.projectIds[0];
-    } else if (context.projectDir) {
-      const allProjects = db.project.list();
-      const byDir = allProjects.find(p => p.dir === context.projectDir);
-      if (byDir) feishuProjectId = byDir.id;
-    }
-    if (!feishuProjectId) {
-      const notesDir = appConfig.getConfig('notesDir') || '';
-      if (notesDir) {
-        const noteProjects = db.project.list('note');
-        const byDir = noteProjects.find(p => p.dir === notesDir);
-        if (byDir) {
-          feishuProjectId = byDir.id;
-          context.projectIds = [byDir.id];
-          context.projectDir = byDir.dir;
-        } else {
-          feishuProjectId = 'notesdir';
-          context.projectDir = notesDir;
-        }
-      } else {
-        const noteProjects = db.project.list('note');
-        if (noteProjects.length > 0) {
-          feishuProjectId = noteProjects[0].id;
-          context.projectIds = [feishuProjectId];
-          context.projectDir = noteProjects[0].dir;
-        }
-      }
-    }
-
-    if (!feishuProjectId) {
-      feishu.replyCard(msg, '⚠️ 请先在「设置」中配置笔记库目录，或添加笔记类型项目后再使用。', '⚠️ 配置缺失');
+    // ===== 笔记库前置检查：AI 功能门禁（飞书派活需先配置笔记库） =====
+    const notesDir = appConfig.getConfig('notesDir') || '';
+    if (!notesDir) {
+      feishu.replyCard(msg, '⚠️ 请先在「设置 → 📚 笔记库设置」中配置笔记库目录，配置完成后即可通过飞书派活。', '⚠️ 笔记库未配置');
       return;
     }
 
-    feishu.replyMessage(msg, '🤔 AI 正在思考，请稍后...');
+    let feishuProjectId: any = null;
+    if (context.projectIds.length > 0) {
+      feishuProjectId = context.projectIds[0];
+    }
+    if (!feishuProjectId) {
+      const noteProjects = db.project.list('note');
+      const byDir = noteProjects.find(p => p.dir === notesDir);
+      if (byDir) {
+        feishuProjectId = byDir.id;
+        context.projectIds = [byDir.id];
+      } else {
+        feishuProjectId = 'notesdir';
+      }
+    }
+
+    feishu.replyMessage(msg, '已接单，执行中…');
 
     // 先落任务记录，再按任务 id 创建独立 session
     const feishuProject = feishuProjectId !== 'notesdir' && Number.isFinite(Number(feishuProjectId))
@@ -471,6 +505,10 @@ const feishuMessageHandler = async (msg) => {
     const r = recordFeishuTask(db, feishuProject, msg.text, '', 'note');
     feishuTaskId = r.taskId;
     feishuExecId = r.execId;
+
+    // 即时派活的笔记写入先落暂存区，用户回复「确认」后才写入笔记库
+    const stageOpt = feishuTaskId != null ? { taskId: feishuTaskId } : null;
+    if (stageOpt) pending.ensureStage(feishuTaskId, msg.text.slice(0, 60));
 
     const sessionId = 'task_' + feishuTaskId;
     if (feishuTaskId != null) db.task.update(feishuTaskId, { session_id: sessionId });
@@ -484,20 +522,15 @@ const feishuMessageHandler = async (msg) => {
       if (feishuTaskId != null) db.task.update(feishuTaskId, { last_status: 'FAILED', last_run_at: fTs(), status: 'pending' });
     };
 
-    const notesDir = appConfig.getConfig('notesDir') || context.projectDir || '';
     const recordHint = /(记录|登记|新建).{0,16}(工单|需求|BUG)/.test(context.cleanText)
       ? '\n\n【记录要求】用户要求"记录/登记/新建 工单/需求/BUG"时，必须调用 insert_dataset_record 工具写入"项目工单"数据集（字段：项目、端、详细、优先级；一条工单一条记录），不要只写入笔记文件。'
       : '';
-    const prompt = notesDir
-      ? `以下是笔记库目录，请用 grep/find 等工具自行搜索相关文件后回答：\n笔记库路径：${notesDir}\n\n用户问题：${context.cleanText}` + recordHint
-      : context.cleanText + recordHint;
+    const prompt = `以下是笔记库目录，请用笔记工具自行搜索相关文件后回答：\n笔记库路径：${notesDir}\n\n用户问题：${context.cleanText}` + recordHint;
     setMode('kb');
     const toolDefs: any[] = [];
-    if (notesDir) {
-      const noteProj = db.project.list('note').find(p => p.dir === notesDir);
-      if (noteProj) toolDefs.push(...(await buildNoteToolDefs(noteProj.id)));
-      toolDefs.push(...(await buildDataToolDefs(notesDir)));
-    }
+    const noteProj = db.project.list('note').find(p => p.dir === notesDir);
+    if (noteProj) toolDefs.push(...(await buildNoteToolDefs(noteProj.id, stageOpt ? { stage: stageOpt } : {})));
+    toolDefs.push(...(await buildDataToolDefs(notesDir)));
     await runPi({
       prompt,
       sessionId,
@@ -505,9 +538,13 @@ const feishuMessageHandler = async (msg) => {
       customTools: toolDefs,
       onDone: (text) => {
         logger.info('[Feishu] Sending card reply: "%s"', (text || '').slice(0, 200));
-        if (text) {
-          db.chat.addMessage(sessionId, 'assistant', text, 'general');
-          feishu.replyCard(msg, convertMarkdownForFeishu(text), '🤖 启航AI');
+        const ops = feishuTaskId != null ? pending.listOps(feishuTaskId) : [];
+        const hint = ops.length
+          ? `\n\n📥 本次产物已暂存 ${ops.length} 项（尚未写入笔记库）：\n${ops.map(o => (o.op === 'delete' ? '🗑️ ' : '✍️ ') + o.path).join('\n')}\n\n回复「确认」写入笔记库，回复「放弃」丢弃。`
+          : '';
+        if (text || hint) {
+          db.chat.addMessage(sessionId, 'assistant', text || '', 'general');
+          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）') + hint, '🤖 启航AI');
         }
         const end = fTs();
         if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'SUCCESS', end_time: end, result_text: text || '' });
@@ -581,36 +618,6 @@ ipcMain.handle('notes:read', (_, { dir, filePath }) => {
 });
 
 
-
-ipcMain.handle('code:search', (_, { projectId, query }) => {
-  try {
-    if (!query || !projectId) return [];
-    const project = db.project.get(projectId);
-    if (!project || !project.dir) return [];
-
-    const q = query.toLowerCase();
-    const results: any[] = [];
-    const IGNORED_DIRS = new Set(['node_modules', '.git', '.svn', '.hg', '__pycache__', '.cache', 'dist', 'build', 'target', '.idea', '.vscode']);
-    const walkDir = (dir) => {
-      try {
-        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-          const full = path.join(dir, e.name);
-          if (e.isDirectory()) {
-            if (IGNORED_DIRS.has(e.name) || e.name.startsWith('.')) continue;
-            walkDir(full);
-          } else {
-            if (e.name.startsWith('.')) continue;
-            if (e.name.toLowerCase().includes(q) || full.toLowerCase().includes(q)) {
-              results.push({ path: full, name: e.name, score: 1, match: '' });
-            }
-          }
-        }
-      } catch {}
-    };
-    walkDir(project.dir);
-    return results.sort((a, b) => a.path.localeCompare(b.path)).slice(0, 50);
-  } catch { return []; }
-});
 
 ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
   if (!dirPath) return null;
@@ -1033,132 +1040,6 @@ ipcMain.handle('chat:session:messages', (_, { sessionId }) => db.chat.messages(s
 ipcMain.handle('chat:session:delete', (_, { sessionId }) => db.chat.deleteSession(sessionId));
 ipcMain.handle('chat:session:updateTitle', (_, { sessionId, title }) => db.chat.updateSessionTitle(sessionId, title));
 
-// ========== Coding Workbench ==========
-ipcMain.handle('coding:session:create', (_, { id, projectId, title, agent }) => {
-  return db.chat.createSession(id || ('coding_' + Date.now()), projectId, title, 'coding', agent, 'ui');
-});
-ipcMain.handle('coding:session:listByProject', (_, { projectId }) => {
-  const all = db.chat.sessions(projectId);
-  return (all || []).filter((s: any) => s.source !== 'feishu');
-});
-ipcMain.handle('coding:session:messages', (_, { sessionId }) => db.chat.messages(sessionId));
-ipcMain.handle('coding:session:delete', (_, { sessionId }) => db.chat.deleteSession(sessionId));
-ipcMain.handle('coding:session:updateTitle', (_, { sessionId, title }) => db.chat.updateSessionTitle(sessionId, title));
-ipcMain.handle('coding:switchAgent', (_, { sessionId, agent }) => {
-  db.chat.updateSessionAgent(sessionId, agent);
-  return db.chat.getSession(sessionId);
-});
-
-ipcMain.handle('coding:send', async (event, { question, sessionId, projectDir, agent, images, modelName }) => {
-  const sid = sessionId || ('coding_' + Date.now());
-  try {
-    let session = db.chat.getSession(sid);
-    if (!session) {
-      session = db.chat.createSession(sid, null, null, 'coding', 'general', 'ui');
-    }
-
-    // 首条消息自动设置标题
-    const existing = db.chat.messages(sid);
-    if (existing.length === 0) {
-      const title = question.length > 30 ? question.slice(0, 30) + '...' : question;
-      db.chat.updateSessionTitle(sid, title);
-    }
-
-    // 保存用户消息（含图片）
-    db.chat.addMessage(sid, 'user', question, 'general', images);
-
-    let reply = '';
-    sendToRenderer('coding:status', { sessionId: sid, text: 'AI 正在处理...' });
-
-    const onDelta = (delta) => {
-      reply += delta;
-      sendToRenderer('coding:delta', { sessionId: sid, text: delta });
-    };
-    const onDone = () => {
-      if (reply) db.chat.addMessage(sid, 'assistant', reply, 'general');
-      sendToRenderer('coding:done', { sessionId: sid });
-    };
-    const onError = (err) => {
-      sendToRenderer('coding:error', { sessionId: sid, text: err });
-    };
-    const onTool = (toolEvent) => {
-      sendToRenderer('coding:tool', { sessionId: sid, ...toolEvent });
-    };
-
-    // pi agent 引擎（官方 SDK，进程内运行）
-    const modelPattern = piModelPattern(modelName);
-    await runPi({
-      prompt: question,
-      sessionId: sid,
-      cwd: projectDir || undefined,
-      modelPattern,
-      images,
-      customTools: projectDir ? await buildCodingToolDefs(projectDir) : [],
-      onDelta,
-      onThinking: (t) => sendToRenderer('coding:tool', { sessionId: sid, type: 'thinking', text: t }),
-      onTool,
-      onDone,
-      onError,
-    });
-  } catch (err) {
-    sendToRenderer('coding:error', { sessionId: sid, text: err.message });
-  }
-});
-
-// --- 编程变更审查（worktree 隔离） ---
-ipcMain.handle('coding:changes', async (_, { sessionId, projectId }) => {
-  try {
-    const project = db.project.get(projectId);
-    if (!project) return { ok: false, error: '项目不存在' };
-    const changes = await collectSessionChanges(sessionId, project);
-    return { ok: true, changes };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-ipcMain.handle('coding:changes:apply', async (_, { sessionId, projectId }) => {
-  try {
-    const project = db.project.get(projectId);
-    if (!project) return { ok: false, error: '项目不存在' };
-    const result = await applySessionChanges(sessionId, project);
-    return { ok: true, result };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-ipcMain.handle('coding:changes:commit', async (_, { sessionId, projectId, message, push }) => {
-  try {
-    const project = db.project.get(projectId);
-    if (!project) return { ok: false, error: '项目不存在' };
-    const result = await commitSessionChanges(sessionId, project, message, push);
-    return { ok: true, result };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-ipcMain.handle('coding:changes:abort', async (_, { sessionId, projectId }) => {
-  try {
-    const project = db.project.get(projectId);
-    if (!project) return { ok: false, error: '项目不存在' };
-    const result = await abortSessionChanges(sessionId, project);
-    return { ok: true, result };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-ipcMain.handle('coding:changes:discard', async (_, { sessionId, projectId }) => {
-  try {
-    const project = db.project.get(projectId);
-    if (!project) return { ok: false, error: '项目不存在' };
-    const result = await discardSessionChanges(sessionId, project);
-    return { ok: true, result };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-ipcMain.handle('coding:projects', () => listCodingProjects(db));
-ipcMain.handle('coding:sessions', (_, { limit } = {}) => latestCodingSessions(db, limit));
-
 // 判断是否为「查询本地知识」类问题（如事务/笔记/待办/记录/知识检索）。
 // 这类问题依赖笔记库，若未配置笔记库则先引导用户去设置。
 function isKBQuery(text) {
@@ -1184,14 +1065,8 @@ ipcMain.handle('pi:config:get', () => {
   return listBuiltinModelConfigs();
 });
 ipcMain.handle('pi:config:set', async (_, { providers }) => {
-  if (!Array.isArray(providers) || !providers.length) {
-    return { ok: false, error: '至少需要一条接入配置' };
-  }
-  for (const p of providers) {
-    if (!p.baseUrl || !String(p.baseUrl).trim()) return { ok: false, error: `服务地址不能为空（${p.name || '未命名'}）` };
-    if (!Array.isArray(p.modelNames) || p.modelNames.filter((n: string) => n && String(n).trim()).length === 0) {
-      return { ok: false, error: `模型名称不能为空（${p.name || '未命名'}）` };
-    }
+  if (!Array.isArray(providers)) {
+    return { ok: false, error: '参数错误' };
   }
   await saveBuiltinModelConfigs(providers);
   return { ok: true };
@@ -1224,7 +1099,7 @@ ipcMain.handle('search:test', async () => {
 ipcMain.handle('project:list', (_, { type } = {}) => db.project.list(type));
 ipcMain.handle('project:get', (_, { id }) => db.project.get(id));
 ipcMain.handle('project:add', (_, { name, type, dir, description, defaultBranch }) => {
-  const result = db.project.add(name, type || 'code', dir, description, defaultBranch);
+  const result = db.project.add(name, type || 'note', dir, description, defaultBranch);
   return result;
 });
 ipcMain.handle('project:update', (_, { id, data }) => db.project.update(id, data));
@@ -1508,12 +1383,11 @@ ipcMain.handle('insights:stats', () => {
   const totalChats = (db.qOne("SELECT COUNT(*) as c FROM prj_messages") || {}).c || 0;
   const todayModified = (db.qOne("SELECT COUNT(*) as c FROM kb_documents WHERE indexed_at >= date('now')") || {}).c || 0;
   const projectCount = (db.qOne("SELECT COUNT(*) as c FROM prj_projects WHERE type = 'note'") || {}).c || 0;
-  const codeProjectCount = (db.qOne("SELECT COUNT(*) as c FROM prj_projects WHERE type = 'code'") || {}).c || 0;
-  const todoPending = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE status IN ('pending','in_progress')") || {}).c || 0;
-  const todoOverdue = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE scheduled_start != '' AND scheduled_start < datetime('now', '+8 hours') AND status IN ('pending','in_progress')") || {}).c || 0;
+  const todoPending = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
+  const todoOverdue = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE scheduled_start != '' AND scheduled_start < datetime('now', '+8 hours') AND status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const remindersActive = (db.qOne("SELECT COUNT(*) as c FROM plan_reminders WHERE enabled = 1") || {}).c || 0;
   const todayDataRecords = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE created_at >= datetime('now', '+8 hours', 'start of day')") || {}).c || 0;
-  return { fileCount, notesFileCount, chunkCount, totalChats, todayModified, projectCount, codeProjectCount, todoPending, todoOverdue, remindersActive, todayDataRecords };
+  return { fileCount, notesFileCount, chunkCount, totalChats, todayModified, projectCount, todoPending, todoOverdue, remindersActive, todayDataRecords };
 });
 ipcMain.handle('insights:reports', () => {
   return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'daily_report' ORDER BY created_at DESC LIMIT 10");
@@ -1965,6 +1839,22 @@ app.whenReady().then(async () => {
     logger.error('upgradeBuiltinSchemas error: %s', e);
   }
 
+  // 暂存区清理：超过 7 天未确认的飞书派活产物自动删除
+  try {
+    const n = pending.cleanupStages(7);
+    if (n > 0) logger.info('[Pending] 已清理 %d 个过期暂存目录', n);
+  } catch (e) {
+    logger.error('cleanupStages error: %s', e);
+  }
+
+  // 默认模型自愈：settings.json 的默认模型若指向已删除的接入点（或缺失），
+  // 同步为应用内配置的第一个模型，避免日报/定时任务/飞书选中无 API Key 的旧模型
+  try {
+    await syncDefaultModelSettings();
+  } catch (e) {
+    logger.error('syncDefaultModelSettings error: %s', e);
+  }
+
   // 配置嵌入模型（从 config.json 读取）
   rag.configure({
     model: appConfig.getConfig("embeddingModel") || "",
@@ -1976,7 +1866,6 @@ app.whenReady().then(async () => {
 
   const savedAppId = appConfig.getConfig('feishuAppId');
   const savedAppSecret = appConfig.getConfig('feishuAppSecret');
-  initCodingTasks();
   if (savedAppId && savedAppSecret) {
     logger.info('Auto-starting Feishu bot from saved config...');
     startFeishu({ app_id: savedAppId, app_secret: savedAppSecret });
@@ -2001,8 +1890,8 @@ app.whenReady().then(async () => {
       return;
     }
     const modelResult = await listPiModels();
-    if (!modelResult.models || modelResult.models.length === 0) {
-      logger.error('[Startup] Cannot generate daily report: pi agent model not configured, run `pi` command to configure');
+    if (!modelResult.models?.some((m) => m.configured)) {
+      logger.warn('[Startup] Skip daily report: 未配置可用模型，请在「设置 → 对话模型配置」中配置后重试');
       return;
     }
     logger.info('[Startup] No daily report for today, generating via pi agent...');

@@ -6,7 +6,6 @@
         <div class="stat-num">{{ stats.notesFileCount }}</div>
         <div class="stat-label">笔记库<span class="kb-settings" @click.stop="openConfig" title="设置笔记库目录">⚙</span></div>
       </div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(59,130,246,0.1);color:#3b82f6;">📂</div><div class="stat-num">{{ stats.codeProjectCount }}</div><div class="stat-label">项目</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(99,102,241,0.1);color:#6366f1;">💬</div><div class="stat-num">{{ stats.totalChats }}</div><div class="stat-label">对话</div></div>
@@ -15,8 +14,17 @@
 
     <div class="dashboard-grid">
       <div class="dashboard-left">
-        <div class="section-header">📊 综合日报 <span class="report-schedule">{{ reportScheduleText }}</span></div>
-        <div class="card" v-if="latestReport">
+        <div class="section-header">📊 综合日报 <span v-if="notesDir" class="report-schedule">{{ reportScheduleText }}</span></div>
+
+        <!-- 未配置笔记库：日报不可用（AI 功能门禁） -->
+        <NotesGate
+          v-if="notesLoaded && !notesDir"
+          compact
+          desc="综合日报由 AI 基于你的笔记库生成，配置后自动可用；数据集、提醒、待办不受影响。"
+          @ready="onGateReady"
+        />
+
+        <div class="card" v-if="(!notesLoaded || notesDir) && latestReport">
           <div class="latest-header">
             <div class="latest-info">
               <div class="latest-date">{{ latestReport.report_date || '最新日报' }}</div>
@@ -34,7 +42,7 @@
             <div class="key-point">{{ (latestReport.summary || '').slice(0, 200) }}</div>
           </div>
         </div>
-        <div class="card">
+        <div class="card" v-if="!notesLoaded || notesDir">
           <div v-if="reports.length" class="report-list">
             <div v-for="(r, i) in reports" :key="r.id" class="report-item" @click="openReportModal(r)">
               <div class="report-header">
@@ -119,15 +127,19 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
+import NotesGate from '@/components/NotesGate.vue';
 
 const API = window.electronAPI;
 const router = useRouter();
+
+const notesDir = ref('');
+const notesLoaded = ref(false);
 
 const openNotes = () => router.push('/notes');
 const openConfig = () => router.push('/config');
 
 const stats = ref({
-  fileCount: 0, notesFileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, codeProjectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
+  fileCount: 0, notesFileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
 });
 
 const reports = ref<any[]>([]);
@@ -347,8 +359,19 @@ async function loadOverviewData() {
   try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
 }
 
+async function loadNotesDir() {
+  try { notesDir.value = await API.kb.getDir(); } catch { notesDir.value = ''; }
+  notesLoaded.value = true;
+}
+
+async function onGateReady() {
+  await loadNotesDir();
+  await loadOverviewData();
+}
+
 onMounted(() => {
   loadOverviewData();
+  loadNotesDir();
   API.on('report:generated', () => {
     loadOverviewData();
   });

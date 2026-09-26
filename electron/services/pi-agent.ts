@@ -585,7 +585,7 @@ export async function saveBuiltinModelConfigs(providers: {
           return entry;
         });
     } else {
-      const modelNames = p.modelNames.map((id: string) => id.trim()).filter(Boolean);
+      const modelNames = (p.modelNames || []).map((id: string) => id.trim()).filter(Boolean);
       models = modelNames.map((id: string) => {
         const old = Array.isArray(existing.models) ? existing.models.find((m: any) => m && m.id === id) : undefined;
         if (old) {
@@ -606,6 +606,7 @@ export async function saveBuiltinModelConfigs(providers: {
   current.providers = next;
   fs.writeFileSync(modelsJsonPath(), JSON.stringify(current, null, 2), 'utf-8');
   await reloadModelRegistry();
+  await syncDefaultModelSettings();
 }
 
 /** 热重载 ModelRegistry（配置变更后立即生效，无需重启） */
@@ -617,6 +618,69 @@ export async function reloadModelRegistry(): Promise<void> {
     }
   } catch (e: any) {
     logger.warn('[PiAgent] reloadModelRegistry failed: %s', e && e.message ? e.message : e);
+  }
+}
+
+/** 读取 settings.json；文件不存在返回 {}，解析失败返回 null（调用方应放弃写入） */
+function readSettingsJsonFile(): any | null {
+  const settingsPath = path.join(getAgentDir(), 'settings.json');
+  let raw: string;
+  try { raw = fs.readFileSync(settingsPath, 'utf-8'); } catch { return {}; }
+  let parsed: any = null;
+  try { parsed = JSON.parse(raw); } catch {
+    try { parsed = JSON.parse(stripJsonComments(raw)); } catch {}
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    logger.warn('[PiAgent] settings.json 解析失败，跳过默认模型同步');
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * 同步 pi SDK 的默认模型（~/.pi/agent/settings.json 的 defaultProvider/defaultModel）。
+ * 日报、定时任务、飞书派活、AI 工具生成等未显式指定模型的链路都走这个默认值；
+ * 若默认值仍指向已删除的接入点（或没有 API Key 的模型），SDK 会选中它并报
+ * 「当前模型未配置 API Key」，因此这里改为应用内配置的第一个模型。
+ * 默认模型仍可用时保持不动，不干扰用户在 pi CLI 里的选择。
+ */
+export async function syncDefaultModelSettings(): Promise<void> {
+  const settings = readSettingsJsonFile();
+  if (!settings) return;
+  const currentProvider = settings.defaultProvider || '';
+  const currentModel = settings.defaultModel || '';
+  if (currentProvider && currentModel) {
+    try {
+      const bundle = await getRuntime();
+      const found = bundle.modelRegistry.find(currentProvider, currentModel);
+      if (found && bundle.modelRegistry.hasConfiguredAuth(found)) return;
+    } catch (e: any) {
+      logger.warn('[PiAgent] 默认模型有效性检查失败: %s', e && e.message ? e.message : e);
+    }
+  }
+  let first: { provider: string; model: string } | null = null;
+  const cfg = readModelsJson();
+  for (const [provKey, provVal] of Object.entries(cfg.providers || {})) {
+    const models = (provVal as any)?.models;
+    if (!Array.isArray(models)) continue;
+    for (const m of models) {
+      if (m && m.id) { first = { provider: provKey, model: String(m.id) }; break; }
+    }
+    if (first) break;
+  }
+  if (!first && !currentProvider && !currentModel) return;
+  if (first) {
+    settings.defaultProvider = first.provider;
+    settings.defaultModel = first.model;
+  } else {
+    delete settings.defaultProvider;
+    delete settings.defaultModel;
+  }
+  try {
+    fs.writeFileSync(path.join(getAgentDir(), 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
+    logger.info('[PiAgent] 默认模型已同步为 %s', first ? `${first.provider}/${first.model}` : '（未配置）');
+  } catch (e: any) {
+    logger.warn('[PiAgent] 默认模型写入失败: %s', e && e.message ? e.message : e);
   }
 }
 

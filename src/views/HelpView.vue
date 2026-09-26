@@ -32,7 +32,7 @@
           <li><strong>采集</strong>：Markdown 笔记随手记，JSON 数据批量导入，自动归档进本地笔记库</li>
           <li><strong>分析</strong>：AI 基于你的笔记、数据和项目管理回答提问、查数据集、读文件，而不是凭空瞎编</li>
           <li><strong>建议</strong>：AI 不只是回答问题，还给出可执行的建议——该做的事、该记的档、该跟进的事项</li>
-          <li><strong>执行</strong>：对话落成定时任务和数据集记录，AI 还能读写笔记文件、操作本地数据，在隔离 worktree 中帮你改代码</li>
+          <li><strong>执行</strong>：对话落成定时任务和数据集记录，AI 还能读写笔记文件、操作本地数据</li>
           <li><strong>推送</strong>：定时提醒、每日 AI 日报自动汇总，通过飞书推送到你的群和联系人</li>
         </ol>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
@@ -53,13 +53,13 @@
 
       <div class="card card-prereq" id="sec-prereq">
         <h2 style="font-size:17px;">📋 使用前必读：两个前置条件</h2>
-        <p class="text-muted mb-2">应用启动后，需要完成以下配置才能正常使用所有功能。</p>
+        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中笔记库是 AI 功能的前置条件：未配置时，AI 对话、任务执行、日报生成、知识库浏览会被门禁拦截并提示；数据集、提醒、日志不受影响。</p>
 
         <div class="prereq-item">
           <div class="prereq-number">1</div>
           <div class="prereq-content">
             <strong>配置 AI 对话大模型</strong>
-            <p class="text-muted">所有 AI 对话、工具调用、日报生成都由大模型驱动。进入「设置 → 💬 对话模型配置」，填写接入点信息（接入名称、服务地址、API Key、模型名称），支持 OpenAI 兼容接口（如 DeepSeek、Ollama、LM Studio 等），可配置多个接入，每个接入可包含多个模型。保存后立即生效，点「测试」可验证连接是否正常。</p>
+            <p class="text-muted">所有 AI 对话、工具调用、日报生成都由大模型驱动。进入「设置 → 💬 对话模型配置」，填写接入点信息（接入名称、服务地址、API Key、模型名称），支持 OpenAI 兼容接口（如 DeepSeek、Ollama、LM Studio 等），可配置多个接入，每个接入可包含多个模型。改动自动保存并立即生效，点「测试」可验证连接是否正常。</p>
           </div>
         </div>
 
@@ -67,7 +67,7 @@
           <div class="prereq-number">2</div>
           <div class="prereq-content">
             <strong>设置笔记库目录</strong>
-            <p class="text-muted">进入「设置 → 📚 笔记库设置」，选择一个包含 Markdown 文件的本地文件夹作为笔记库。保存后即可在对话页的「📚 知识库」Tab 中浏览文件，并让 AI 基于你的笔记回答问题、自动保存任务执行结果。</p>
+            <p class="text-muted">进入「设置 → 📚 笔记库设置」，选择一个包含 Markdown 文件的本地文件夹作为笔记库。保存后即可在「概览」页点击「📚 笔记库」卡片浏览文件，并让 AI 基于你的笔记回答问题、自动保存任务执行结果。未配置时，AI 相关入口会提示先配置笔记库。</p>
           </div>
         </div>
       </div>
@@ -77,7 +77,7 @@
         <p class="text-muted mb-2">启航AI工作台是一款桌面应用，将本地笔记知识库、结构化数据、任务提醒、飞书推送和 AI 智能体整合成一套完整的工作流。所有数据保存在本机，模型自由选择。</p>
         <ol style="margin:8px 0;padding-left:20px;font-size:13px;line-height:1.8;">
           <li>完成上方两个前置条件配置</li>
-          <li>在「AI」页开始与 AI 对话（支持图片粘贴/上传、切换模型），顶部可切换到「知识库」「概览」</li>
+          <li>在「对话」页开始与 AI 对话（支持图片粘贴/上传、切换模型），在「概览」页查看综合看板</li>
           <li>在「任务」页创建定时/循环任务，让 AI 定期自动执行（也可交由飞书 Bot 下发指令）</li>
           <li>在「数据」页管理结构化数据集，支持内置模板一键安装、JSON/URL 批量导入</li>
           <li>在「工具箱」页使用演示生成、周报日报、思维导图、抓取等 AI 工具</li>
@@ -90,10 +90,11 @@
         <table class="help-table">
           <thead><tr><th>菜单</th><th>说明</th></tr></thead>
           <tbody>
-          <tr><td>💬 AI</td><td>对话工作台，支持多轮对话、图片识别、模型切换；内部含「💬 对话」「📚 知识库」「📊 概览」三个 Tab</td></tr>
-          <tr><td>🔔 任务</td><td>任务中心，含「📚 笔记任务」「💻 代码任务」「💻 代码库」三个 Tab，是定时/循环任务与 AI 编程的入口</td></tr>
+          <tr><td>📊 概览</td><td>综合看板：统计卡片（笔记库、待办、提醒、对话、今日数据）、综合日报、待办列表、提醒列表、待处理记录；点击「笔记库」卡片进入知识库浏览</td></tr>
+          <tr><td>💬 对话</td><td>对话工作台，支持多轮对话、图片识别、模型切换；可查询数据集、检索笔记库、联网搜索</td></tr>
+          <tr><td>📋 任务</td><td>任务中心，管理挂在笔记库下的定时/循环任务，支持立即执行、指定时间、周期循环</td></tr>
           <tr><td>🗃️ 数据</td><td>多数据集管理，自定义 Schema，内置模板、AI 业务分析、JSON/URL 批量导入</td></tr>
-          <tr><td>📅 提醒</td><td>定时提醒统一管理，支持每日/每周/每月/每年/一次性，系统通知 + 飞书推送</td></tr>
+          <tr><td>🔔 提醒</td><td>定时提醒统一管理，支持每日/每周/每月/每年/一次性，系统通知 + 飞书推送</td></tr>
           <tr><td>🔧 工具箱（beta）</td><td>AI 内容生成工具集：演示、周报/日报、思维导图、文案、网站抓取、图片生成</td></tr>
           <tr><td>⚙️ 设置</td><td>系统配置：笔记库、对话模型、飞书、云端数据库、数据备份、日报等</td></tr>
           <tr><td>📋 日志</td><td>操作日志查看，支持级别过滤、文件切换、自动刷新</td></tr>
@@ -112,7 +113,6 @@
           <tr><td>📚 笔记库检索</td><td>配置笔记库目录后，AI 自动携带笔记上下文回答</td></tr>
           <tr><td>💾 数据集操作</td><td>查询数据集记录，AI 可帮你新建、插入、更新数据</td></tr>
           <tr><td>📁 笔记读写</td><td>在笔记库目录中浏览、新建、编辑 Markdown 文件</td></tr>
-          <tr><td>📁 文件与命令</td><td>浏览目录、grep 搜索、读写项目文件、执行命令（仅限本地，注意安全）</td></tr>
           <tr><td>🌐 联网搜索</td><td>网页搜索与抓取，实时信息补充回答</td></tr>
           <tr><td>🖼️ 图片识别</td><td>支持粘贴或上传图片，AI 自动识别内容</td></tr>
           </tbody>
@@ -122,53 +122,23 @@
 
       <div class="card" id="sec-kb">
         <h2>📚 知识库与概览</h2>
-        <p class="text-muted mb-2">在「AI」页顶部切换，无需单独菜单。</p>
+        <p class="text-muted mb-2">「概览」为左侧栏独立菜单；知识库从概览页的「📚 笔记库」卡片进入。</p>
         <ul>
-          <li><strong>📚 知识库 Tab</strong> — 左侧目录树浏览笔记库文件，右侧预览 Markdown 渲染内容，支持文件名关键词搜索，也可让 AI 基于它们回答问题</li>
-          <li><strong>📊 概览 Tab</strong> — 综合看板：统计卡片（代码库、待办、提醒、对话、今日数据）、综合日报、待办列表、提醒列表、待处理记录</li>
+          <li><strong>📚 知识库</strong> — 左侧目录树浏览笔记库文件，右侧预览 Markdown 渲染内容，支持文件名关键词搜索，也可让 AI 基于它们回答问题</li>
+          <li><strong>📊 概览</strong> — 综合看板：统计卡片（笔记库、待办、提醒、对话、今日数据）、综合日报、待办列表、提醒列表、待处理记录；未配置笔记库时「综合日报」区域会提示先配置</li>
         </ul>
       </div>
 
       <div class="card" id="sec-tasks">
-        <h2>🔔 任务中心</h2>
-        <p class="text-muted mb-2">任务中心在左侧栏「任务」页，分为三个 Tab：</p>
+        <h2>📋 任务中心</h2>
+        <p class="text-muted mb-2">任务中心在左侧栏「任务」页，管理挂在笔记库下的任务：</p>
         <table class="help-table">
-          <thead><tr><th>Tab</th><th>说明</th></tr></thead>
+          <thead><tr><th>能力</th><th>说明</th></tr></thead>
           <tbody>
           <tr><td>📚 笔记任务</td><td>挂在「笔记库」项目下的任务：让 AI 定时读书、写周报、汇总文档，结果自动保存到笔记库目录，可推送到飞书</td></tr>
-          <tr><td>💻 代码任务</td><td>挂在「代码库」项目下的任务：让 AI 定时执行编程任务（详见下节）</td></tr>
-          <tr><td>💻 代码库</td><td>AI 编程工作台：管理代码项目、开始编程对话、审查并合并 AI 改动</td></tr>
           </tbody>
         </table>
         <p class="text-muted" style="margin-top:8px;">任务触发方式支持：⚡ 立即执行 / ⏰ 指定时间 / 🔁 定时循环（每天/每周/每月/Cron）。任务详情可全屏查看，支持「对话记录」「执行记录」回放与「追问」续跑。任务完成后结果保存在笔记库指定相对路径。</p>
-      </div>
-
-      <div class="card card-feishu" id="sec-coding">
-        <h2>💻 代码库与 AI 编程</h2>
-        <p class="text-muted mb-2">在「任务」页的「💻 代码库」Tab 中添加代码项目（选择本地 Git 项目目录），即可开始 AI 编程对话。AI 会为每个编程任务创建独立的 <strong>Git worktree 隔离目录</strong>，<strong>绝不改动你的原项目目录</strong>；任务产生的改动可在会话右上角「🛠️ 审查变更」中查看。</p>
-        <ul>
-          <li><strong>变更审查</strong> — 查看待合并的改动文件列表与 diff 预览</li>
-          <li><strong>合并到主项目</strong> — 将改动从 worktree 合并回主项目（暂存但不提交），随后点击「提交变更」正式提交</li>
-          <li><strong>撤销 / 丢弃</strong> — 不需要的改动可撤销合并或直接丢弃，原目录不受影响</li>
-        </ul>
-        <p class="text-muted" style="margin-top:8px;">配置飞书 Bot 后，可在飞书里直接给 AI 下发编程指令，改动同样走隔离 worktree 流程：</p>
-        <table class="help-table">
-          <thead><tr><th>指令</th><th>说明</th></tr></thead>
-          <tbody>
-          <tr><td><code>列出项目</code></td><td>列出所有已配置的代码项目（类型为「代码库」）</td></tr>
-          <tr><td><code>切换到 项目名或序号</code></td><td>绑定当前要操作的代码项目，后续消息默认在该项目执行</td></tr>
-          <tr><td><code>/code：项目名或序号 任务</code></td><td>明确指定项目并下发编程任务（也支持 <code>code：</code> 前缀）</td></tr>
-          <tr><td><code>查代码：问题</code></td><td>在已绑定/识别到的代码项目中排查问题</td></tr>
-          <tr><td>消息里直接带项目名</td><td>自动识别消息中包含的项目名并路由到编程任务</td></tr>
-          </tbody>
-        </table>
-        <div class="tip">
-          <strong>示例</strong>：
-          <pre class="code-block">列出项目
-切换到 启航工作台
-/code：启航工作台 为登录接口补全异常处理</pre>
-        </div>
-        <p class="text-muted" style="margin-top:8px;">提示：<code>/code</code> 前缀是<strong>明确编程指令</strong>，与知识库问答互不干扰；只发 <code>/code：项目名</code>（不带任务）会提示补全任务内容。</p>
       </div>
 
       <div class="card" id="sec-data">
@@ -185,7 +155,7 @@
       </div>
 
       <div class="card" id="sec-reminders">
-        <h2>📅 提醒</h2>
+        <h2>🔔 提醒</h2>
         <p class="text-muted mb-2">独立提醒页，支持多种频率提醒，触发时发送系统通知；已配置飞书 Webhook 时同步推送消息到飞书群。</p>
         <ul>
           <li><strong>每日</strong> — 每天固定时间触发（如每天 09:00）</li>
@@ -251,11 +221,10 @@
           <tr><td>AI 答非所问，没有用到笔记</td><td>笔记库未设置或内容较少</td><td>在「设置 → 📚 笔记库设置」选择包含 Markdown 文件的文件夹，重新提问</td></tr>
           <tr><td>模型下拉是空的/不可用</td><td>接入点没有可用模型</td><td>到「设置 → 💬 对话模型配置」为接入添加模型 ID（管理模型）并测试连接</td></tr>
           <tr><td>飞书消息收不到</td><td>Webhook 或 Bot 配置有误</td><td>在设置页检查飞书配置，点「测试」验证</td></tr>
-          <tr><td>任务没有按计划执行</td><td>任务触发方式或时间设置不对</td><td>到「任务 → 笔记任务/代码任务」检查任务的触发方式（立即/指定时间/定时循环）与最近执行记录</td></tr>
+          <tr><td>任务没有按计划执行</td><td>任务触发方式或时间设置不对</td><td>到「任务」页检查任务的触发方式（立即/指定时间/定时循环）与最近执行记录</td></tr>
           <tr><td>提醒没弹出</td><td>提醒未启用或时间/日期不对</td><td>到「提醒」页检查开关状态，点「测试触发」验证通知</td></tr>
           <tr><td>可以完全离线使用吗</td><td>—</td><td>可以。对话模型配置为 Ollama 本地模型即可完全离线</td></tr>
           <tr><td>提示"模型连接失败"</td><td>模型配置有误或 Ollama 未启动</td><td>到「设置 → 💬 对话模型配置」检查服务地址、模型名称并点「测试」；Ollama 需先 <code>ollama pull</code> 模型并确保服务运行</td></tr>
-          <tr><td>编程任务会改坏我的代码吗</td><td>—</td><td>不会。编程任务在隔离 Git worktree 中执行，原项目目录不动；改动需在「审查变更」中人工合并/提交后才生效</td></tr>
           <tr><td>数据会丢失吗</td><td>—</td><td>数据保存在本机数据库，正常退出不丢失；可在「设置 → 数据备份与恢复」一键备份、每日自动备份（保留 N 份）或从备份恢复</td></tr>
           </tbody>
         </table>
@@ -287,10 +256,9 @@ const sections = [
   { id: 'sec-nav', icon: '🧭', label: '页面导航' },
   { id: 'sec-chat', icon: '💬', label: 'AI 对话' },
   { id: 'sec-kb', icon: '📚', label: '知识库与概览' },
-  { id: 'sec-tasks', icon: '🔔', label: '任务中心' },
-  { id: 'sec-coding', icon: '💻', label: '代码库与编程' },
+  { id: 'sec-tasks', icon: '📋', label: '任务中心' },
   { id: 'sec-data', icon: '🗃️', label: '数据' },
-  { id: 'sec-reminders', icon: '📅', label: '提醒' },
+  { id: 'sec-reminders', icon: '🔔', label: '提醒' },
   { id: 'sec-tools', icon: '🔧', label: '工具箱' },
   { id: 'sec-config', icon: '⚙️', label: '系统配置' },
   { id: 'sec-log', icon: '📋', label: '日志' },

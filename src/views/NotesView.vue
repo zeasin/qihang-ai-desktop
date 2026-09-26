@@ -1,7 +1,10 @@
 ﻿<template>
   <div class="notes-view">
+    <!-- 未配置笔记库：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !notesDir" @ready="loadNotesDir" />
+
     <!-- ========== 文件浏览 ========== -->
-    <div class="notes-body">
+    <div v-else class="notes-body">
       <div class="left-panel">
         <div class="panel-header">
           <div class="panel-title">文件浏览</div>
@@ -26,10 +29,7 @@
           </div>
 
           <template v-if="!searchActive">
-          <div v-if="!notesDir" class="tree-placeholder">
-            <div class="placeholder-text">未配置笔记库，请到设置页配置</div>
-          </div>
-          <div v-else-if="treeData.length === 0" class="tree-placeholder">
+          <div v-if="treeData.length === 0" class="tree-placeholder">
             <div class="placeholder-text">暂无文件</div>
           </div>
           <TreeNode
@@ -71,11 +71,13 @@ import { marked } from 'marked';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import TreeNode from '@/components/TreeNode.vue';
+import NotesGate from '@/components/NotesGate.vue';
 
 const API = window.electronAPI;
 
 // ========== 文件浏览 ==========
 const notesDir = ref('');
+const notesLoaded = ref(false);
 const treeData = ref<TreeNode[]>([]);
 const selectedFile = ref<any>(null);
 const fileContent = ref('');
@@ -105,6 +107,7 @@ async function loadNotesDir() {
   } catch (e) {
     console.warn('加载笔记库失败:', e);
   }
+  notesLoaded.value = true;
 }
 
 async function loadFileTree() {

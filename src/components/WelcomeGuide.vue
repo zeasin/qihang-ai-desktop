@@ -30,7 +30,7 @@
               设置笔记库目录
               <span class="step-status" v-if="kbDir">✓ 已配置</span>
             </div>
-            <p class="step-desc">笔记库是知识检索和 AI 问答的数据基础。选择一个包含 Markdown 文件的本地文件夹，保存后即可在知识库中浏览文件，并让 AI 基于你的笔记回答问题。</p>
+            <p class="step-desc">笔记库是本应用所有 AI 功能的数据基础，未配置时 AI 对话、任务执行、日报生成、知识库浏览均不可用。选择一个包含 Markdown 文件的本地文件夹，让 AI 基于你的笔记工作。</p>
             <button class="btn btn-sm btn-primary" @click="setupNotesDir" :disabled="kbDirLoading">
               {{ kbDirLoading ? '正在保存...' : kbDir ? '重新选择目录' : '📂 选择笔记库目录' }}
             </button>

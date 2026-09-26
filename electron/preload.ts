@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const VALID_CHANNELS = [
   'chat:delta', 'chat:status', 'chat:tool', 'chat:done', 'chat:error',
-  'coding:delta', 'coding:status', 'coding:tool', 'coding:done', 'coding:error',
   'kb:scan-progress', 'service:status', 'service:toggle', 'feishu:message',
   'indexer:progress', 'report:generated', 'aitool:delta', 'task:changed',
   'task:followup:delta', 'task:followup:done', 'task:followup:error',
@@ -36,9 +35,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     send: (message: string) => ipcRenderer.invoke('feishu:send', { message }),
     saveBot: (app_id: string, app_secret: string) => ipcRenderer.invoke('feishu:bot:save', { app_id, app_secret }),
     testBot: (app_id: string, app_secret: string) => ipcRenderer.invoke('feishu:testBot', { app_id, app_secret }),
-  },
-  code: {
-    search: (projectId: number, query: string) => ipcRenderer.invoke('code:search', { projectId, query }),
   },
 
   kb: {
@@ -106,7 +102,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     migrate: () => ipcRenderer.invoke('db:migrate'),
   },
 
-  // Chat (unified: general chat + coding workbench)
+  // Chat (general)
   chat: {
     send: (question: string, sessionId: string, projectDir: string, kbIds: number[], images: unknown, agent: string, modelName: string) =>
       ipcRenderer.invoke('chat:send', { question, sessionId, projectDir, kbIds, images, agent, modelName }),
@@ -120,16 +116,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateAgent: (sessionId: string, agent: string) => ipcRenderer.invoke('chat:session:updateAgent', { sessionId, agent }),
   },
 
-  // Projects (unified: note + code)
+  // Projects
   project: {
     list: (type?: string) => ipcRenderer.invoke('project:list', { type }),
     get: (id: number) => ipcRenderer.invoke('project:get', { id }),
-    add: (name: string, type: string, dir: string, description: string, defaultBranch: string) => {
-      if (type !== 'note' && type !== 'code' && type !== 'hybrid') {
-        return ipcRenderer.invoke('project:add', { name, type: 'code', dir: type || '', description: dir || '', defaultBranch: description });
-      }
-      return ipcRenderer.invoke('project:add', { name, type, dir, description, defaultBranch });
-    },
+    add: (name: string, type: string, dir: string, description: string, defaultBranch: string) =>
+      ipcRenderer.invoke('project:add', { name, type: type || 'note', dir, description, defaultBranch }),
     update: (id: number, data: unknown) => ipcRenderer.invoke('project:update', { id, data }),
     delete: (id: number) => ipcRenderer.invoke('project:delete', { id }),
   },
@@ -255,36 +247,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Embedding Model
   embedding: {
     test: (model: string, host: string, apiKey: string) => ipcRenderer.invoke("embedding:test", { model, host, apiKey }),
-  },
-
-  // Coding Workbench
-  coding: {
-    createSession: (id: string, projectId: number, title: string, agent: string) =>
-      ipcRenderer.invoke('coding:session:create', { id, projectId, title, agent }),
-    listSessionsByProject: (projectId: number) =>
-      ipcRenderer.invoke('coding:session:listByProject', { projectId }),
-    getMessages: (sessionId: string) =>
-      ipcRenderer.invoke('coding:session:messages', { sessionId }),
-    deleteSession: (sessionId: string) =>
-      ipcRenderer.invoke('coding:session:delete', { sessionId }),
-    updateTitle: (sessionId: string, title: string) =>
-      ipcRenderer.invoke('coding:session:updateTitle', { sessionId, title }),
-    switchAgent: (sessionId: string, agent: string) =>
-      ipcRenderer.invoke('coding:switchAgent', { sessionId, agent }),
-    send: (question: string, sessionId: string, projectDir: string, agent: string, images: unknown, modelName: string) =>
-      ipcRenderer.invoke('coding:send', { question, sessionId, projectDir, agent, images, modelName }),
-    changes: (sessionId: string, projectId: number) =>
-      ipcRenderer.invoke('coding:changes', { sessionId, projectId }),
-    applyChanges: (sessionId: string, projectId: number) =>
-      ipcRenderer.invoke('coding:changes:apply', { sessionId, projectId }),
-    commitChanges: (sessionId: string, projectId: number, message?: string, push?: boolean) =>
-      ipcRenderer.invoke('coding:changes:commit', { sessionId, projectId, message, push }),
-    abortChanges: (sessionId: string, projectId: number) =>
-      ipcRenderer.invoke('coding:changes:abort', { sessionId, projectId }),
-    discardChanges: (sessionId: string, projectId: number) =>
-      ipcRenderer.invoke('coding:changes:discard', { sessionId, projectId }),
-    listProjects: () => ipcRenderer.invoke('coding:projects'),
-    listSessions: (limit?: number) => ipcRenderer.invoke('coding:sessions', { limit }),
   },
 
   // Event listeners (streaming)

@@ -31,7 +31,7 @@ npm run electron:build  # 完整打包（前端 + 主进程 + electron-builder�
 - [ ] 改动通过 `npm run compile:electron` 与 `npm run build`
 - [ ] 未引入新的敏感信息（API Key、个人路径等）
 - [ ] 新功能在 README 中有对应说明（如有需要）
-- [ ] 涉及飞书/编程任务的改动尽量补冒烟验证（参考 `dist-electron/electron/services/` 下模块的可测试性）
+- [ ] 涉及飞书/定时任务的改动尽量补冒烟验证（参考 `dist-electron/electron/services/` 下模块的可测试性）
 
 ## 新增依赖的注意点
 
@@ -41,7 +41,7 @@ npm run electron:build  # 完整打包（前端 + 主进程 + electron-builder�
 ## 分支与提交
 
 - 直接向 `main` 提 PR 即可。
-- 提交信息建议用一句简明中文概括，如 `feat: 支持飞书编程指令`、`fix: 修复 worktree 分支冲突`。
+- 提交信息建议用一句简明中文概括，如 `feat: 支持飞书任务指令`、`fix: 修复定时任务重复触发`。
 
 ## 协议
 

@@ -897,6 +897,24 @@ function triggerTypeLabel(task: any): string {
 
 async function runTask(task: any, triggerType: string) {
   const start = nowString();
+  const project: any = task.project_id ? db.project.get(task.project_id) : null;
+  const notesDir = appConfig.getConfig('notesDir') || (project ? project.dir : '') || '';
+
+  // ===== 笔记库前置检查：AI 功能门禁 =====
+  // 未配置笔记库时任务不执行（无笔记工具、结果无处保存），记录失败并给出明确提示
+  if (!notesDir) {
+    const msg = '未配置笔记库目录，任务未执行。请先在「设置 → 📚 笔记库设置」中选择笔记库目录';
+    db.taskExecution.add({
+      task_id: task.id, task_title: task.title, status: 'FAILED',
+      trigger_type: triggerType, start_time: start, end_time: start, error_message: msg,
+    });
+    db.task.update(task.id, { last_status: 'FAILED', last_run_at: start, status: 'pending' });
+    sendNotification('❌ AI 任务未执行', task.title + '：' + msg);
+    if (task.notify_feishu) await sendFeishu(`❌ AI 任务「${task.title}」未执行：${msg}`);
+    notifyUI();
+    return;
+  }
+
   const execId = db.taskExecution.add({
     task_id: task.id, task_title: task.title, status: 'RUNNING',
     trigger_type: triggerType, start_time: start,
@@ -904,25 +922,14 @@ async function runTask(task: any, triggerType: string) {
   db.task.update(task.id, { status: 'in_progress', last_run_at: start, last_status: 'RUNNING' });
   notifyUI();
   try {
-    const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs, buildCodingToolDefs } = require('./tools');
+    const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs } = require('./tools');
     const customTools: any[] = [];
-    let cwd = '';
-    const project: any = task.project_id ? db.project.get(task.project_id) : null;
 
-    if (task.task_type === 'coding' && project) {
-      // 代码任务：直接在项目目录上执行（代码工具的写操作）
-      cwd = project.dir || '';
-      customTools.push(...(await buildReportToolDefs(undefined)));
-      customTools.push(...(await buildCodingToolDefs(cwd || undefined)));
-    } else {
-      // 笔记/知识任务：笔记库目录 + 笔记工具集
-      const notesDir = appConfig.getConfig('notesDir') || (project ? project.dir : '') || '';
-      cwd = notesDir;
-      customTools.push(...(await buildReportToolDefs(undefined)));
-      if (notesDir) customTools.push(...(await buildDataToolDefs(notesDir)));
-      const noteProj: any = task.project_id && project ? project : db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
-      if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id)));
-    }
+    // 笔记/知识任务：笔记库目录 + 笔记工具集
+    customTools.push(...(await buildReportToolDefs(undefined)));
+    customTools.push(...(await buildDataToolDefs(notesDir)));
+    const noteProj: any = task.project_id && project ? project : db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
+    if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id)));
 
     const piAgent = require('./pi-agent');
     const sessionId = 'task_' + task.id;
@@ -933,11 +940,11 @@ async function runTask(task: any, triggerType: string) {
       } catch {}
     }
     const contextLine = project ? `\n执行项目：${project.name}（${project.dir}）` : '';
-    const prompt = `你正在执行一个 AI 任务「${task.title}」。${contextLine}\n\n${task.prompt || '请根据任务标题自主完成并直接输出结果。'}\n\n执行要求：\n1. 先用可用工具查询所需数据（任务、对话记录、文档、数据集、笔记、外网资料等），再完成任务\n2. 若任务涉及修改文件/代码，直接在目标目录中完成\n3. 直接输出最终成果（Markdown 格式），不要输出过程说明、思考过程或"数据来源"等前缀`;
+    const prompt = `你正在执行一个 AI 任务「${task.title}」。${contextLine}\n\n${task.prompt || '请根据任务标题自主完成并直接输出结果。'}\n\n执行要求：\n1. 先用可用工具查询所需数据（任务、对话记录、文档、数据集、笔记、外网资料等），再完成任务\n2. 若任务涉及修改文件，直接在目标目录中完成\n3. 直接输出最终成果（Markdown 格式），不要输出过程说明、思考过程或"数据来源"等前缀`;
     const result = (await piAgent.generateDailyReport(sessionId, prompt)).trim();
     const end = nowString();
 
-    const savedNote = task.task_type === 'coding' ? '' : saveTaskResultToNote(task, result);
+    const savedNote = saveTaskResultToNote(task, result);
     const nextStatus = task.trigger_type === 'cycle' ? 'pending' : 'done';
     if (execId != null) db.taskExecution.update(execId, { status: 'SUCCESS', end_time: end, result_text: result, log_text: savedNote ? `已保存笔记：${savedNote}` : '' });
     db.task.update(task.id, { last_result: result.slice(0, 3000), last_status: 'SUCCESS', last_run_at: end, status: nextStatus });

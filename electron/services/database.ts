@@ -469,11 +469,11 @@ function close() {
   if (db) { try { db.close(); } catch {} db = null; }
 }
 
-// ========== Projects (unified: note + code) ==========
+// ========== Projects（笔记库） ==========
 const project = {
   list: (type?) => {
     if (type) return q('SELECT * FROM prj_projects WHERE type = ? ORDER BY sort_order ASC, created_at DESC', type);
-    return q("SELECT * FROM prj_projects ORDER BY CASE WHEN type = 'note' THEN 0 ELSE 1 END, sort_order ASC, created_at DESC");
+    return q("SELECT * FROM prj_projects WHERE type != 'code' ORDER BY sort_order ASC, created_at DESC");
   },
   get: (id) => qOne('SELECT * FROM prj_projects WHERE id = ?', id),
   getDefault: () => qOne('SELECT * FROM prj_projects WHERE is_default = 1'),
@@ -482,7 +482,7 @@ const project = {
     if (id) run('UPDATE prj_projects SET is_default = 1 WHERE id = ?', id);
   },
   add: (name, type, dir, description, defaultBranch) => {
-    const t = type || 'code';
+    const t = type || 'note';
     run('INSERT INTO prj_projects (name, type, dir, description, default_branch) VALUES (?, ?, ?, ?, ?)',
       name, t, dir || '', description || '', defaultBranch || '');
     const r = qOne('SELECT id FROM prj_projects WHERE name = ? AND type = ?', name, t);
@@ -540,7 +540,7 @@ const project = {
   },
 };
 
-// ========== Sessions & Messages (unified: chat + coding) ==========
+// ========== Sessions & Messages ==========
 const chat = {
   sessions: (projectId) => {
     try {
@@ -736,11 +736,11 @@ const reminder = {
   getActive: () => q("SELECT * FROM plan_reminders WHERE enabled = 1"),
 };
 
-// ========== AI 任务（挂在项目下：代码项目 / 笔记库） ==========
+// ========== AI 任务（挂在笔记库下） ==========
 const task = {
   list: (status?: string) => {
-    if (status) return q('SELECT * FROM plan_tasks WHERE status = ? ORDER BY created_at DESC', status);
-    return q('SELECT * FROM plan_tasks ORDER BY created_at DESC');
+    if (status) return q("SELECT * FROM plan_tasks WHERE status = ? AND IFNULL(task_type, '') != 'coding' ORDER BY created_at DESC", status);
+    return q("SELECT * FROM plan_tasks WHERE IFNULL(task_type, '') != 'coding' ORDER BY created_at DESC");
   },
   get: (id: number) => qOne('SELECT * FROM plan_tasks WHERE id = ?', id),
   add: (data: any) => {
@@ -795,7 +795,7 @@ const task = {
     run('DELETE FROM plan_tasks WHERE id = ?', id);
   },
   // 可调度的任务（定时 + 循环），用于恢复调度
-  schedulable: () => q("SELECT * FROM plan_tasks WHERE status IN ('pending', 'in_progress')"),
+  schedulable: () => q("SELECT * FROM plan_tasks WHERE status IN ('pending', 'in_progress') AND IFNULL(task_type, '') != 'coding'"),
   listByProject: (projectId: number) => q('SELECT * FROM plan_tasks WHERE project_id = ? ORDER BY created_at DESC', projectId),
 };
 

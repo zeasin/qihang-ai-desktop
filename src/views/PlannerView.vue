@@ -1,7 +1,10 @@
 <template>
   <div class="planner-view">
+    <!-- 未配置笔记库：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !notesDir" @ready="loadNotesDir" />
+
     <!-- ========== 笔记任务视图 ========== -->
-    <div class="planner-body">
+    <div v-if="!notesLoaded || notesDir" class="planner-body">
       <!-- 左：任务列表 -->
       <div class="task-list-pane">
         <div class="list-pane-header">
@@ -151,13 +154,6 @@
               <input type="text" class="form-control" v-model="projectForm.name" placeholder="如 CRM系统">
             </div>
             <div class="form-group">
-              <label>项目类型</label>
-              <select class="form-control" v-model="projectForm.type">
-                <option value="note">📚 笔记库</option>
-                <option value="code">💻 代码库</option>
-              </select>
-            </div>
-            <div class="form-group">
               <label>目录路径</label>
               <div style="display:flex;gap:8px;">
                 <input type="text" class="form-control" v-model="projectForm.dir" placeholder="选择目录..." readonly>
@@ -191,7 +187,7 @@
             </div>
             <div class="form-group">
               <label>任务标题 *</label>
-              <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 修复登录超时">
+              <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 整理本周笔记">
             </div>
             <div class="form-group">
               <label>任务诉求（AI 将据此执行）</label>
@@ -290,6 +286,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
+import NotesGate from '@/components/NotesGate.vue';
 
 const API = window.electronAPI;
 
@@ -308,6 +305,8 @@ interface Project { id: number; name: string; type: string; dir: string; }
 
 const tasks = ref<AiTask[]>([]);
 const projects = ref<Project[]>([]);
+const notesDir = ref('');
+const notesLoaded = ref(false);
 
 const noteProjects = computed(() => projects.value.filter(p => p.type === 'note'));
 
@@ -393,7 +392,7 @@ const showDeleteModal = ref(false);
 const deletingTask = ref<AiTask | null>(null);
 const deletingProject = ref<Project | null>(null);
 const showProjectModal = ref(false);
-const projectForm = ref({ name: '', dir: '', type: 'note' });
+const projectForm = ref({ name: '', dir: '' });
 
 const weekDays = [
   { label: '周一', value: 1 }, { label: '周二', value: 2 }, { label: '周三', value: 3 },
@@ -425,7 +424,7 @@ async function loadProjects() {
 
 // ========== 项目 CRUD ==========
 function createProject() {
-  projectForm.value = { name: '', dir: '', type: 'note' };
+  projectForm.value = { name: '', dir: '' };
   showProjectModal.value = true;
 }
 
@@ -436,9 +435,9 @@ async function selectDir() {
 async function saveProject() {
   if (!projectForm.value.name.trim()) return;
   try {
-    await API.project.add(projectForm.value.name.trim(), projectForm.value.type, projectForm.value.dir || '', '', '');
+    await API.project.add(projectForm.value.name.trim(), 'note', projectForm.value.dir || '', '', '');
     showProjectModal.value = false;
-    projectForm.value = { name: '', dir: '', type: 'note' };
+    projectForm.value = { name: '', dir: '' };
     await loadProjects();
   } catch (e: any) { alert('创建项目失败: ' + (e.message || e)); }
 }
@@ -475,13 +474,12 @@ async function saveTask() {
   if (!t.project_id) { alert('请选择归属项目'); return; }
   if (!t.title.trim()) { alert('请输入任务标题'); return; }
   if (t.trigger_type === 'once' && !t.scheduled_start) { alert('指定时间任务请选择执行时间'); return; }
-  const proj = projects.value.find(p => p.id === Number(t.project_id));
   let cycleValue = t.cycle_value || '';
   if (t.cycle_type === 'weekly') cycleValue = editingWeekDays.value.join(',');
   if (t.cycle_type === 'monthly') cycleValue = String(editingMonthDays.value || 1);
   const data = {
     title: t.title, prompt: t.prompt,
-    task_type: proj && proj.type === 'code' ? 'coding' : 'note',
+    task_type: 'note',
     project_id: t.project_id,
     trigger_type: t.trigger_type,
     scheduled_start: t.trigger_type === 'once' ? t.scheduled_start : '',
@@ -579,7 +577,7 @@ function statusText(status: string): string {
 }
 
 function getTriggerText(task: AiTask): string {
-  const type = task.task_type === 'coding' ? '💻 编程' : '📚 知识';
+  const type = '📚 知识';
   if (task.trigger_type === 'once') return type + ' · 指定时间：' + (task.scheduled_start || '未设置');
   if (task.trigger_type === 'cycle') {
     switch (task.cycle_type) {
@@ -602,8 +600,13 @@ function triggerLabel(type: string): string {
 
 function onTaskChanged() { loadTasks(); }
 
+async function loadNotesDir() {
+  try { notesDir.value = await API.kb.getDir(); } catch { notesDir.value = ''; }
+  notesLoaded.value = true;
+}
+
 onMounted(async () => {
-  await Promise.all([loadProjects(), loadTasks()]);
+  await Promise.all([loadProjects(), loadTasks(), loadNotesDir()]);
   ensureSelectedTask();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
   window.electronAPI?.on?.('task:followup:delta', handleFollowupDelta);

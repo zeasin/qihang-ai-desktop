@@ -33,27 +33,18 @@
 
     <!-- ========== 右栏：对话区 ========== -->
     <div class="chat-main">
+      <!-- 未配置笔记库：AI 功能门禁 -->
+      <NotesGate v-if="kbLoaded && !kbDir" @ready="onGateReady" />
+
       <!-- 无对话时：分步引导 -->
-      <div v-if="!currentSessionId && kbLoaded" class="chat-empty">
+      <div v-else-if="!currentSessionId && kbLoaded" class="chat-empty">
         <div class="empty-icon">🚀</div>
         <div class="empty-title">欢迎使用启航 AI 工作台</div>
         <div class="empty-desc">首次使用？跟着以下步骤快速上手</div>
 
         <div class="guide-card">
-          <div class="guide-step" :class="{ done: !!defaultKbId }">
-            <div class="step-index">{{ defaultKbId ? '✓' : '1' }}</div>
-            <div class="step-content">
-              <div class="step-title">配置本地笔记库</div>
-              <div class="step-desc">
-                <template v-if="defaultKbId">笔记库已配置，AI 问答将基于你的笔记进行</template>
-                <template v-else>笔记库用于知识检索与 AI 问答，可在设置页随时修改</template>
-              </div>
-              <button v-if="!defaultKbId" class="btn btn-primary" @click="setupNotesDir">📂 选择笔记库目录</button>
-            </div>
-          </div>
-
           <div class="guide-step">
-            <div class="step-index">2</div>
+            <div class="step-index">1</div>
             <div class="step-content">
               <div class="step-title">开始第一个对话</div>
               <div class="step-desc">支持 日常问答 · 笔记库检索 · 数据查询 · 图片识别</div>
@@ -62,7 +53,7 @@
           </div>
 
           <div class="guide-step">
-            <div class="step-index">3</div>
+            <div class="step-index">2</div>
             <div class="step-content">
               <div class="step-title">探索更多功能</div>
               <div class="step-desc">任务待办 · 数据集管理 · 定时提醒 · AI 工具箱</div>
@@ -178,6 +169,7 @@
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
+import NotesGate from '@/components/NotesGate.vue';
 
 // 配置 marked 以启用换行和 GFM
 marked.setOptions({
@@ -237,17 +229,9 @@ async function loadPiModels() {
   modelsLoaded.value = true;
 }
 
-async function setupNotesDir() {
-  try {
-    const dir = await API.dialog.openDirectory();
-    if (!dir) return;
-    const p = await API.kb.setDir(dir);
-    await loadKbLibraries();
-    await loadSessions();
-    await newSession();
-  } catch (e: any) {
-    alert('配置失败: ' + (e.message || e));
-  }
+async function onGateReady() {
+  await loadKbLibraries();
+  await loadSessions();
 }
 
 async function loadSessions() {
