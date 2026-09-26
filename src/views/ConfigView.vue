@@ -284,62 +284,10 @@
         <span v-if="feishuStatus" class="text-muted" :style="{ color: feishuStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ feishuStatus }}</span>
       </div>
 
-      <!-- 云端数据库（MySQL） -->
-      <div class="card">
-        <h2>☁️ 云端数据库（MySQL）</h2>
-        <div class="text-muted mb-2">默认使用本地 SQLite。填写连接信息后，会话、项目、待办、提醒、数据中心等主数据将存储到云端 MySQL（知识库索引留在本地），软件重装或损坏不影响云端数据。</div>
-        <div class="flex" style="gap:8px;align-items:center;margin-bottom:12px;">
-          <span class="badge" :class="dbModeBadgeClass">{{ dbModeText }}</span>
-          <span v-if="dbCloudState === 'ready'" class="badge badge-success">● 云端已连接</span>
-          <span v-else-if="!dbEnabled && dbCloudConfigured" class="badge badge-gray">⏸ 云端已停用</span>
-          <span v-else-if="dbCloudConfigured && dbCloudState === 'failed'" class="badge badge-danger">● 连接失败</span>
-          <span v-else-if="dbCloudConfigured && dbCloudState === 'starting'" class="badge badge-warning">⏳ 连接中...</span>
-          <span v-else class="badge badge-gray">○ 未配置</span>
-          <span style="flex:1"></span>
-          <label class="toggle" title="关闭后主数据（会话、项目、待办、提醒、数据中心等）切回本地 SQLite，云端连接信息保留，重新开启即可恢复云端">
-            <input type="checkbox" v-model="dbEnabled" @change="toggleDbEnabled">
-            <span class="slider"></span>
-          </label>
-          <span class="text-muted" style="font-size:12px;">启用云端数据库</span>
-        </div>
-        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
-          <div class="form-group" style="flex:1;min-width:200px;">
-            <label style="font-size:12px;">主机地址</label>
-            <input v-model="dbHost" type="text" class="form-control" placeholder="如 rm-xxxx.mysql.rds.aliyuncs.com" :disabled="!dbEnabled">
-          </div>
-          <div class="form-group" style="flex:0 0 90px;">
-            <label style="font-size:12px;">端口</label>
-            <input v-model="dbPort" type="text" class="form-control" placeholder="3306" :disabled="!dbEnabled">
-          </div>
-          <div class="form-group" style="flex:1;min-width:150px;">
-            <label style="font-size:12px;">用户名</label>
-            <input v-model="dbUser" type="text" class="form-control" placeholder="MySQL 账号" :disabled="!dbEnabled">
-          </div>
-          <div class="form-group" style="flex:1;min-width:150px;">
-            <label style="font-size:12px;">密码</label>
-            <input v-model="dbPassword" type="password" class="form-control" placeholder="MySQL 密码" :disabled="!dbEnabled">
-          </div>
-          <div class="form-group" style="flex:1;min-width:150px;">
-            <label style="font-size:12px;">数据库名</label>
-            <input v-model="dbName" type="text" class="form-control" placeholder="如 qihang_work" :disabled="!dbEnabled">
-          </div>
-          <div class="form-group" style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding-bottom:4px;">
-            <label style="font-size:12px;margin:0;">SSL 连接</label>
-            <input v-model="dbSsl" type="checkbox" style="margin:0;" :disabled="!dbEnabled">
-          </div>
-        </div>
-        <div class="flex" style="gap:8px;flex-wrap:wrap;margin-top:4px;">
-          <button class="btn btn-primary" @click="saveDbConfig" :disabled="!dbEnabled">保存并连接</button>
-          <button class="btn btn-secondary" @click="testDbConfig" :disabled="!dbEnabled">测试连接</button>
-          <button class="btn btn-secondary" @click="migrateDb" :disabled="dbMigrating || !dbEnabled || !dbCloudConfigured">{{ dbMigrating ? '迁移中...' : '迁移本地数据到云端' }}</button>
-        </div>
-        <span v-if="dbStatus" class="text-muted" :style="{ color: dbStatus.startsWith('✅') ? '#22c55e' : dbStatus.startsWith('⏳') ? '#f59e0b' : '#ef4444' }" style="margin-top:8px;display:block;">{{ dbStatus }}</span>
-      </div>
-
       <!-- Backup / Restore -->
       <div class="card">
         <h2>💾 数据备份与恢复</h2>
-        <div class="text-muted mb-2">备份本地 SQLite 快照（知识库索引）。云端模式下，会话、项目、待办等主数据存储在云 MySQL（云厂商自带备份），本地备份仅覆盖知识库索引；恢复后需重启应用生效。</div>
+        <div class="text-muted mb-2">备份本地 SQLite 快照（会话、项目、待办、数据中心、知识库索引等全部数据）；恢复后需重启应用生效。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
           <div class="form-group" style="flex:1;min-width:300px;margin:0;">
             <label style="font-size:12px;">备份目录（建议选择其他盘符）</label>
@@ -768,135 +716,6 @@ const backupList = ref<any[]>([]);
 const autoBackupEnabled = ref(false);
 const backupRetention = ref('30');
 const backupDir = ref('');
-
-// 云端数据库
-const dbHost = ref('');
-const dbPort = ref('3306');
-const dbUser = ref('');
-const dbPassword = ref('');
-const dbName = ref('');
-const dbSsl = ref(false);
-const dbEnabled = ref(true);
-const dbStatus = ref('');
-const dbMode = ref<'cloud' | 'local'>('local');
-const dbCloudConfigured = ref(false);
-const dbCloudState = ref('idle');
-const dbMigrating = ref(false);
-
-const dbModeText = computed(() => dbMode.value === 'cloud' ? '☁️ 云端 MySQL 模式' : '💾 本地 SQLite 模式');
-const dbModeBadgeClass = computed(() => dbMode.value === 'cloud' ? 'badge-primary' : 'badge-gray');
-
-async function loadDbStatus() {
-  try {
-    const s = await API.db.status();
-    dbMode.value = s.mode || 'local';
-    dbCloudConfigured.value = !!s.configured;
-    dbEnabled.value = s.enabled !== false;
-    dbCloudState.value = dbEnabled.value ? (s.state || 'idle') : 'idle';
-    if (s.host) {
-      dbHost.value = s.host;
-      dbPort.value = s.port || '3306';
-      dbName.value = s.dbName || '';
-      dbSsl.value = s.dbSsl === '1';
-    }
-  } catch {}
-}
-
-async function toggleDbEnabled() {
-  if (!dbEnabled.value) {
-    if (!confirm('关闭云端数据库后，主数据（会话、项目、待办、提醒、数据中心等）将切换回本地 SQLite 存储。云端数据仍保留在云 MySQL 中，重新开启即可继续使用。确定关闭？')) {
-      dbEnabled.value = true;
-      return;
-    }
-  }
-  try {
-    await API.config.set({ dbEnabled: dbEnabled.value ? '1' : '0' });
-    await API.db.reload();
-    await loadDbStatus();
-    if (dbEnabled.value) {
-      dbStatus.value = 'ℹ️ 云端数据库已启用，请点击「保存并连接」或「测试连接」';
-    } else {
-      dbStatus.value = '✅ 已切换到本地 SQLite 模式，云端连接信息已保留';
-      setTimeout(() => { if (dbStatus.value.startsWith('✅')) dbStatus.value = ''; }, 5000);
-    }
-  } catch (e: any) {
-    dbEnabled.value = !dbEnabled.value;
-    dbStatus.value = '❌ ' + (e.message || '操作失败');
-  }
-}
-
-async function saveDbConfig() {
-  if (!dbHost.value.trim() || !dbUser.value.trim() || !dbName.value.trim()) {
-    dbStatus.value = '❌ 请填写主机、用户名和数据库名';
-    return;
-  }
-  try {
-    await API.config.set({
-      dbEnabled: dbEnabled.value ? '1' : '0',
-      dbHost: dbHost.value.trim(),
-      dbPort: dbPort.value.trim() || '3306',
-      dbUser: dbUser.value.trim(),
-      dbPassword: dbPassword.value,
-      dbName: dbName.value.trim(),
-      dbSsl: dbSsl.value ? '1' : '0',
-    });
-    await API.db.reload();
-    await loadDbStatus();
-    dbStatus.value = '⏳ 配置已保存，正在连接云端数据库...';
-    const r = await API.db.test();
-    if (r.ok && r.mode === 'cloud') {
-      dbStatus.value = `✅ 已连接云端数据库（延迟 ${r.latencyMs ?? '?'}ms），主数据将存储到云端。如需导入本地数据，请点击「迁移本地数据到云端」`;
-      dbCloudState.value = 'ready';
-    } else {
-      dbStatus.value = '⚠️ 配置已保存，但连接失败：' + (r.error || '未知错误');
-    }
-    setTimeout(() => { if (dbStatus.value.startsWith('✅')) dbStatus.value = ''; }, 6000);
-  } catch (e: any) {
-    dbStatus.value = '❌ ' + (e.message || '保存失败');
-  }
-}
-
-async function testDbConfig() {
-  if (!dbEnabled.value) {
-    dbStatus.value = 'ℹ️ 云端数据库已停用（当前使用本地 SQLite），请先打开「启用云端数据库」开关';
-    return;
-  }
-  dbStatus.value = '⏳ 正在测试连接...';
-  try {
-    const r = await API.db.test();
-    if (r.ok && r.mode === 'cloud') {
-      dbStatus.value = `✅ 云端数据库连接正常（延迟 ${r.latencyMs ?? '?'}ms）`;
-      dbCloudState.value = 'ready';
-    } else if (r.ok && r.mode === 'local') {
-      dbStatus.value = 'ℹ️ 当前为本地 SQLite 模式（未配置云 MySQL）';
-    } else {
-      dbStatus.value = '❌ ' + (r.error || '连接失败');
-      dbCloudState.value = 'failed';
-    }
-  } catch (e: any) {
-    dbStatus.value = '❌ ' + (e.message || '测试异常');
-  }
-  setTimeout(() => { if (dbStatus.value.startsWith('✅')) dbStatus.value = ''; }, 6000);
-}
-
-async function migrateDb() {
-  if (!confirm('将把本地 SQLite 中的会话、项目、待办、提醒、数据中心、AI 分析等数据导入云端 MySQL（知识库索引留本地）。\n\n云端同名表数据会被清空后重新导入，确定继续？')) return;
-  dbMigrating.value = true;
-  dbStatus.value = '⏳ 正在迁移，请稍候...';
-  try {
-    const r = await API.db.migrate();
-    if (r.ok) {
-      const parts = Object.entries(r.counts || {}).map(([t, c]) => `${t}: ${c}`);
-      dbStatus.value = `✅ 迁移完成：${parts.join('，')}`;
-    } else {
-      dbStatus.value = '❌ ' + (r.error || '迁移失败');
-    }
-  } catch (e: any) {
-    dbStatus.value = '❌ ' + (e.message || '迁移失败');
-  }
-  dbMigrating.value = false;
-  setTimeout(() => { if (dbStatus.value.startsWith('✅')) dbStatus.value = ''; }, 8000);
-}
 
 async function loadBackups() {
   try { backupList.value = await API.backup.list(); } catch { backupList.value = []; }
@@ -1328,7 +1147,6 @@ onMounted(async () => {
   await loadSchedulerStatus();
   await loadBackups();
   await loadAutoBackup();
-  await loadDbStatus();
   try {
     const svc = await API.service.status();
     feishuRunning.value = svc.feishu;

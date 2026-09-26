@@ -251,7 +251,7 @@ async function insertDatasetRecordTool({ datasetName, data }) {
   const obj = parseJsonArg(data, 'data');
   if (obj.error) return obj.error;
   db.ds.insert(ds.id, normalizeDatasetRecord(ds.id, obj));
-  const r = db.qOne("SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1", ds.id);
+  const r = db.qOne("SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1", String(ds.id));
   logger.info('[Tools] insert_dataset_record: %s → id %s', datasetName, r ? r.id : '?');
   return `已向数据集 "${ds.name}" 插入一条记录 (id: ${r ? r.id : '?'})`;
 }

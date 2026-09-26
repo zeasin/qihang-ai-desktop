@@ -43,7 +43,6 @@ import * as aitool from './services/ai-tools';
 import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './services/builtin-datasets';
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
 import * as backup from './services/backup';
-import { migrateLocalToCloud } from './services/migrate-cloud';
 import * as feishu from './services/feishu';
 import * as scheduler from './services/scheduler';
 import * as indexer from './services/indexer';
@@ -447,7 +446,7 @@ const feishuMessageHandler = async (msg) => {
         const inserted: number[] = [];
         for (const it of items) {
           db.ds.insert(ds.id, { 项目: wo.project, 端: detectWorkOrderEnd(it), 详细: it, 优先级: '中' });
-          const r = db.qOne('SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', ds.id);
+          const r = db.qOne('SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', String(ds.id));
           if (r) inserted.push(r.id);
         }
         const summary = `✅ 已向「${ds.name}」数据集写入 ${inserted.length} 条工单（项目：${wo.project}）\n\n${items.map((it, i) => `${i + 1}. ${it.slice(0, 60)}${it.length > 60 ? '…' : ''}`).join('\n')}\n\n可在「数据中心 → 项目工单」中查看与编辑。`;
@@ -916,34 +915,11 @@ ipcMain.handle('backup:openDir', async (_, { dir }) => {
   } catch (e: any) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 
-// --- 云端数据库（MySQL） ---
-ipcMain.handle('db:status', () => {
-  const s = db.getCloudStatus();
-  return {
-    enabled: s.enabled,
-    configured: s.configured,
-    state: s.state,
-    error: s.error,
-    mode: db.getDbMode(),
-    host: appConfig.getConfig('dbHost'),
-    port: appConfig.getConfig('dbPort') || '3306',
-    dbName: appConfig.getConfig('dbName'),
-    dbSsl: appConfig.getConfig('dbSsl'),
-  };
-});
-ipcMain.handle('db:test', async () => db.checkCloud());
-ipcMain.handle('db:reload', () => {
-  db.reloadCloud();
-  return { ok: true };
-});
-ipcMain.handle('db:migrate', async () => migrateLocalToCloud());
-
-
 ipcMain.handle('ds:pendingRecords', () => {
   const datasets = db.q("SELECT id, name FROM data_center_datasets ORDER BY name");
   const result: any[] = [];
   for (const ds of datasets) {
-    const records = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? AND (record_status IS NULL OR record_status = '' OR record_status = 'pending') ORDER BY created_at DESC LIMIT 5", ds.id);
+    const records = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? AND (record_status IS NULL OR record_status = '' OR record_status = 'pending') ORDER BY created_at DESC LIMIT 5", String(ds.id));
     if (records.length) {
       result.push({
         datasetName: ds.name,
@@ -1251,7 +1227,7 @@ ipcMain.handle('archive:moduleAnalysis', async (_, { moduleId, force }) => {
 
   for (const dsRow of dsRows) {
     const rows = db.ds.query(dsRow.id, null);
-    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", dsRow.id) || {}).c || 0;
+    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", String(dsRow.id)) || {}).c || 0;
     totalRecords += count;
     dsSummary.push({ name: dsRow.name, count, description: dsRow.description });
 
@@ -1344,8 +1320,8 @@ ipcMain.handle('archive:moduleOverview', async (_, { moduleId }) => {
   if (!mod) return { ok: false, error: '模块不存在' };
   const dsRows = db.q('SELECT id, name, description, schema_json, created_at FROM data_center_datasets WHERE module_id = ? ORDER BY created_at DESC', moduleId);
   const datasets = dsRows.map(dsRow => {
-    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", dsRow.id) || {}).c || 0;
-    const recentRows = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY created_at DESC LIMIT 5", dsRow.id);
+    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", String(dsRow.id)) || {}).c || 0;
+    const recentRows = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY created_at DESC LIMIT 5", String(dsRow.id));
     const recentRecords = recentRows.map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
     return {
       datasetId: dsRow.id,
@@ -1796,40 +1772,11 @@ app.whenReady().then(async () => {
   } else {
     Menu.setApplicationMenu(null);
   }
-  // 命令行迁移模式：electron . --migrate-cloud
-  if (process.argv.includes('--migrate-cloud')) {
-    logger.info('[Migrate] 命令行迁移模式启动');
-    const r = await migrateLocalToCloud((msg, cur, total) => {
-      logger.info('[Migrate] %s (%d/%d)', msg, cur, total);
-    });
-    if (r.ok) {
-      logger.info('[Migrate] 迁移完成: %j', r.counts);
-      console.log('[Migrate] 迁移完成: ' + JSON.stringify(r.counts));
-    } else {
-      logger.error('[Migrate] 迁移失败: %s', r.error);
-      console.error('[Migrate] 迁移失败: ' + r.error);
-    }
-    app.exit(r.ok ? 0 : 1);
-    return;
-  }
   try {
     await db.getDb();
+    logger.info('Database mode: local (SQLite)');
   } catch (e) {
     logger.error('DB init error: %s', e);
-  }
-  // 云端数据库健康检查（未配置云 MySQL 时为本地模式，不弹窗）
-  const cloudHealth = await db.checkCloud();
-  if (cloudHealth.ok) {
-    logger.info('Database mode: %s%s', cloudHealth.mode === 'cloud' ? 'cloud (MySQL)' : 'local (SQLite)',
-      cloudHealth.mode === 'cloud' && cloudHealth.latencyMs !== undefined ? ', latency=' + cloudHealth.latencyMs + 'ms' : '');
-  } else {
-    logger.error('Cloud DB init error: %s', cloudHealth.error);
-    dialog.showErrorBox('云端数据库连接失败',
-      '已配置云 MySQL 但连接失败，应用主数据将无法读写。\n\n错误信息：' + (cloudHealth.error || '未知错误') +
-      '\n\n请在 设置 → 云端数据库 中检查配置，并确认：\n' +
-      '1. 云 MySQL 实例已开启外网访问\n' +
-      '2. 本机公网 IP 已加入云 MySQL 白名单\n' +
-      '3. 数据库名存在且账号有权限');
   }
   startupElapsed('db loaded');
   createTray();

@@ -1,20 +1,14 @@
 /**
  * 数据库服务（database.ts）
  *
- * 双存储架构：
- *  - 本地 SQLite（better-sqlite3）：知识库索引 kb_documents / kb_chunks（体积大、含向量，不上云）
- *  - 云端 MySQL（mysql2 + worker 同步桥）：会话、项目、待办、提醒、数据中心、AI 分析、工具历史
- *
- * 为了保持既有同步调用风格（better-sqlite3 同步 API），云端查询通过
- * worker 线程 + SharedArrayBuffer + Atomics.wait 实现"同步桥"，所有既有调用点无需改动。
- * 云端连接配置见 config.json：dbHost / dbPort / dbUser / dbPassword / dbName / dbSsl。
+ * 本地 SQLite（better-sqlite3）单存储：会话、项目、待办、提醒、数据中心、
+ * AI 分析、工具历史、知识库索引 kb_documents / kb_chunks 全部保存在
+ * 用户主目录 .qihang-ai-desktop 下。
  */
 import * as path from 'path';
 import * as fs from 'fs';
 import Database from 'better-sqlite3';
-import { Worker } from 'worker_threads';
 import logger from './logger';
-import { getCloudDbConfig, CloudDbConfig, isCloudEnabled, hasCloudCredentials } from './cloud-db';
 
 const DB_DIR = path.join(require('os').homedir(), '.qihang-ai-desktop');
 const DB_PATH = path.join(DB_DIR, 'qihang-ai-desktop.db');
@@ -30,11 +24,7 @@ function getDb(): Database.Database {
   return db;
 }
 
-/**
- * 本地 SQLite 表结构（与云端 MySQL 表结构一致）。
- * 未配置云 MySQL 时作为默认存储使用；配置云 MySQL 后业务表只使用云端，
- * 本地仅读写 kb_* 知识库表。
- */
+/** 本地 SQLite 表结构 */
 function initSchema() {
   getDb().exec(`
 
@@ -269,173 +259,12 @@ function initSchema() {
   } catch (e) {}
 }
 
-// ==================== 云端 MySQL 同步桥 ====================
-
-const CLOUD_TIMEOUT_MS = 20000;
-const SAB_SIZE = 64 * 1024 * 1024; // 64MB 结果缓冲
-const HEADER_BYTES = 8;            // flag Int32Array(0..2) 占用 8 字节
-
-let _worker: Worker | null = null;
-let _workerState: 'starting' | 'ready' | 'failed' = 'starting';
-let _workerError = '';
-let _sab: SharedArrayBuffer | null = null;
-let _flag: Int32Array | null = null;
-let _reqSeq = 0;
-
-/** 当前存储模式：配置了云 MySQL 时为 cloud，否则本地 SQLite 兜底 */
-export function getDbMode(): 'cloud' | 'local' {
-  return getCloudDbConfig() ? 'cloud' : 'local';
-}
-
-/**
- * 判断 SQL 归属：
- *  - kb_* 知识库表：永远走本地 SQLite
- *  - 其余业务表：配置了云 MySQL 时走云端；未配置时回退本地 SQLite
- */
-function routeTarget(sql: string): 'local' | 'cloud' {
-  if (/\bkb_documents\b|\bkb_chunks\b/i.test(sql)) return 'local';
-  return getDbMode() === 'cloud' ? 'cloud' : 'local';
-}
-
-function resolveWorkerPath(): string {
-  let p = path.join(__dirname, '..', 'worker', 'db-worker.js');
-  const unpacked = p.replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
-  if (p !== unpacked && fs.existsSync(unpacked)) p = unpacked;
-  return p;
-}
-
-function ensureWorker(): Worker {
-  if (_worker) return _worker;
-  const cfg = getCloudDbConfig();
-  if (!cfg) {
-    throw new Error('未配置云端数据库：请在设置页填写 MySQL 主机/账号/密码/库名（config.json 的 dbHost/dbUser/dbPassword/dbName）');
-  }
-  _sab = new SharedArrayBuffer(SAB_SIZE);
-  _flag = new Int32Array(_sab, 0, 2);
-  _workerState = 'starting';
-  _workerError = '';
-  _worker = new Worker(resolveWorkerPath(), { workerData: { config: cfg } });
-  _worker.on('message', (msg: any) => {
-    if (msg && msg.type === 'ready') _workerState = 'ready';
-    else if (msg && msg.type === 'error') { _workerState = 'failed'; _workerError = msg.message || '未知错误'; }
-  });
-  _worker.on('error', (e: any) => { _workerState = 'failed'; _workerError = (e && e.message) || String(e); });
-  _worker.on('exit', () => { _worker = null; });
-  return _worker;
-}
-
-/** 当前中国时区时间字符串 YYYY-MM-DD HH:MM:SS */
-function nowChinaString(): string {
-  const d = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-}
-
-/** 将 SQLite 方言转换为 MySQL 可执行 SQL（所有云端语句统一经过此转换） */
-function rewriteCloudSql(sql: string): string {
-  const now = nowChinaString();
-  const today = now.slice(0, 10);
-  let s = sql.replace(/datetime\('now',\s*'\+8 hours',\s*'start of day'\)/gi, `'${today} 00:00:00'`);
-  s = s.replace(/datetime\('now',\s*'\+8 hours'\)/gi, `'${now}'`);
-  s = s.replace(/date\('now',\s*'\+8 hours'\)/gi, `'${today}'`);
-  s = s.replace(/date\('now'\)/gi, `'${today}'`);
-  s = s.replace(/\bINSERT OR REPLACE INTO\b/gi, 'REPLACE INTO');
-  s = s.replace(/\bINSERT OR IGNORE INTO\b/gi, 'INSERT IGNORE INTO');
-  return s;
-}
-
-/** 同步桥：阻塞等待云端查询结果（单飞模式；worker 初始化期间查询会被暂存，等待覆盖初始化耗时） */
-function cloudSync(sql: string, params: any[]): any[] {
-  const w = ensureWorker();
-  if (_workerState === 'failed') {
-    throw new Error('云端数据库连接异常：' + _workerError);
-  }
-  const id = ++_reqSeq;
-  const safeParams = params.map(p => (p === undefined ? null : p));
-  w.postMessage({ type: 'query', id, sql: rewriteCloudSql(sql), params: safeParams, sab: _sab });
-  while (true) {
-    const r = Atomics.wait(_flag!, 0, 0, CLOUD_TIMEOUT_MS);
-    if (r !== 'ok') {
-      // 超时：不复位 flag（防止 worker 迟到写入被下一轮误读），直接抛错
-      throw new Error('云端数据库请求超时（' + CLOUD_TIMEOUT_MS / 1000 + ' 秒）');
-    }
-    const state = Atomics.load(_flag!, 0);
-    const len = Atomics.load(_flag!, 1);
-    Atomics.store(_flag!, 0, 0);
-    Atomics.store(_flag!, 1, 0);
-    const json = new TextDecoder().decode(new Uint8Array(_sab!, HEADER_BYTES, len));
-    let res: any;
-    try { res = JSON.parse(json); } catch { continue; }
-    if (res.id !== id) continue; // 上一轮超时残留的过期结果，忽略并继续等待
-    if (!res.ok) throw new Error(res.error || '云端数据库查询失败');
-    return res.rows || [];
-  }
-}
-
-/** 云端连接健康检查（应用启动 / 设置页测试用）。未配置云 MySQL 时返回 local 模式。 */
-export async function checkCloud(): Promise<{ ok: boolean; mode: 'cloud' | 'local'; error?: string; latencyMs?: number }> {
-  try {
-    const cfg = getCloudDbConfig();
-    if (!cfg) {
-      return { ok: true, mode: 'local', error: '未配置云端数据库（当前使用本地 SQLite）' };
-    }
-    const w = ensureWorker();
-    if (_workerState === 'ready') {
-      const t0 = Date.now();
-      cloudSync('SELECT 1', []);
-      return { ok: true, mode: 'cloud', latencyMs: Date.now() - t0 };
-    }
-    if (_workerState === 'failed') {
-      return { ok: false, mode: 'cloud', error: _workerError || '连接失败' };
-    }
-    return await new Promise((resolve) => {
-      let done = false;
-      const timer = setTimeout(() => finish({ ok: false, error: '连接超时（25 秒），请检查网络与云 MySQL 白名单' }), 25000);
-      function finish(r: { ok: boolean; error?: string }) {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        w.removeListener('message', onMsg);
-        w.removeListener('error', onErr);
-        resolve({ ...r, mode: 'cloud' as const });
-      }
-      const onMsg = (msg: any) => {
-        if (msg && msg.type === 'ready') finish({ ok: true });
-        else if (msg && msg.type === 'error') finish({ ok: false, error: msg.message || '连接失败' });
-      };
-      const onErr = (e: any) => finish({ ok: false, error: (e && e.message) || String(e) });
-      w.on('message', onMsg);
-      w.on('error', onErr);
-    });
-  } catch (e: any) {
-    return { ok: false, mode: 'cloud', error: (e && e.message) || String(e) };
-  }
-}
-
-/** 云端连接状态（设置页展示用） */
-export function getCloudStatus(): { enabled: boolean; configured: boolean; state: string; error: string } {
-  return { enabled: isCloudEnabled(), configured: hasCloudCredentials(), state: _workerState, error: _workerError };
-}
-
-/** 修改云端配置后调用：终止旧连接，下次查询自动按新配置重连 */
-export function reloadCloud(): void {
-  if (_worker) {
-    try { _worker.terminate(); } catch {}
-    _worker = null;
-  }
-  _workerState = 'starting';
-  _workerError = '';
-}
-
 // ========== Helpers ==========
 
 function q<T = any>(sql: string, ...params: any[]): T[] {
   try {
-    if (routeTarget(sql) === 'local') {
-      const stmt = getDb().prepare(sql);
-      return (params.length ? stmt.all(...params) : stmt.all()) as T[];
-    }
-    return cloudSync(sql, params) as T[];
+    const stmt = getDb().prepare(sql);
+    return (params.length ? stmt.all(...params) : stmt.all()) as T[];
   } catch (e: any) {
     logger.error('[DB] SQL error: %s | SQL: %s', e.message, sql.slice(0, 200));
     throw e;
@@ -448,11 +277,8 @@ function qOne<T = any>(sql: string, ...params: any[]): T | null {
 }
 
 function run(sql: string, ...params: any[]) {
-  if (routeTarget(sql) === 'local') {
-    try { getDb().prepare(sql).run(...params); return; }
-    catch (e: any) { logger.error('[DB] SQL error: %s | SQL: %s', e.message, sql.slice(0, 200)); throw e; }
-  }
-  q(sql, ...params);
+  try { getDb().prepare(sql).run(...params); }
+  catch (e: any) { logger.error('[DB] SQL error: %s | SQL: %s', e.message, sql.slice(0, 200)); throw e; }
 }
 
 function runRaw(sql: string, params: any[]) {
@@ -462,10 +288,6 @@ function runRaw(sql: string, params: any[]) {
 function save() {}
 
 function close() {
-  if (_worker) {
-    try { _worker.terminate(); } catch {}
-    _worker = null;
-  }
   if (db) { try { db.close(); } catch {} db = null; }
 }
 
@@ -627,7 +449,7 @@ const dm = {
     const mod = dm.get(id);
     const moduleId = mod && mod.module_id ? String(mod.module_id) : String(id);
     const dsList = q<{id: number}>('SELECT id FROM data_center_datasets WHERE module_id = ?', moduleId);
-    for (const d of dsList) { run('DELETE FROM data_center_records WHERE dataset_id = ?', d.id); }
+    for (const d of dsList) { run('DELETE FROM data_center_records WHERE dataset_id = ?', String(d.id)); }
     run('DELETE FROM data_center_datasets WHERE module_id = ?', moduleId);
     const w = dmWhere(id);
     run(`DELETE FROM data_center_modules WHERE ${w.where}`, ...w.params);
@@ -679,12 +501,12 @@ const ds = {
   remove: (id) => {
     const w = dsWhere(id);
     const dsRow = qOne<{id: number}>(`SELECT id FROM data_center_datasets WHERE ${w.where}`, ...w.params);
-    if (dsRow) { run('DELETE FROM data_center_records WHERE dataset_id = ?', dsRow.id); }
+    if (dsRow) { run('DELETE FROM data_center_records WHERE dataset_id = ?', String(dsRow.id)); }
     run(`DELETE FROM data_center_datasets WHERE ${w.where}`, ...w.params);
   },
   query: (datasetId, conditions) => {
     let sql = "SELECT * FROM data_center_records WHERE dataset_id = ?";
-    const params = [datasetId];
+    const params = [String(datasetId)];
     if (conditions) { sql += ' AND data_json LIKE ?'; params.push(`%${conditions}%`); }
     sql += ' ORDER BY created_at DESC LIMIT 50';
     return q(sql, ...params).map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));

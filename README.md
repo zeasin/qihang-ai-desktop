@@ -87,7 +87,6 @@ npm run electron:build   # vite build + tsc 编译 + electron-builder 打包
 │       ├── rag.ts         # 笔记库语义检索
 │       ├── indexer.ts     # 笔记库索引
 │       ├── database.ts    # SQLite 本地数据库
-│       ├── cloud-db.ts    # 云端数据库（MySQL）连接与迁移
 │       ├── backup.ts      # 数据备份与恢复
 │       ├── builtin-datasets.ts # 内置数据集模板
 │       └── ...
@@ -125,7 +124,7 @@ npm run electron:build   # vite build + tsc 编译 + electron-builder 打包
 
 ## 数据与隐私
 
-- 所有数据保存在本机数据库（`~/.qihang-ai-desktop/qihang-ai-desktop.db`）与你的笔记文件夹中，不上传任何云端（除非你手动启用云端数据库）。
+- 所有数据保存在本机数据库（`~/.qihang-ai-desktop/qihang-ai-desktop.db`）与你的笔记文件夹中，不上传任何云端。
 - 对话内容默认会发送给你配置的模型服务商（DeepSeek 等）用于生成回复。
 - 如需**完全离线**：使用 Ollama 作为对话模型即可（除软件自动更新外无任何网络请求）。
 - 飞书凭据等敏感配置保存在本机 `config.json`（已加入 `.gitignore`，不会进入仓库）。

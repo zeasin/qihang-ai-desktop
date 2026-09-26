@@ -19,7 +19,6 @@
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
     "marked": "^15.0.0",
-    "mysql2": "^3.23.2",
     "node-cron": "^4.6.0",
     "ollama": "^0.5.14",
     "pinia": "^3.0.0",
@@ -75,8 +74,7 @@
       "en-US"
     ],
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**",
-      "**/electron/worker/**"
+      "**/node_modules/better-sqlite3/**"
     ],
     "win": {
       "target": "nsis"
