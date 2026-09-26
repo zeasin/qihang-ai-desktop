@@ -17,6 +17,7 @@ memory.trace.db.old
 nul
 target/
 .opencode/
+.qihang-oc/
 .claude/
 .vite/
 app.log.*.gz

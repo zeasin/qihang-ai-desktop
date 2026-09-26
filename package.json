@@ -15,6 +15,7 @@
     "@earendil-works/pi-coding-agent": "0.80.3",
     "@electron/rebuild": "^4.2.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
+    "@opencode-ai/sdk": "1.18.32",
     "better-sqlite3": "^12.11.1",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",

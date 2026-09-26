@@ -77,6 +77,8 @@ interface ElectronAPI {
   };
   agent: {
     status: () => Promise<{ pi: any; langchain?: any }>;
+    runtimeGet: () => Promise<{ runtime: string; oc?: any }>;
+    runtimeSet: (runtime: string) => Promise<{ runtime: string; oc?: any }>;
   };
   pi: {
     models: () => Promise<{

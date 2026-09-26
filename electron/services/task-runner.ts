@@ -5,6 +5,7 @@
  * 继续执行，流式进度以 task:followup:* 事件回传桌面端。
  */
 import { runPi } from './pi-agent';
+import { runOc } from './opencode-agent';
 import logger from './logger';
 import * as appConfig from './app-config';
 
@@ -60,13 +61,15 @@ function emitFollowup(type: string, payload: any) {
 }
 
 /**
- * 任务追问：复用任务的原始会话，在笔记库中继续对话。
+ * 任务追问：复用任务的原始会话继续对话。
+ * opts.runtime：'pi'（默认，飞书等无人值守场景固定 pi）| 'opencode'（桌面端手动选择，纯对话无本地工具）。
+ * opts.model：显式模型 pattern（opencode 引擎使用）。
  * 结果以 task:followup:delta / done / error 事件流式回传。
  * opts.stage：传入后笔记写入类工具（写/编辑/删除）改为落暂存区，等待用户确认落地。
  */
 export async function followUpTask(
   taskId: number, question: string, db: any,
-  opts: { stage?: { taskId: number }; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
+  opts: { stage?: { taskId: number }; runtime?: string; model?: string; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
 ): Promise<boolean> {
   const task = db.task.get(taskId);
   if (!task) return false;
@@ -101,8 +104,42 @@ export async function followUpTask(
 
   (async () => {
     try {
-      const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs } = require('./tools');
       const notesDir = appConfig.getConfig('notesDir') || (project ? project.dir : '') || '';
+      const runtime = opts.runtime === 'opencode' ? 'opencode' : 'pi';
+
+      let reply = '';
+      const onDelta = (delta: string) => {
+        reply += delta;
+        emitFollowup('delta', { taskId, delta });
+      };
+      const onTool = (t: any) => logger.info('[Followup] tool %s %s', t.name, t.type);
+      const onDone = (finalText: string) => {
+        if (finalText) reply = finalText;
+        db.chat.addMessage(sessionId, 'assistant', reply, 'general');
+        finish('SUCCESS', { result: reply });
+        emitFollowup('done', { taskId, text: reply });
+        try { opts.onDone && opts.onDone(reply); } catch (e: any) { logger.warn('[Followup] onDone callback failed: %s', e?.message); }
+      };
+      const onError = (err: string) => {
+        db.chat.addMessage(sessionId, 'assistant', `❌ ${err}`, 'general');
+        finish('FAILED', { error: String(err) });
+        emitFollowup('error', { taskId, error: String(err) });
+        try { opts.onError && opts.onError(String(err)); } catch (e: any) { logger.warn('[Followup] onError callback failed: %s', e?.message); }
+      };
+
+      if (runtime === 'opencode') {
+        // opencode 引擎：本地工具经 MCP 接入前为纯对话，仅基于任务上下文回答
+        await runOc({
+          prompt: `原始任务：${task.prompt || task.title || ''}\n用户追问：${question}`,
+          sessionId,
+          cwd: notesDir || undefined,
+          modelPattern: opts.model || undefined,
+          onDelta, onTool, onDone, onError,
+        });
+        return;
+      }
+
+      const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs } = require('./tools');
       const customTools: any[] = [];
       customTools.push(...(await buildReportToolDefs(undefined)));
       if (notesDir) customTools.push(...(await buildDataToolDefs(notesDir)));
@@ -110,30 +147,12 @@ export async function followUpTask(
       if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id, { stage: opts.stage })));
       const prompt = `以下是笔记库目录，请用笔记工具自行搜索相关文件后回答：\n笔记库路径：${notesDir || '（未配置）'}\n\n原始任务：${task.prompt || task.title || ''}\n用户追问：${question}`;
 
-      let reply = '';
       await runPi({
         prompt,
         sessionId,
         cwd: notesDir || undefined,
         customTools,
-        onDelta: (delta) => {
-          reply += delta;
-          emitFollowup('delta', { taskId, delta });
-        },
-        onTool: (t: any) => logger.info('[Followup] tool %s %s', t.name, t.type),
-        onDone: (finalText) => {
-          if (finalText) reply = finalText;
-          db.chat.addMessage(sessionId, 'assistant', reply, 'general');
-          finish('SUCCESS', { result: reply });
-          emitFollowup('done', { taskId, text: reply });
-          try { opts.onDone && opts.onDone(reply); } catch (e: any) { logger.warn('[Followup] onDone callback failed: %s', e?.message); }
-        },
-        onError: (err) => {
-          db.chat.addMessage(sessionId, 'assistant', `❌ ${err}`, 'general');
-          finish('FAILED', { error: String(err) });
-          emitFollowup('error', { taskId, error: String(err) });
-          try { opts.onError && opts.onError(String(err)); } catch (e: any) { logger.warn('[Followup] onError callback failed: %s', e?.message); }
-        },
+        onDelta, onTool, onDone, onError,
       });
     } catch (e: any) {
       logger.error('[Followup] execution failed: %s', e?.message);

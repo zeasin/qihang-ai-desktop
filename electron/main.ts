@@ -36,6 +36,10 @@ import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings } from './services/pi-agent';
+import { runOc } from './services/opencode-agent';
+import { currentRuntime, setAgentRuntime, listAgentModels, agentStatus } from './services/agent-runtime';
+import { restartOcServer } from './services/opencode-process';
+import { writeOpencodeConfig } from './services/opencode-config';
 import { buildNoteToolDefs, buildDataToolDefs } from './services/tools';
 import { recordFeishuTask, followUpTask } from './services/task-runner';
 import * as pending from './services/pending';
@@ -966,9 +970,33 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
       return;
     }
 
-    // ===== pi agent 引擎（与工作台一致） =====
+    // ===== AI 引擎：按运行时开关分流（opencode 为可选引擎，pi 为默认/回退） =====
     sendToRenderer('chat:status', { sessionId: sid, text: 'AI 正在分析问题...' });
+    let reply = '';
 
+    if (currentRuntime() === 'opencode') {
+      // opencode 引擎：工具经 MCP 注入（尚未接入），customTools 忽略
+      await runOc({
+        prompt: question,
+        sessionId: sid,
+        cwd: projectDir || undefined,
+        modelPattern: piModelPattern(modelName),
+        images,
+        onDelta: (delta) => {
+          reply += delta;
+          sendToRenderer('chat:delta', { sessionId: sid, text: delta });
+        },
+        onTool: (toolEvent) => sendToRenderer('chat:tool', { sessionId: sid, ...toolEvent }),
+        onDone: () => {
+          if (reply) db.chat.addMessage(sid, 'assistant', reply, activeAgent);
+          sendToRenderer('chat:done', { sessionId: sid });
+        },
+        onError: (err) => sendToRenderer('chat:error', { sessionId: sid, text: err }),
+      });
+      return;
+    }
+
+    // pi agent 引擎（与工作台一致）
     // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），笔记库读写（关联的 note 项目）
     const toolDefs: any[] = [];
     if (projectDir) {
@@ -983,7 +1011,6 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
       }
     }
 
-    let reply = '';
     const modelPattern = piModelPattern(modelName);
     await runPi({
       prompt: question,
@@ -1036,8 +1063,15 @@ function piModelPattern(modelName) {
   return undefined;
 }
 
-// --- pi agent 模型列表 ---
-ipcMain.handle('pi:models', async () => listPiModels());
+// --- AI 引擎模型列表（按运行时分流：pi / opencode） ---
+ipcMain.handle('pi:models', async () => listAgentModels());
+
+// --- AI 运行时切换（对话页选择 pi / opencode） ---
+ipcMain.handle('agent:runtime:get', () => agentStatus());
+ipcMain.handle('agent:runtime:set', async (_, { runtime }) => {
+  await setAgentRuntime(String(runtime || 'pi'));
+  return agentStatus();
+});
 
 // 对话模型配置（应用内配置，读写 ~/.pi/agent/models.json，支持多条 provider）
 ipcMain.handle('pi:config:get', () => {
@@ -1048,6 +1082,15 @@ ipcMain.handle('pi:config:set', async (_, { providers }) => {
     return { ok: false, error: '参数错误' };
   }
   await saveBuiltinModelConfigs(providers);
+  // opencode 运行时：模型配置同步进 opencode.json 并重启 serve 生效
+  if (currentRuntime() === 'opencode') {
+    try {
+      writeOpencodeConfig();
+      await restartOcServer();
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+  }
   return { ok: true };
 });
 ipcMain.handle('pi:config:test', async (_, { baseUrl, apiKey, modelName }) => {
@@ -1163,7 +1206,7 @@ ipcMain.handle('task:remove', (_, id) => {
   return true;
 });
 ipcMain.handle('task:execute', (_, id) => scheduler.executeTaskNow(id));
-ipcMain.handle('task:followup', (_, { taskId, question }) => followUpTask(taskId, question, db));
+ipcMain.handle('task:followup', (_, { taskId, question, runtime, model }) => followUpTask(taskId, question, db, { runtime, model }));
 ipcMain.handle('task:executions', (_, taskId) => db.taskExecution.listByTask(taskId));
 ipcMain.handle('task:execution:list', (_, page, pageSize) => db.taskExecution.list(page, pageSize));
 ipcMain.handle('task:execution:get', (_, id) => db.taskExecution.get(id));
