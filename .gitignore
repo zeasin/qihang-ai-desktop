@@ -25,3 +25,4 @@ src/main/resources/application-dev.yml
 analysis
 .aider*
 .DS_Store
+.trae
