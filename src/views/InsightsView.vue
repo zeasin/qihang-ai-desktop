@@ -21,7 +21,7 @@
           <div class="index-lib-list">
             <div v-for="p in noteProjects" :key="p.id" class="index-lib-section">
               <div class="index-lib-header">
-                <span class="index-lib-name">{{ p.name }}</span>
+                <span class="index-lib-name">{{ p.name }}<span v-if="p.isDefault" style="font-size:11px;color:#6366f1;margin-left:4px;">默认</span></span>
                 <div class="index-lib-header-actions">
                   <button class="index-lib-btn" :disabled="indexing" @click="indexProject(p.id)">{{ indexing && indexingId === p.id ? '⏳' : (libStats(p.id)?.docCount ? '🔄 重新索引' : '📇 索引') }}</button>
                 </div>
@@ -49,8 +49,8 @@
         </div>
         <div v-else class="index-empty">
           <div class="index-empty-icon">📭</div>
-          <div class="index-empty-text">没有配置笔记库</div>
-          <div class="index-empty-desc">请到「设置」页配置笔记库目录，系统会自动索引其中的 Markdown 文件</div>
+          <div class="index-empty-text">一个笔记库都没有</div>
+          <div class="index-empty-desc">请到「设置 → 笔记库」添加笔记库，系统会自动索引其中的 Markdown 文件；综合日报始终基于全部笔记库 + 数据集生成</div>
         </div>
       </div>
 
@@ -143,7 +143,7 @@
     <div class="modal-overlay" :class="{ active: showSearchResults }" @click.self="closeSearchResults">
       <div class="modal search-modal">
         <div class="modal-header">
-          <span class="modal-title">搜索结果：{{ lastQuery }}</span>
+          <span class="modal-title">搜索结果：{{ lastQuery }}（全部笔记库）</span>
           <button class="modal-close" @click="closeSearchResults">✕</button>
         </div>
         <div class="modal-body">
@@ -152,7 +152,7 @@
             <div class="empty-title">未找到相关结果</div>
           </div>
           <div v-for="result in searchResults" :key="result.id" class="search-result-item" @click="openResult(result)">
-            <div class="result-title">{{ result.title }}</div>
+            <div class="result-title"><span v-if="result.libName" style="color:#6366f1;font-weight:400;font-size:12px;">[{{ result.libName }}]</span> {{ result.title }}</div>
             <div class="result-path">{{ result.path }}</div>
             <div class="result-preview">{{ result.preview }}</div>
             <div class="result-score">{{ result.score }}</div>
@@ -326,10 +326,19 @@ const performSearch = async () => {
   const query = searchQuery.value.trim();
   if (!query) return;
   lastQuery.value = query;
-  const kbId = kbList.value[0]?.id || '';
   try {
-    const results = await API.kb.search(kbId, query);
-    searchResults.value = results.map((r: any, i: number) => ({
+    // 全库搜索：逐个笔记库检索后合并结果
+    const libs = kbList.value.filter((l: any) => l.dir);
+    const merged: any[] = [];
+    const chunks = await Promise.all(libs.map(async (l: any) => {
+      try {
+        const rs = await API.kb.search(l.dir, query);
+        return rs.map((r: any) => ({ ...r, _lib: l.name }));
+      } catch { return []; }
+    }));
+    for (const c of chunks) merged.push(...c);
+    const sliced = merged.slice(0, 30);
+    searchResults.value = sliced.map((r: any, i: number) => ({
       id: i,
       title: r.source ? r.source.split(/[\\/]/).pop() : '未知',
       path: r.source || '',
@@ -337,6 +346,7 @@ const performSearch = async () => {
       score: r.score ? (r.score * 100).toFixed(1) + '%' : '0%',
       fullText: r.text || '',
       source: r.source || '',
+      libName: r._lib || '',
       project_id: r.project_id
     }));
     showSearchResults.value = true;

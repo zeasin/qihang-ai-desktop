@@ -22,17 +22,17 @@
           </div>
         </div>
 
-        <!-- 步骤 2：设置笔记库 -->
-        <div class="guide-step" :class="{ done: kbDir }">
+        <!-- 步骤 2：添加笔记库 -->
+        <div class="guide-step" :class="{ done: kbCount > 0 }">
           <div class="step-index">2</div>
           <div class="step-content">
             <div class="step-title">
-              设置笔记库目录
-              <span class="step-status" v-if="kbDir">✓ 已配置</span>
+              添加笔记库
+              <span class="step-status" v-if="kbCount > 0">✓ 已有 {{ kbCount }} 个</span>
             </div>
-            <p class="step-desc">笔记库是本应用所有 AI 功能的数据基础，未配置时 AI 对话、任务执行、日报生成、知识库浏览均不可用。选择一个包含 Markdown 文件的本地文件夹，让 AI 基于你的笔记工作。</p>
+            <p class="step-desc">笔记库是本应用所有 AI 功能的数据基础，可添加多个；一个都没有时 AI 对话、任务执行、知识库浏览均不可用。选择一个包含 Markdown 文件的本地文件夹即可添加，之后的库管理在「设置」页进行。</p>
             <button class="btn btn-sm btn-primary" @click="setupNotesDir" :disabled="kbDirLoading">
-              {{ kbDirLoading ? '正在保存...' : kbDir ? '重新选择目录' : '📂 选择笔记库目录' }}
+              {{ kbDirLoading ? '正在添加...' : '📂 选择文件夹添加笔记库' }}
             </button>
             <p class="step-path" v-if="kbDir">{{ kbDir }}</p>
           </div>
@@ -72,6 +72,7 @@ const router = useRouter();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const kbDir = ref('');
+const kbCount = ref(0);
 const kbDirLoading = ref(false);
 const llmReady = ref(false);
 
@@ -91,13 +92,28 @@ async function setupNotesDir() {
     const dir = await API.dialog.openDirectory();
     if (!dir) return;
     kbDirLoading.value = true;
-    await API.kb.setDir(dir);
+    let r: any = null;
+    if (kbCount.value === 0) {
+      await API.kb.setDir(dir); // 首个库：创建并设为默认
+    } else {
+      r = await API.kb.add('', dir); // 已有库：追加新库
+      if (r && r.error) { alert('添加失败: ' + r.error); return; }
+    }
     kbDir.value = dir;
+    await refreshKb();
   } catch (e: any) {
     alert('配置失败: ' + (e.message || e));
   } finally {
     kbDirLoading.value = false;
   }
+}
+
+async function refreshKb() {
+  try {
+    const libs = (await API.kb.list()) || [];
+    kbCount.value = libs.length;
+    kbDir.value = (libs.find((l: any) => l.isDefault) || libs[0])?.dir || '';
+  } catch { kbCount.value = 0; kbDir.value = ''; }
 }
 
 function go(path: string) {
@@ -111,12 +127,9 @@ async function finish() {
 }
 
 onMounted(async () => {
+  await refreshKb();
   try {
-    const [dir, cfg] = await Promise.all([
-      API.kb.getDir().catch(() => ''),
-      API.pi.configGet().catch(() => ({ providers: [] })),
-    ]);
-    kbDir.value = dir || '';
+    const cfg = await API.pi.configGet().catch(() => ({ providers: [] }));
     llmReady.value = !!(cfg && Array.isArray(cfg.providers) && cfg.providers.length);
   } catch { /* ignore */ }
 });

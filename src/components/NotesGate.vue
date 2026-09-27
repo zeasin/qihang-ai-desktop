@@ -2,12 +2,12 @@
   <div class="notes-gate" :class="{ compact }">
     <div class="gate-card">
       <div class="gate-icon">📚</div>
-      <div class="gate-title">请先配置笔记库</div>
+      <div class="gate-title">请先添加笔记库</div>
       <div class="gate-desc">
         <template v-if="desc">{{ desc }}</template>
         <template v-else>
-          笔记库是本应用所有 AI 功能的数据基础。<br />
-          未配置时，AI 对话、任务执行、日报生成、知识库浏览均不可用。
+          笔记库是本应用所有 AI 功能的数据基础，可添加多个。<br />
+          一个笔记库都没有时，AI 对话、任务执行、知识库浏览均不可用；选择目录即可添加第一个库。
         </template>
       </div>
       <div class="gate-actions">

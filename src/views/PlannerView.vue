@@ -1,10 +1,10 @@
 <template>
   <div class="planner-view">
-    <!-- 未配置笔记库：AI 功能门禁 -->
-    <NotesGate v-if="notesLoaded && !notesDir" @ready="loadNotesDir" />
+    <!-- 一个笔记库都没有：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !noteProjects.length" @ready="onGateReady" />
 
     <!-- ========== 笔记任务视图 ========== -->
-    <div v-if="!notesLoaded || notesDir" class="planner-body">
+    <div v-if="!notesLoaded || noteProjects.length" class="planner-body">
       <!-- 左：任务列表 -->
       <div class="task-list-pane">
         <div class="list-pane-header">
@@ -187,13 +187,11 @@
             <button class="btn btn-secondary" @click="showTaskModal = false">✕</button>
           </div>
           <div class="modal-body">
-            <div class="form-group" v-if="noteProjects.length > 1">
-              <label>归属项目 *</label>
-              <select class="form-control" v-model="editing.project_id" :disabled="isEditing">
-                <option :value="null" disabled>请选择项目</option>
-                <optgroup label="📚 笔记库">
-                  <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
-                </optgroup>
+            <div class="form-group">
+              <label>所属笔记库 *</label>
+              <select class="form-control" v-model="editing.project_id">
+                <option :value="null" disabled>请选择笔记库</option>
+                <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
               </select>
             </div>
             <div class="form-group">
@@ -312,11 +310,10 @@ interface AiTask {
   followupText?: string; followupReply?: string; followupRunning?: boolean; followupDone?: boolean;
 }
 
-interface Project { id: number; name: string; type: string; dir: string; }
+interface Project { id: number; name: string; type: string; dir: string; is_default?: number; }
 
 const tasks = ref<AiTask[]>([]);
 const projects = ref<Project[]>([]);
-const notesDir = ref('');
 const notesLoaded = ref(false);
 
 const noteProjects = computed(() => projects.value.filter(p => p.type === 'note'));
@@ -466,7 +463,7 @@ function createTask() {
   editing.value.project_id =
     noteTaskFilter.value ??
     selectedTask.value?.project_id ??
-    (noteProjects.value[0]?.id ?? null);
+    (noteProjects.value.find(p => p.is_default) ?? noteProjects.value[0])?.id ?? null;
   editingWeekDays.value = [];
   editingMonthDays.value = 1;
   showTaskModal.value = true;
@@ -482,7 +479,7 @@ function editTask(task: AiTask) {
 
 async function saveTask() {
   const t = editing.value;
-  if (!t.project_id) { alert('请选择归属项目'); return; }
+  if (!t.project_id) { alert('请选择所属笔记库'); return; }
   if (!t.title.trim()) { alert('请输入任务标题'); return; }
   if (t.trigger_type === 'once' && !t.scheduled_start) { alert('指定时间任务请选择执行时间'); return; }
   let cycleValue = t.cycle_value || '';
@@ -644,14 +641,14 @@ function triggerLabel(type: string): string {
 
 function onTaskChanged() { loadTasks(); }
 
-async function loadNotesDir() {
-  try { notesDir.value = await API.kb.getDir(); } catch { notesDir.value = ''; }
-  notesLoaded.value = true;
+async function onGateReady() {
+  await loadProjects();
 }
 
 onMounted(async () => {
   await loadRuntime();
-  await Promise.all([loadProjects(), loadTasks(), loadNotesDir(), loadFollowupModels()]);
+  await Promise.all([loadProjects(), loadTasks(), loadFollowupModels()]);
+  notesLoaded.value = true;
   ensureSelectedTask();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
   window.electronAPI?.on?.('task:followup:delta', handleFollowupDelta);

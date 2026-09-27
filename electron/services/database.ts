@@ -78,7 +78,8 @@ function initSchema() {
       content TEXT NOT NULL,
       indexed_at TEXT,
       file_mtime INTEGER,
-      title TEXT DEFAULT ''
+      title TEXT DEFAULT '',
+      project_id INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS kb_chunks (
@@ -230,6 +231,14 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_status TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN session_id TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
+  // kb_documents 多库归属迁移：存量索引挂到默认（或第一个）笔记库
+  try { getDb().exec("ALTER TABLE kb_documents ADD COLUMN project_id INTEGER DEFAULT 0"); } catch (e) {}
+  try {
+    getDb().exec(`UPDATE kb_documents SET project_id =
+      (SELECT id FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1)
+      WHERE (project_id = 0 OR project_id IS NULL)
+        AND (SELECT id FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1) IS NOT NULL`);
+  } catch (e) {}
   // prj_sessions 旧版迁移：id TEXT → id INTEGER AUTOINCREMENT + session_id TEXT
   try {
     const cols = getDb().prepare("PRAGMA table_info(prj_sessions)").all() as any[];
@@ -281,6 +290,12 @@ function run(sql: string, ...params: any[]) {
   catch (e: any) { logger.error('[DB] SQL error: %s | SQL: %s', e.message, sql.slice(0, 200)); throw e; }
 }
 
+/** 执行 INSERT 并返回自增主键（避免按名字回查撞重名） */
+function runInsertId(sql: string, ...params: any[]): number {
+  try { return Number(getDb().prepare(sql).run(...params).lastInsertRowid); }
+  catch (e: any) { logger.error('[DB] SQL error: %s | SQL: %s', e.message, sql.slice(0, 200)); throw e; }
+}
+
 function runRaw(sql: string, params: any[]) {
   run(sql, ...(params || []));
 }
@@ -305,10 +320,9 @@ const project = {
   },
   add: (name, type, dir, description, defaultBranch) => {
     const t = type || 'note';
-    run('INSERT INTO prj_projects (name, type, dir, description, default_branch) VALUES (?, ?, ?, ?, ?)',
+    const id = runInsertId('INSERT INTO prj_projects (name, type, dir, description, default_branch) VALUES (?, ?, ?, ?, ?)',
       name, t, dir || '', description || '', defaultBranch || '');
-    const r = qOne('SELECT id FROM prj_projects WHERE name = ? AND type = ?', name, t);
-    return { id: r!.id, name, type: t };
+    return { id, name, type: t };
   },
   update: (id, data) => {
     const fields: any[] = []; const params: any[] = [];
@@ -332,6 +346,9 @@ const project = {
   },
   remove: (id) => {
     run('DELETE FROM ai_analysis WHERE project_id = ?', id);
+    // 该库的知识索引随库删除
+    run('DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', id);
+    run('DELETE FROM kb_documents WHERE project_id = ?', id);
     let sessions: any[] = [];
     try { sessions = q('SELECT session_id FROM prj_sessions WHERE project_id = ?', id); } catch {}
     for (const s of sessions) {
@@ -340,11 +357,16 @@ const project = {
     run('DELETE FROM prj_sessions WHERE project_id = ?', id);
     run('DELETE FROM prj_projects WHERE id = ?', id);
   },
-  docCount: () => {
-    try { const r = qOne<{c: number}>("SELECT COUNT(*) as c FROM kb_documents"); return r ? r.c : 0; } catch { return 0; }
+  docCount: (projectId?: number) => {
+    try {
+      const r = projectId
+        ? qOne<{c: number}>('SELECT COUNT(*) as c FROM kb_documents WHERE project_id = ?', projectId)
+        : qOne<{c: number}>('SELECT COUNT(*) as c FROM kb_documents');
+      return r ? r.c : 0;
+    } catch { return 0; }
   },
-  insertDoc: (pathVal, content, fileMtime, title) => {
-    run("INSERT OR REPLACE INTO kb_documents (path, content, indexed_at, file_mtime, title) VALUES (?, ?, datetime('now', '+8 hours'), ?, ?)", pathVal, content, fileMtime || null, title || '');
+  insertDoc: (pathVal, content, fileMtime, title, projectId?) => {
+    run("INSERT OR REPLACE INTO kb_documents (path, content, indexed_at, file_mtime, title, project_id) VALUES (?, ?, datetime('now', '+8 hours'), ?, ?, ?)", pathVal, content, fileMtime || null, title || '', projectId || 0);
     const r = qOne<{id: number}>('SELECT id FROM kb_documents WHERE path = ?', pathVal);
     return r!.id;
   },
@@ -356,9 +378,14 @@ const project = {
     }
   },
   getChunks: () => q<{content: string}>('SELECT c.content FROM kb_chunks c JOIN kb_documents d ON c.doc_id = d.id').map(r => r.content),
-  deleteDocs: () => {
-    run('DELETE FROM kb_chunks');
-    run('DELETE FROM kb_documents');
+  deleteDocs: (projectId?: number) => {
+    if (projectId) {
+      run('DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', projectId);
+      run('DELETE FROM kb_documents WHERE project_id = ?', projectId);
+    } else {
+      run('DELETE FROM kb_chunks');
+      run('DELETE FROM kb_documents');
+    }
   },
 };
 

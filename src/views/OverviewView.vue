@@ -4,7 +4,7 @@
       <div class="stat-card kb-card" @click="openNotes" title="浏览知识库">
         <div class="stat-icon" style="background:rgba(16,185,129,0.1);color:#10b981;">📚</div>
         <div class="stat-num">{{ stats.notesFileCount }}</div>
-        <div class="stat-label">笔记库<span class="kb-settings" @click.stop="openConfig" title="设置笔记库目录">⚙</span></div>
+        <div class="stat-label">笔记库<span class="kb-settings" @click.stop="openConfig" title="管理笔记库">⚙</span></div>
       </div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
@@ -14,17 +14,17 @@
 
     <div class="dashboard-grid">
       <div class="dashboard-left">
-        <div class="section-header">📊 综合日报 <span v-if="notesDir" class="report-schedule">{{ reportScheduleText }}</span></div>
+        <div class="section-header">📊 综合日报 <span v-if="kbCount" class="report-schedule">{{ reportScheduleText }}</span></div>
 
-        <!-- 未配置笔记库：日报不可用（AI 功能门禁） -->
+        <!-- 一个笔记库都没有：日报不可用（AI 功能门禁） -->
         <NotesGate
-          v-if="notesLoaded && !notesDir"
+          v-if="notesLoaded && !kbCount"
           compact
-          desc="综合日报由 AI 基于你的笔记库生成，配置后自动可用；数据集、提醒、待办不受影响。"
+          desc="综合日报由 AI 基于全部笔记库 + 数据集生成，添加至少一个笔记库后自动可用；数据集、提醒、待办不受影响。"
           @ready="onGateReady"
         />
 
-        <div class="card" v-if="(!notesLoaded || notesDir) && latestReport">
+        <div class="card" v-if="(!notesLoaded || kbCount) && latestReport">
           <div class="latest-header">
             <div class="latest-info">
               <div class="latest-date">{{ latestReport.report_date || '最新日报' }}</div>
@@ -42,7 +42,7 @@
             <div class="key-point">{{ (latestReport.summary || '').slice(0, 200) }}</div>
           </div>
         </div>
-        <div class="card" v-if="!notesLoaded || notesDir">
+        <div class="card" v-if="!notesLoaded || kbCount">
           <div v-if="reports.length" class="report-list">
             <div v-for="(r, i) in reports" :key="r.id" class="report-item" @click="openReportModal(r)">
               <div class="report-header">
@@ -132,7 +132,7 @@ import NotesGate from '@/components/NotesGate.vue';
 const API = window.electronAPI;
 const router = useRouter();
 
-const notesDir = ref('');
+const kbCount = ref(0);
 const notesLoaded = ref(false);
 
 const openNotes = () => router.push('/notes');
@@ -359,19 +359,19 @@ async function loadOverviewData() {
   try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
 }
 
-async function loadNotesDir() {
-  try { notesDir.value = await API.kb.getDir(); } catch { notesDir.value = ''; }
+async function loadKbCount() {
+  try { kbCount.value = ((await API.kb.list()) || []).length; } catch { kbCount.value = 0; }
   notesLoaded.value = true;
 }
 
 async function onGateReady() {
-  await loadNotesDir();
+  await loadKbCount();
   await loadOverviewData();
 }
 
 onMounted(() => {
   loadOverviewData();
-  loadNotesDir();
+  loadKbCount();
   API.on('report:generated', () => {
     loadOverviewData();
   });

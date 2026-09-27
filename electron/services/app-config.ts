@@ -62,7 +62,7 @@ export function saveConfig(patch: Record<string, unknown>): void {
   }
 }
 
-/** 笔记库目录（唯一） */
+/** 默认笔记库目录指针（多库：≡ 默认库 dir，由 main.ts syncDefaultNotesDir 维护） */
 export function getNotesDir(): string {
   const dir = loadConfig().notesDir;
   return typeof dir === 'string' ? dir : '';

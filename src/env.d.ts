@@ -43,11 +43,14 @@ interface ElectronAPI {
     getDir: () => Promise<string>;
     list: () => Promise<any[]>;
     add: (name: string, path: string) => Promise<any>;
+    update: (id: number, data: { name?: string; dir?: string }) => Promise<any>;
     setDir: (dir: string) => Promise<any>;
-    remove: () => Promise<void>;
-    scan: (dir: string) => Promise<any>;
+    remove: (id: number) => Promise<any>;
+    scan: (projectId: number) => Promise<any>;
     search: (dir: string, query: string) => Promise<any[]>;
     status: () => Promise<any>;
+    setDefault: (id: number) => Promise<any>;
+    getDefault: () => Promise<any>;
   };
   ds: {
     list: () => Promise<any[]>;

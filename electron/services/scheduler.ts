@@ -662,9 +662,9 @@ const executors = {
     logger.info(`[Scheduler] daily report: ${task.name}`);
     const today = getChinaDate();
     try {
-      const notesDir = appConfig.getConfig('notesDir') || '';
-      if (!notesDir) { logger.warn('[Scheduler] daily_report: notesDir not configured'); return; }
-       const userPart = appConfig.getConfig('daily_report_prompt') || '请按以下格式生成日报：\n\n## 日报格式要求\n使用简化的 Markdown 格式（适配飞书），**不要使用表格**（用 `- key: value` 列表代替）：**\n\n### 1️⃣ 今日概览\n- ✅ 完成任务：数量、📋 待办：数量、💬 对话：次数、📝 笔记：更新数、🗂️ 新增：数量\n\n### 2️⃣ 今日完成\n- 列出今日完成的任务，高优先级的用 ⭐ 标记\n\n### 3️⃣ 待办事项\n- 逾期的用 🔴 标记并注明逾期天数\n- 进行中的用 🔄 标记\n- 高优先级的用 🔴 标记\n\n### 4️⃣ 对话与沟通\n- 今日对话次数和简要摘要\n\n### 5️⃣ 笔记与记录\n- 更新的文档和新增的记录\n\n### 6️⃣ 今日提醒\n- 已启用的提醒（如有）\n\n### 7️⃣ 综合评估\n- 根据完成任务、待办处理、知识沉淀等维度给出今日效率评分（0-100分）\n- 给出具体的改进行动建议\n\n## 格式注意事项\n- **不使用表格**：用 `- 维度 | 说明` 这样的列表代替\n- 数据为空的部分可以略过，不要编造数据\n- 评分要合理，基于实际数据给出\n- 建议要具体、可执行\n- 语言简洁专业，使用中文\n- 只输出日报正文，不要包含任何说明性文字（如"数据来源"、"让我先"、"思考过程"等）';
+      // 综合日报数据源 = 所有笔记库 + 数据集（report 工具集天然跨库查询），仅在一个库都没有时拦截
+      if (!db.project.list('note').length) { logger.warn('[Scheduler] daily_report: 尚未添加任何笔记库，跳过'); return; }
+      const userPart = appConfig.getConfig('daily_report_prompt') || '请按以下格式生成日报：\n\n## 日报格式要求\n使用简化的 Markdown 格式（适配飞书），**不要使用表格**（用 `- key: value` 列表代替）：**\n\n### 1️⃣ 今日概览\n- ✅ 完成任务：数量、📋 待办：数量、💬 对话：次数、📝 笔记：更新数、🗂️ 新增：数量\n\n### 2️⃣ 今日完成\n- 列出今日完成的任务，高优先级的用 ⭐ 标记\n\n### 3️⃣ 待办事项\n- 逾期的用 🔴 标记并注明逾期天数\n- 进行中的用 🔄 标记\n- 高优先级的用 🔴 标记\n\n### 4️⃣ 对话与沟通\n- 今日对话次数和简要摘要\n\n### 5️⃣ 笔记与记录\n- 更新的文档和新增的记录\n\n### 6️⃣ 今日提醒\n- 已启用的提醒（如有）\n\n### 7️⃣ 综合评估\n- 根据完成任务、待办处理、知识沉淀等维度给出今日效率评分（0-100分）\n- 给出具体的改进行动建议\n\n## 格式注意事项\n- **不使用表格**：用 `- 维度 | 说明` 这样的列表代替\n- 数据为空的部分可以略过，不要编造数据\n- 评分要合理，基于实际数据给出\n- 建议要具体、可执行\n- 语言简洁专业，使用中文\n- 只输出日报正文，不要包含任何说明性文字（如"数据来源"、"让我先"、"思考过程"等）';
       const piAgent = require('./pi-agent');
       logger.info('[Scheduler] Calling pi agent to generate daily report...');
       const r = (await piAgent.generateDailyReport('scheduler_' + today, userPart)).trim();
@@ -864,10 +864,11 @@ function enqueueTask(task: any, triggerType: string) {
   pumpQueue();
 }
 
-/** 保存任务结果到笔记库 */
+/** 保存任务结果到笔记库（任务所属库优先，回落默认库） */
 function saveTaskResultToNote(task: any, result: string): string {
   try {
-    const notesDir = appConfig.getConfig('notesDir') || '';
+    const proj: any = task.project_id && Number.isFinite(Number(task.project_id)) ? db.project.get(Number(task.project_id)) : null;
+    const notesDir = (proj && proj.type === 'note' && proj.dir) || appConfig.getConfig('notesDir') || '';
     if (!notesDir) return '';
     let relPath = task.output_target || '';
     if (!relPath) {
@@ -898,12 +899,15 @@ function triggerTypeLabel(task: any): string {
 async function runTask(task: any, triggerType: string) {
   const start = nowString();
   const project: any = task.project_id ? db.project.get(task.project_id) : null;
-  const notesDir = appConfig.getConfig('notesDir') || (project ? project.dir : '') || '';
+  // 多库口径：任务所属库优先，无库任务回落默认库
+  const noteProj: any = (project && project.type === 'note' && project.dir ? project : null)
+    || db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
+  const notesDir = (noteProj && noteProj.dir) || (project && project.dir) || '';
 
   // ===== 笔记库前置检查：AI 功能门禁 =====
-  // 未配置笔记库时任务不执行（无笔记工具、结果无处保存），记录失败并给出明确提示
+  // 一个笔记库都没有时任务不执行（无笔记工具、结果无处保存），记录失败并给出明确提示
   if (!notesDir) {
-    const msg = '未配置笔记库目录，任务未执行。请先在「设置 → 📚 笔记库设置」中选择笔记库目录';
+    const msg = '尚未添加任何笔记库，任务未执行。请先在「设置 → 📚 笔记库设置」中添加笔记库';
     db.taskExecution.add({
       task_id: task.id, task_title: task.title, status: 'FAILED',
       trigger_type: triggerType, start_time: start, end_time: start, error_message: msg,
@@ -928,7 +932,6 @@ async function runTask(task: any, triggerType: string) {
     // 笔记/知识任务：笔记库目录 + 笔记工具集
     customTools.push(...(await buildReportToolDefs(undefined)));
     customTools.push(...(await buildDataToolDefs(notesDir)));
-    const noteProj: any = task.project_id && project ? project : db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
     if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id)));
 
     const piAgent = require('./pi-agent');
@@ -939,7 +942,7 @@ async function runTask(task: any, triggerType: string) {
         db.task.update(task.id, { session_id: sessionId });
       } catch {}
     }
-    const contextLine = project ? `\n执行项目：${project.name}（${project.dir}）` : '';
+    const contextLine = noteProj ? `\n所属笔记库：${noteProj.name}（${noteProj.dir}）` : (project ? `\n执行项目：${project.name}（${project.dir}）` : '');
     const prompt = `你正在执行一个 AI 任务「${task.title}」。${contextLine}\n\n${task.prompt || '请根据任务标题自主完成并直接输出结果。'}\n\n执行要求：\n1. 先用可用工具查询所需数据（任务、对话记录、文档、数据集、笔记、外网资料等），再完成任务\n2. 若任务涉及修改文件，直接在目标目录中完成\n3. 直接输出最终成果（Markdown 格式），不要输出过程说明、思考过程或"数据来源"等前缀`;
     const result = (await piAgent.generateDailyReport(sessionId, prompt)).trim();
     const end = nowString();

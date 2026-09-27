@@ -1,7 +1,7 @@
 ﻿<template>
   <div class="notes-view">
-    <!-- 未配置笔记库：AI 功能门禁 -->
-    <NotesGate v-if="notesLoaded && !notesDir" @ready="loadNotesDir" />
+    <!-- 一个笔记库都没有：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !libs.length" @ready="onGateReady" />
 
     <!-- ========== 文件浏览 ========== -->
     <div v-else class="notes-body">
@@ -10,11 +10,13 @@
           <div class="panel-title">文件浏览</div>
         </div>
         <div class="project-bar">
-          <span v-if="notesDir" class="proj-name">{{ notesDir }}</span>
-          <span v-else class="proj-name text-muted">未配置笔记库</span>
+          <select v-if="libs.length" class="proj-select" v-model.number="currentLibId" @change="onLibChange">
+            <option v-for="l in libs" :key="l.id" :value="l.id">{{ l.name }}{{ l.isDefault ? '（默认）' : '' }}</option>
+          </select>
+          <span v-else class="proj-name text-muted">未选择笔记库</span>
         </div>
         <div class="search-bar">
-          <input v-model="searchQuery" class="search-input" placeholder="搜索当前项目..." @keydown.enter="doSearch" />
+          <input v-model="searchQuery" class="search-input" placeholder="搜索当前笔记库..." @keydown.enter="doSearch" />
           <button class="btn-icon" @click="doSearch" title="搜索">🔍</button>
           <button v-if="searchActive" class="btn-icon" @click="clearSearch" title="返回文件树">✕</button>
         </div>
@@ -76,6 +78,8 @@ import NotesGate from '@/components/NotesGate.vue';
 const API = window.electronAPI;
 
 // ========== 文件浏览 ==========
+const libs = ref<any[]>([]);
+const currentLibId = ref<number | null>(null);
 const notesDir = ref('');
 const notesLoaded = ref(false);
 const treeData = ref<TreeNode[]>([]);
@@ -98,16 +102,30 @@ const renderedContent = computed(() => {
   return '<pre><code class="hljs ' + (lang ? 'language-' + lang : '') + '">' + highlighted + '</code></pre>';
 });
 
-async function loadNotesDir() {
-  try {
-    notesDir.value = await API.kb.getDir();
-    if (notesDir.value) {
-      await loadFileTree();
-    }
-  } catch (e) {
-    console.warn('加载笔记库失败:', e);
+async function loadLibraries() {
+  try { libs.value = (await API.kb.list()) || []; } catch { libs.value = []; }
+  if (!libs.value.some((l) => l.id === currentLibId.value)) {
+    currentLibId.value = (libs.value.find((l) => l.isDefault) || libs.value[0])?.id ?? null;
   }
+  await applyCurrentLib();
   notesLoaded.value = true;
+}
+
+async function applyCurrentLib() {
+  const lib = libs.value.find((l) => l.id === currentLibId.value);
+  notesDir.value = lib?.dir || '';
+  searchResults.value = [];
+  if (!searchActive.value) { selectedFile.value = null; fileContent.value = ''; }
+  if (notesDir.value) await loadFileTree();
+  else treeData.value = [];
+}
+
+async function onLibChange() {
+  await applyCurrentLib();
+}
+
+async function onGateReady() {
+  await loadLibraries();
 }
 
 async function loadFileTree() {
@@ -171,7 +189,7 @@ function openSearchResult(r: any) {
 }
 
 onMounted(() => {
-  loadNotesDir();
+  loadLibraries();
 });
 </script>
 

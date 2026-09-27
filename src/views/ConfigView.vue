@@ -9,18 +9,27 @@
       <!-- Note Library Settings -->
       <div class="card">
         <h2>📚 笔记库设置</h2>
-        <div class="text-muted mb-2">设置唯一的笔记库目录。知识库浏览、语义检索和 AI 对话都会使用此目录。</div>
-        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
-          <div class="form-group" style="flex:1;min-width:300px;">
-            <label style="font-size:12px;">笔记库目录</label>
-            <div class="input-with-btn">
-              <input v-model="notesDir" type="text" class="form-control" placeholder="选择笔记库目录..." readonly>
-              <button class="btn btn-secondary" @click="pickNotesDir">选择</button>
-            </div>
+        <div class="text-muted mb-2">可添加多个笔记库。AI 对话与任务按所选库工作；综合日报聚合<b>所有库 + 数据集</b>分析；飞书派活、任务结果存档与数据归档默认写入<b>默认库</b>。</div>
+        <div v-if="!kbLibraries.length" class="text-muted mb-2" style="font-size:13px;">尚未添加任何笔记库。添加后 AI 对话、任务执行、日报生成、知识库浏览方可使用。</div>
+        <div v-for="lib in kbLibraries" :key="lib.id" class="kb-lib-row">
+          <div class="kb-lib-main">
+            <span class="kb-lib-name">📚 {{ lib.name }}</span>
+            <span v-if="lib.isDefault" class="kb-lib-badge">默认</span>
+            <span class="kb-lib-dir text-muted">{{ lib.dir }}</span>
+            <span class="text-muted kb-lib-count">已索引 {{ lib.docCount || 0 }} 篇</span>
           </div>
-          <button class="btn btn-primary" @click="saveNotesDir" style="margin-bottom:12px;">保存</button>
+          <div class="kb-lib-actions">
+            <button v-if="!lib.isDefault" class="text-btn" @click="setDefaultLib(lib)">设为默认</button>
+            <button class="text-btn" @click="renameLib(lib)">重命名</button>
+            <button class="text-btn" @click="changeLibDir(lib)">换目录</button>
+            <button class="text-btn" :disabled="lib.scanning" @click="reindexLib(lib)">{{ lib.scanning ? '索引中…' : '重建索引' }}</button>
+            <button class="text-btn" style="color:#ef4444;" @click="removeLib(lib)">删除</button>
+          </div>
         </div>
-        <span v-if="notesDirStatus" class="text-muted" :style="{ color: notesDirStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ notesDirStatus }}</span>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+          <button class="btn btn-primary" @click="addLib">➕ 添加笔记库</button>
+          <span v-if="notesDirStatus" class="text-muted" :style="{ color: notesDirStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ notesDirStatus }}</span>
+        </div>
       </div>
 
       <!-- 对话模型配置 -->
@@ -438,7 +447,6 @@ interface LlmProviderRow {
 }
 const llmProviders = ref<LlmProviderRow[]>([]);
 const llmStatus = ref('');
-const notesDir = ref('');
 const notesDirStatus = ref('');
 
 // Provider modal state
@@ -832,25 +840,67 @@ async function openBackupDir() {
 async function loadProjects() {
   try { projects.value = await API.project.list(); } catch { projects.value = []; }
 }
-async function loadNotesDir() {
-  notesDir.value = await API.kb.getDir();
+
+// ===== 多笔记库管理 =====
+const kbLibraries = ref<any[]>([]);
+async function loadKbLibraries() {
+  try { kbLibraries.value = await API.kb.list(); } catch { kbLibraries.value = []; }
 }
-async function pickNotesDir() {
+function kbFlash(msg: string) {
+  notesDirStatus.value = msg;
+  setTimeout(() => notesDirStatus.value = '', 4000);
+}
+async function addLib() {
   try {
     const dir = await API.dialog.openDirectory();
-    if (dir) notesDir.value = dir;
+    if (!dir) return;
+    const name = prompt('为这个笔记库起个名字（留空则用目录名）', dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '') ?? '';
+    const r = await API.kb.add(name.trim(), dir);
+    if (r?.error) { kbFlash('❌ ' + r.error); return; }
+    kbFlash('✅ 已添加笔记库「' + (r?.name || '') + '」，正在后台建立索引');
+    await loadKbLibraries();
+    await loadProjects();
+  } catch (e: any) { kbFlash('❌ ' + (e.message || '添加失败')); }
+}
+async function renameLib(lib: any) {
+  const name = prompt('新的库名称', lib.name);
+  if (!name || !name.trim() || name.trim() === lib.name) return;
+  const r = await API.kb.update(lib.id, { name: name.trim() });
+  if (r?.error) { kbFlash('❌ ' + r.error); return; }
+  await loadKbLibraries();
+}
+async function changeLibDir(lib: any) {
+  try {
+    const dir = await API.dialog.openDirectory();
+    if (!dir || dir === lib.dir) return;
+    if (!confirm(`笔记库「${lib.name}」将改指向新目录，原目录的索引会被清除并在新目录重建（笔记文件本身不受影响）。继续？`)) return;
+    const r = await API.kb.update(lib.id, { dir });
+    if (r?.error) { kbFlash('❌ ' + r.error); return; }
+    kbFlash('✅ 已更新目录，正在后台重建索引');
+    await loadKbLibraries();
   } catch {}
 }
-async function saveNotesDir() {
-  if (!notesDir.value.trim()) { notesDirStatus.value = '❌ 请先选择笔记库目录'; return; }
+async function reindexLib(lib: any) {
+  lib.scanning = true;
   try {
-    const p = await API.kb.setDir(notesDir.value.trim());
-    notesDirStatus.value = '✅ 已保存，笔记库: ' + (p?.name || '');
-    await loadProjects();
-    setTimeout(() => notesDirStatus.value = '', 3000);
-  } catch (e: any) {
-    notesDirStatus.value = '❌ ' + (e.message || '保存失败');
-  }
+    const r = await API.kb.scan(lib.id);
+    if (r?.error) kbFlash('❌ ' + r.error);
+    else kbFlash('✅ 「' + lib.name + '」索引完成：' + (r?.files ?? 0) + ' 个文件');
+  } catch (e: any) { kbFlash('❌ ' + (e.message || '索引失败')); }
+  lib.scanning = false;
+  await loadKbLibraries();
+}
+async function setDefaultLib(lib: any) {
+  await API.kb.setDefault(lib.id);
+  await loadKbLibraries();
+  kbFlash('✅ 已将「' + lib.name + '」设为默认库');
+}
+async function removeLib(lib: any) {
+  if (!confirm(`删除笔记库「${lib.name}」？\n\n· 磁盘上的笔记文件不会被删除\n· 该库的索引与执行结果归档记录会一并清除`)) return;
+  await API.kb.remove(lib.id);
+  await loadKbLibraries();
+  await loadProjects();
+  kbFlash('✅ 已删除「' + lib.name + '」');
 }
 async function loadSchedulerStatus() {
   try { const s = await API.service.status(); schedulerRunning.value = s.scheduler; } catch {}
@@ -1143,7 +1193,7 @@ onMounted(async () => {
   await loadLlmConfig();
   await loadSearchConfig();
   await loadProjects();
-  await loadNotesDir();
+  await loadKbLibraries();
   await loadSchedulerStatus();
   await loadBackups();
   await loadAutoBackup();
@@ -1278,6 +1328,14 @@ onBeforeUnmount(() => {});
 
 /* LLM Provider table */
 .llm-empty { text-align: center; padding: 32px 16px; }
+
+.kb-lib-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border-color, #2a2f3a); border-radius: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.kb-lib-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.kb-lib-name { font-weight: 600; font-size: 13px; }
+.kb-lib-badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: rgba(34,197,94,.15); color: #22c55e; }
+.kb-lib-dir { font-size: 11px; word-break: break-all; }
+.kb-lib-count { font-size: 11px; white-space: nowrap; }
+.kb-lib-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .llm-empty-icon { font-size: 32px; margin-bottom: 8px; }
 .llm-provider-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .llm-provider-thead {

@@ -1,9 +1,9 @@
 <template>
   <div class="task-detail-view">
-    <!-- 未配置笔记库：AI 功能门禁 -->
-    <NotesGate v-if="notesLoaded && !notesDir" @ready="loadNotesDir" />
+    <!-- 一个笔记库都没有：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !noteProjects.length" @ready="onGateReady" />
 
-    <div v-if="!notesLoaded || notesDir" class="content-header">
+    <div v-if="!notesLoaded || noteProjects.length" class="content-header">
       <button class="btn btn-secondary btn-sm" @click="$router.push('/planner')">← 返回任务中心</button>
       <div class="header-actions">
         <span v-if="task" :class="['status-badge', 'status-' + task.status]">{{ statusText(task.status) }}</span>
@@ -14,11 +14,11 @@
       </div>
     </div>
 
-    <div v-if="(!notesLoaded || notesDir) && !task" class="content-body">
+    <div v-if="(!notesLoaded || noteProjects.length) && !task" class="content-body">
       <div class="empty-state">加载中...</div>
     </div>
 
-    <div v-else-if="!notesLoaded || notesDir" class="content-body">
+    <div v-else-if="!notesLoaded || noteProjects.length" class="content-body">
       <!-- 基本信息 -->
       <div class="detail-section">
         <h3 class="section-title">基本信息</h3>
@@ -32,7 +32,7 @@
             <span class="info-value">📚 知识</span>
           </div>
           <div class="info-item">
-            <span class="info-label">归属项目</span>
+            <span class="info-label">所属笔记库</span>
             <span class="info-value">{{ projectName || '未关联' }}</span>
           </div>
           <div class="info-item">
@@ -133,12 +133,10 @@
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label>归属项目 *</label>
-            <select class="form-control" v-model="editing.project_id" disabled>
-              <option :value="null" disabled>请选择项目</option>
-              <optgroup label="📚 笔记库">
-                <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
-              </optgroup>
+            <label>所属笔记库 *</label>
+            <select class="form-control" v-model="editing.project_id">
+              <option :value="null" disabled>请选择笔记库</option>
+              <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -251,7 +249,6 @@ const task = ref<any>(null);
 const projects = ref<any[]>([]);
 const executions = ref<any[]>([]);
 const messages = ref<any[]>([]);
-const notesDir = ref('');
 const notesLoaded = ref(false);
 
 const showTaskModal = ref(false);
@@ -366,7 +363,7 @@ function editTask() {
 
 async function saveTask() {
   const t = editing.value;
-  if (!t.project_id) { alert('请选择归属项目'); return; }
+  if (!t.project_id) { alert('请选择所属笔记库'); return; }
   if (!t.title.trim()) { alert('请输入任务标题'); return; }
   if (t.trigger_type === 'once' && !t.scheduled_start) { alert('指定时间任务请选择执行时间'); return; }
   let cycleValue = t.cycle_value || '';
@@ -496,14 +493,14 @@ async function refresh() {
   await loadMessages();
 }
 
-async function loadNotesDir() {
-  try { notesDir.value = await API.kb.getDir(); } catch { notesDir.value = ''; }
-  notesLoaded.value = true;
+async function onGateReady() {
+  await loadProjects();
 }
 
 onMounted(async () => {
   await loadRuntime();
-  await Promise.all([loadTask(), loadProjects(), loadExecutions(), loadNotesDir(), loadFollowupModels()]);
+  await Promise.all([loadTask(), loadProjects(), loadExecutions(), loadFollowupModels()]);
+  notesLoaded.value = true;
   await loadMessages();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
   window.electronAPI?.on?.('task:followup:delta', handleFollowupDelta);

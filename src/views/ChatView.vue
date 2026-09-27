@@ -33,8 +33,8 @@
 
     <!-- ========== 右栏：对话区 ========== -->
     <div class="chat-main">
-      <!-- 未配置笔记库：AI 功能门禁 -->
-      <NotesGate v-if="kbLoaded && !kbDir" @ready="onGateReady" />
+      <!-- 未添加笔记库：AI 功能门禁 -->
+      <NotesGate v-if="kbLoaded && !kbLibraries.length" @ready="onGateReady" />
 
       <!-- 无对话时：分步引导 -->
       <div v-else-if="!currentSessionId && kbLoaded" class="chat-empty">
@@ -110,7 +110,7 @@
             <textarea
               v-model="inputText"
               class="chat-input"
-              :placeholder="defaultKbId ? '输入问题，Enter 发送... (已附加笔记库上下文)' : '输入问题，Enter 发送...'"
+              :placeholder="selectedKb ? '输入问题，Enter 发送... (当前库：' + selectedKb.name + ')' : '输入问题，Enter 发送...'"
               @keydown.enter.exact.prevent="sendMessage"
               @paste="handlePaste"
               @compositionstart="composing = true"
@@ -135,6 +135,9 @@
                   </svg>
                 </button>
                 <input ref="fileInputRef" type="file" accept="image/*" multiple style="display:none" @change="handleImageUpload" />
+                <select class="model-selector" v-model="selectedKbId" :disabled="isStreaming" title="本对话工作的笔记库" @change="onKbPickChange">
+                  <option v-for="l in kbLibraries" :key="l.id" :value="l.id">📚 {{ l.name }}</option>
+                </select>
                 <select class="model-selector runtime-selector" v-model="runtime" :disabled="isStreaming" title="AI 引擎（对比测试）" @change="onRuntimeChange">
                   <option value="pi">pi 引擎</option>
                   <option value="opencode">opencode</option>
@@ -170,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
@@ -193,8 +196,8 @@ const inputText = ref('');
 const isStreaming = ref(false);
 const composing = ref(false);
 const thinkingText = ref('');
-const defaultKbId = ref<number | null>(null);
-const kbDir = ref('');
+const kbLibraries = ref<any[]>([]);
+const selectedKbId = ref<number | null>(null);
 const kbLoaded = ref(false);
 const inputRef = ref<HTMLTextAreaElement>();
 const messagesContainer = ref<HTMLElement>();
@@ -231,11 +234,26 @@ async function onRuntimeChange() {
 }
 
 // ========== 加载数据 ==========
+// ===== 多笔记库：本会话所选库（按会话记忆，默认 = 默认库） =====
+const KB_PICK_KEY = 'chat_kb_picks';
+const selectedKb = computed(() => kbLibraries.value.find((l: any) => l.id === selectedKbId.value) || null);
+function kbPickMap(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(KB_PICK_KEY) || '{}'); } catch { return {}; }
+}
+function applyKbPick() {
+  const pick = currentSessionId.value ? kbPickMap()[currentSessionId.value] : undefined;
+  const d = kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null;
+  selectedKbId.value = pick && kbLibraries.value.some((l: any) => l.id === pick) ? pick : (d ? d.id : null);
+}
+function onKbPickChange() {
+  if (!currentSessionId.value || selectedKbId.value == null) return;
+  const m = kbPickMap();
+  m[currentSessionId.value] = selectedKbId.value;
+  try { localStorage.setItem(KB_PICK_KEY, JSON.stringify(m)); } catch {}
+}
 async function loadKbLibraries() {
-  try {
-    kbDir.value = await API.kb.getDir();
-    defaultKbId.value = kbDir.value ? 1 : null;
-  } catch { defaultKbId.value = null; kbDir.value = ''; }
+  try { kbLibraries.value = await API.kb.list(); } catch { kbLibraries.value = []; }
+  applyKbPick();
   kbLoaded.value = true;
 }
 
@@ -290,6 +308,7 @@ async function selectSession(session: any) {
   if (isStreaming.value) return;
   currentSessionId.value = session.session_id || String(session.id);
   currentSession.value = session;
+  applyKbPick();
   await loadMessages(currentSessionId.value);
   saveState();
 }
@@ -301,6 +320,7 @@ async function newSession() {
     const session = await API.chat.createSession(id, null, '新对话', 'general', 'general', 'ui');
     currentSessionId.value = id;
     currentSession.value = session;
+    applyKbPick();
     messages.value = [];
     inputText.value = '';
     await loadSessions();
@@ -347,6 +367,7 @@ async function restoreState() {
     if (!session) return false;
     currentSessionId.value = session.session_id || String(session.id);
     currentSession.value = session;
+    applyKbPick();
     await loadMessages(currentSessionId.value);
     return true;
   } catch { return false; }
@@ -425,7 +446,7 @@ async function doSend(text: string) {
   scrollToBottom();
 
   const sid = currentSessionId.value;
-  const kbIds = defaultKbId.value ? [defaultKbId.value] : undefined;
+  const kbIds = selectedKbId.value != null ? [selectedKbId.value] : undefined;
 
   API.removeAllListeners('chat:delta');
   API.removeAllListeners('chat:status');
@@ -492,7 +513,7 @@ async function doSend(text: string) {
   API.on('chat:error', onError);
 
   try {
-    await API.chat.send(text, sid, kbDir.value, kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
+    await API.chat.send(text, sid, selectedKb.value?.dir || '', kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
     if (selectedModel.value) localStorage.setItem(chatModelKey(), selectedModel.value);
     else localStorage.removeItem(chatModelKey());
   } catch (err: any) {

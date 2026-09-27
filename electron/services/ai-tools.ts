@@ -103,8 +103,7 @@ function cleanInline(s: string): string {
 // ========== PPT / 演示导出 ==========
 
 /** 递归收集笔记库文件内容（.md/.txt/.markdown），限制总量防止超出上下文 */
-export function collectNotesText(dir: string, maxChars = 25000): string {
-  const EXTS = new Set(['.md', '.txt', '.markdown']);
+export function collectNotesText(dir: string, maxChars = 25000): string {  const EXTS = new Set(['.md', '.txt', '.markdown']);
   const parts: string[] = [];
   let total = 0;
   const walk = (d: string) => {
@@ -130,6 +129,17 @@ export function collectNotesText(dir: string, maxChars = 25000): string {
   };
   walk(dir);
   return parts.join('\n\n---\n\n');
+}
+
+/** 多笔记库聚合采集：按库分配字符预算，段落标题带库名前缀，供日报/周报等全局分析使用 */
+export function collectNotesTextAll(dirs: string[], maxChars = 25000): string {
+  const valid = (dirs || []).filter(d => d && fs.existsSync(d));
+  if (!valid.length) return '';
+  const per = Math.max(4000, Math.floor(maxChars / valid.length));
+  return valid.map(d => {
+    const t = collectNotesText(d, per);
+    return t ? `━━ 笔记库「${path.basename(d) || d}」━━\n${t}` : '';
+  }).filter(Boolean).join('\n\n');
 }
 
 interface Slide {

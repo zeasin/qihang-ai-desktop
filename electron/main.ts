@@ -362,8 +362,11 @@ const feishuMessageHandler = async (msg) => {
       feishu.replyCard(msg, '当前没有待确认的暂存产物。', '📥 暂存区为空');
       return;
     }
-    const notesDir = appConfig.getConfig('notesDir') || '';
-    const r = pending.applyStage(stage.taskId, notesDir);
+    // 落地根 = 任务所属库（飞书任务挂默认库，与旧口径一致），无库时回落默认库指针
+    const stageTask: any = db.task.get(stage.taskId);
+    const stageProj: any = stageTask && stageTask.project_id && Number.isFinite(Number(stageTask.project_id)) ? db.project.get(Number(stageTask.project_id)) : null;
+    const stageRoot = (stageProj && stageProj.type === 'note' && stageProj.dir) || appConfig.getConfig('notesDir') || '';
+    const r = pending.applyStage(stage.taskId, stageRoot);
     if (r.ok) {
       const lines = [...r.written.map(p => '✍️ ' + p), ...r.deleted.map(p => '🗑️ ' + p)];
       const more = pending.latestPendingStage();
@@ -579,25 +582,125 @@ function startFeishu(configData) {
 
 // ========== IPC Handlers ==========
 
-// --- Knowledge Base (config.json 驱动) ---
-function ensureNoteProject(dir: string) {
+// --- Knowledge Base（多笔记库；config.notesDir = 默认库目录指针） ---
+
+/** 维持不变量：config.notesDir ≡ 默认库 dir；无库则清空 */
+function syncDefaultNotesDir() {
   const notes = db.project.list('note');
-  let p = notes[0] || null;
-  if (!p) {
-    p = db.project.add('笔记库', 'note', dir, '', '');
-  } else if (p.dir !== dir) {
-    db.project.update(p.id, { dir });
+  const d = db.project.getDefault() || notes[0] || null;
+  if (d) {
+    db.project.setDefault(d.id);
+    appConfig.setNotesDir(d.dir || '');
+  } else {
+    db.project.setDefault(0);
+    appConfig.setNotesDir('');
   }
-  return p;
+}
+
+/** 启动迁移：旧版单库（config.notesDir）转正为默认笔记库；缺默认指针则补齐 */
+function ensureNotesLibraryMigration() {
+  const notes = db.project.list('note');
+  const cfgDir = appConfig.getNotesDir();
+  if (!notes.length && cfgDir) {
+    db.project.add('笔记库', 'note', cfgDir, '', '');
+  }
+  syncDefaultNotesDir();
+}
+
+/** 库变更后重启文件监听 + 后台重建该库索引（嵌入不可用时会静默跳过向量化） */
+function refreshLibrariesAfterChange(projectId?: number) {
+  try {
+    const indexer = require('./services/indexer');
+    if (indexer.isRunning()) indexer.watchAll();
+    if (projectId) {
+      const p = db.project.get(projectId);
+      if (p && p.dir) void indexer.indexSingle(p).catch((e: any) => logger.warn('[KB] 后台索引失败: ' + e.message));
+    }
+  } catch (e: any) { logger.warn('[KB] refresh watchers failed: ' + e.message); }
 }
 
 ipcMain.handle('kb:getDir', () => appConfig.getNotesDir());
 
-ipcMain.handle('kb:list', () => {
-  const dir = appConfig.getNotesDir();
-  if (!dir) return [];
-  return [{ id: 0, name: '笔记库', dir, totalDocs: 0 }];
+ipcMain.handle('kb:list', () => db.project.list('note').map((p: any) => ({
+  ...p,
+  docCount: db.project.docCount(p.id),
+  isDefault: p.id === (db.project.getDefault() || {}).id,
+})));
+
+ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
+  if (!dirPath) return { error: '请选择目录' };
+  if (!fs.existsSync(dirPath)) return { error: '目录不存在' };
+  const abs = path.resolve(dirPath);
+  if (db.project.list('note').some((p: any) => p.dir && path.resolve(p.dir) === abs)) return { error: '该目录已在库列表中' };
+  const isFirst = !db.project.list('note').length;
+  const r = db.project.add((name || '').trim() || path.basename(abs), 'note', abs, '', '');
+  if (isFirst) db.project.setDefault(r.id);
+  syncDefaultNotesDir();
+  refreshLibrariesAfterChange(r.id);
+  return db.project.get(r.id);
 });
+
+ipcMain.handle('kb:update', (_, { id, name, dir }) => {
+  const p = db.project.get(id);
+  if (!p || p.type !== 'note') return { error: '笔记库不存在' };
+  const patch: any = {};
+  if (name !== undefined && String(name).trim()) patch.name = String(name).trim();
+  if (dir !== undefined && dir) {
+    const abs = path.resolve(dir);
+    if (!fs.existsSync(abs)) return { error: '目录不存在' };
+    if (db.project.list('note').some((x: any) => x.id !== id && x.dir && path.resolve(x.dir) === abs)) return { error: '该目录已被其他库使用' };
+    patch.dir = abs;
+  }
+  if (!Object.keys(patch).length) return p;
+  db.project.update(id, patch);
+  if (patch.dir) {
+    db.project.deleteDocs(id);
+    syncDefaultNotesDir();
+    refreshLibrariesAfterChange(id);
+  }
+  return db.project.get(id);
+});
+
+ipcMain.handle('kb:setDir', (_, { dir }) => {
+  // 兼容旧入口（首次配置门禁 NotesGate/WelcomeGuide）：无库则建默认库；有默认库则改其目录
+  if (!dir) return null;
+  const notes = db.project.list('note');
+  if (!notes.length) {
+    const p = db.project.add('笔记库', 'note', path.resolve(dir), '', '');
+    db.project.setDefault(p.id);
+    syncDefaultNotesDir();
+    refreshLibrariesAfterChange(p.id);
+    return db.project.get(p.id);
+  }
+  const d = db.project.getDefault() || notes[0];
+  const abs = path.resolve(dir);
+  if (d.dir && path.resolve(d.dir) === abs) return db.project.get(d.id);
+  db.project.update(d.id, { dir: abs });
+  db.project.deleteDocs(d.id);
+  syncDefaultNotesDir();
+  refreshLibrariesAfterChange(d.id);
+  return db.project.get(d.id);
+});
+
+ipcMain.handle('kb:remove', (_, { id }) => {
+  const p = db.project.get(id);
+  if (p && p.type === 'note') {
+    db.project.remove(id);
+    syncDefaultNotesDir();
+    refreshLibrariesAfterChange();
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('kb:setDefault', (_, { id }) => {
+  const p = db.project.get(id);
+  if (!p || p.type !== 'note') return { error: '笔记库不存在' };
+  db.project.setDefault(id);
+  syncDefaultNotesDir();
+  return { ok: true };
+});
+
+ipcMain.handle('kb:getDefault', () => db.project.getDefault() || db.project.list('note')[0] || null);
 ipcMain.handle('notes:tree', (_, { dir }) => {
   if (!dir || !fs.existsSync(dir)) return [];
   return listDir(dir);
@@ -623,38 +726,28 @@ ipcMain.handle('notes:read', (_, { dir, filePath }) => {
 
 
 
-ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
-  if (!dirPath) return null;
-  appConfig.setNotesDir(dirPath);
-  const p = ensureNoteProject(dirPath);
-  return db.project.get(p.id);
-});
-ipcMain.handle('kb:setDir', (_, { dir }) => {
-  if (!dir) return null;
-  appConfig.setNotesDir(dir);
-  const p = ensureNoteProject(dir);
-  return db.project.get(p.id);
-});
-ipcMain.handle('kb:remove', () => {
-  appConfig.setNotesDir('');
-  return { ok: true };
-});
 let _indexingLock = false;
 
 let _docBatchCount = 0;
 
-function handleWorkerMessages(worker, sendProgress, resolve, track) {
+function handleWorkerMessages(worker, sendProgress, resolve, track, projectId?) {
   _docBatchCount = 0;
   worker.on('message', (msg) => {
     try {
       if (msg.type === 'progress') {
         sendProgress(msg);
       } else if (msg.type === 'deleteOld') {
-        db.runRaw('DELETE FROM kb_chunks', []);
-        db.runRaw('DELETE FROM kb_documents', []);
+        // 按库重建：只清该库的索引，不碰其他库
+        if (projectId) {
+          db.runRaw('DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', [projectId]);
+          db.runRaw('DELETE FROM kb_documents WHERE project_id = ?', [projectId]);
+        } else {
+          db.runRaw('DELETE FROM kb_chunks', []);
+          db.runRaw('DELETE FROM kb_documents', []);
+        }
         db.save();
       } else if (msg.type === 'doc') {
-        db.runRaw("INSERT INTO kb_documents (path, content, indexed_at, file_mtime, title) VALUES (?, ?, datetime('now', '+8 hours'), ?, ?)", [msg.path, msg.content, msg.fileMtime || null, msg.title || '']);
+        db.runRaw("INSERT INTO kb_documents (path, content, indexed_at, file_mtime, title, project_id) VALUES (?, ?, datetime('now', '+8 hours'), ?, ?, ?)", [msg.path, msg.content, msg.fileMtime || null, msg.title || '', projectId || msg.projectId || 0]);
         const docRow = db.qOne('SELECT id FROM kb_documents WHERE path = ?', msg.path);
         if (docRow) {
           for (const c of msg.chunks) {
@@ -697,14 +790,19 @@ model: appConfig.getConfig('embeddingModel') || '',
   worker.on('exit', () => { _indexingLock = false; resolve({}); });
 }
 
-ipcMain.handle('kb:scan', async (_, { dir }) => {
-  if (!dir) return { error: '笔记库目录未配置' };
+ipcMain.handle('kb:scan', async (_, { projectId, dir }) => {
+  // 按库重建索引：优先 projectId，兼容旧入口传 dir
+  const proj = projectId
+    ? db.project.get(projectId)
+    : db.project.list('note').find((p: any) => p.dir && dir && path.resolve(p.dir) === path.resolve(dir));
+  if (!proj || !proj.dir) return { error: '笔记库不存在' };
+  if (!fs.existsSync(proj.dir)) return { error: '笔记库目录不存在' };
   if (_indexingLock) return { error: '正在索引中，请稍后再试' };
   try {
     _indexingLock = true;
     const sendProgress = (data) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('kb:scan-progress', { id: 0, ...data });
+        mainWindow.webContents.send('kb:scan-progress', { id: proj.id, ...data });
       }
     };
     sendProgress({ phase: 'scan', current: 0, total: 0, file: '' });
@@ -714,19 +812,13 @@ ipcMain.handle('kb:scan', async (_, { dir }) => {
 
     return new Promise((resolve) => {
       const track = { fileCount: 0, chunkCount: 0, embedded: 0 };
-      handleWorkerMessages(worker, sendProgress, resolve, track);
-      worker.send({ type: 'start', projects: [{ name: '笔记库', dir, ignore_dirs: '', ignore_files: '' }] });
+      handleWorkerMessages(worker, sendProgress, resolve, track, proj.id);
+      worker.send({ type: 'start', projects: [{ id: proj.id, name: proj.name, dir: proj.dir, ignore_dirs: proj.ignore_dirs || '', ignore_files: proj.ignore_files || '' }] });
     });
   } catch (e) {
     _indexingLock = false;
     return { error: e.message };
   }
-});
-ipcMain.handle('kb:setDefault', () => ({ ok: true }));
-ipcMain.handle('kb:getDefault', () => {
-  const dir = appConfig.getNotesDir();
-  if (!dir) return null;
-  return { id: 0, name: '笔记库', dir };
 });
 ipcMain.handle('kb:search', async (_, { dir, query }) => {
   try {
@@ -952,15 +1044,15 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
 
     // ===== 笔记库前置检查 =====
     // 查询事务/笔记/记录等本地知识类问题，若未配置笔记库则先引导用户配置，不再调用 AI
-    if (isKBQuery(question) && !appConfig.getNotesDir()) {
+    if (isKBQuery(question) && !db.project.list('note').length) {
       sendToRenderer('chat:status', { sessionId: sid, text: '需要笔记库支持...' });
       const guide = [
         '🤖 我需要先「📚 笔记库」来查询这类本地知识/事务类内容。',
         '',
-        '当前尚未配置笔记库，请先完成以下设置：',
+        '当前尚未添加任何笔记库，请先完成以下设置：',
         '',
         '1️⃣ 点击左侧「⚙️ 设置」进入设置页',
-        '2️⃣ 在「📚 笔记库设置」中选择你的笔记目录并保存',
+        '2️⃣ 在「📚 笔记库设置」中添加你的笔记目录并保存',
         '',
         '配置完成后，再问我一次相同的问题就能正常查询啦。',
       ].join('\n');
@@ -997,18 +1089,20 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
     }
 
     // pi agent 引擎（与工作台一致）
-    // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），笔记库读写（关联的 note 项目）
+    // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），笔记库读写（会话所选库，去重）
     const toolDefs: any[] = [];
+    const noteIds = new Set<number>();
     if (projectDir) {
       toolDefs.push(...(await buildDataToolDefs(projectDir)));
       const noteProjByDir = db.project.list('note').find(p => p.dir === projectDir);
-      if (noteProjByDir) toolDefs.push(...(await buildNoteToolDefs(noteProjByDir.id)));
+      if (noteProjByDir) noteIds.add(noteProjByDir.id);
     }
     if (kbIds && kbIds.length) {
-      for (const kid of kbIds) {
-        const p = kid ? db.project.get(kid) : null;
-        if (p && p.type === 'note' && p.dir) toolDefs.push(...(await buildNoteToolDefs(p.id)));
-      }
+      for (const kid of kbIds) if (kid) noteIds.add(Number(kid));
+    }
+    for (const id of noteIds) {
+      const p: any = db.project.get(id);
+      if (p && p.type === 'note' && p.dir) toolDefs.push(...(await buildNoteToolDefs(p.id)));
     }
 
     const modelPattern = piModelPattern(modelName);
@@ -1341,8 +1435,8 @@ ipcMain.handle('archive:saveAnalysisToNotes', async (_, { moduleId, analysisId }
   const mod = db.dm.get(moduleId);
   if (!mod) return { ok: false, error: '模块不存在' };
 
-  const notesDir = appConfig.getNotesDir();
-  if (!notesDir) return { ok: false, error: '笔记库未配置' };
+  const notesDir = appConfig.getNotesDir() || (db.project.list('note')[0] || {}).dir || '';
+  if (!notesDir) return { ok: false, error: '尚未添加任何笔记库' };
 
   const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   const fileName = `数据模块分析-${mod.name}-${today}.md`;
@@ -1395,10 +1489,10 @@ function countMarkdownFiles(dir: string): number {
 }
 
 ipcMain.handle('insights:stats', () => {
-  const notesDir = appConfig.getNotesDir();
+  const libs = db.project.list('note');
   let notesFileCount = 0;
-  if (notesDir && fs.existsSync(notesDir)) {
-    try { notesFileCount = countMarkdownFiles(notesDir); } catch {}
+  for (const p of libs) {
+    if (p.dir && fs.existsSync(p.dir)) { try { notesFileCount += countMarkdownFiles(p.dir); } catch {} }
   }
   const fileCount = (db.qOne("SELECT COUNT(*) as c FROM kb_documents") || {}).c || 0;
   const chunkCount = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0;
@@ -1533,10 +1627,15 @@ ipcMain.handle('insights:indexerInfo', () => {
 });
 
 ipcMain.handle('insights:libraryStats', () => {
-  const docCount = (db.qOne("SELECT COUNT(*) as c FROM kb_documents") || {}).c || 0;
-  const chunkCount = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0;
-  const embeddedCount = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks WHERE embedding IS NOT NULL") || {}).c || 0;
-  return [{ projectId: 0, name: '笔记库', docCount, chunkCount, embeddedCount }];
+  const defaultId = (db.project.getDefault() || {}).id;
+  return db.project.list('note').map((p: any) => ({
+    projectId: p.id,
+    name: p.name,
+    isDefault: p.id === defaultId,
+    docCount: db.project.docCount(p.id),
+    chunkCount: (db.qOne('SELECT COUNT(*) as c FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', p.id) || {}).c || 0,
+    embeddedCount: (db.qOne('SELECT COUNT(*) as c FROM kb_chunks WHERE embedding IS NOT NULL AND doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', p.id) || {}).c || 0,
+  }));
 });
 
 // --- Dialog ---
@@ -1655,20 +1754,19 @@ ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name,
     const { buildReportToolDefs, buildNoteToolDefs, buildDataToolDefs } = require('./services/tools');
     let customTools: any[] | undefined;
 
-    // 笔记库工具：PPT / 周报日报 基于本地笔记库内容（后端直接读取笔记内容注入 prompt，AI 有真实素材）
+    // 笔记库工具：PPT / 周报日报 基于所有笔记库内容（后端直接读取笔记内容注入 prompt，AI 有真实素材）
     let kbPrompt = prompt;
     if (tool === 'ppt' || tool === 'report') {
-      const notesDir = appConfig.getNotesDir();
-      if (notesDir) {
-        const notesText = aitool.collectNotesText(notesDir, 25000);
+      const libs = db.project.list('note').filter((p: any) => p.dir && fs.existsSync(p.dir));
+      if (libs.length) {
+        const notesText = aitool.collectNotesTextAll(libs.map((p: any) => p.dir), 25000);
         const fileCount = notesText ? (notesText.match(/【/g) || []).length : 0;
         const notesBlock = notesText
-          ? `以下是笔记库中的文件内容（共 ${fileCount} 个文件，内容来自你的真实笔记，创作时请引用其中具体的项目、数据、名称）：\n\n${notesText}\n\n`
+          ? `以下是 ${libs.length} 个笔记库中的文件内容（共 ${fileCount} 个文件，内容来自你的真实笔记，创作时请引用其中具体的项目、数据、名称）：\n\n${notesText}\n\n`
           : '';
         const kbTools: any[] = [];
-        const noteProj = db.project.list('note').find(p => p.dir === notesDir);
-        if (noteProj) kbTools.push(...(await buildNoteToolDefs(noteProj.id)));
-        kbTools.push(...(await buildDataToolDefs(notesDir, { noWeb: true })));
+        for (const lp of libs) kbTools.push(...(await buildNoteToolDefs(lp.id)));
+        kbTools.push(...(await buildDataToolDefs(appConfig.getNotesDir() || libs[0].dir, { noWeb: true })));
         if (tool === 'report') kbTools.unshift(...(await buildReportToolDefs(undefined)));
         customTools = kbTools;
         kbPrompt = `${notesBlock}${prompt}`;
@@ -1861,6 +1959,13 @@ app.whenReady().then(async () => {
     logger.error('migrate data_center_records.dataset_id error: %s', e);
   }
 
+  // 多笔记库迁移：旧版单库（config.notesDir）转正为默认笔记库，并维持指针不变量（幂等）
+  try {
+    ensureNotesLibraryMigration();
+  } catch (e) {
+    logger.error('ensureNotesLibraryMigration error: %s', e);
+  }
+
   // 配置嵌入模型（从 config.json 读取）
   rag.configure({
     model: appConfig.getConfig("embeddingModel") || "",
@@ -1890,9 +1995,8 @@ app.whenReady().then(async () => {
     const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);
     if (existing) return;
-    const notesDir = appConfig.getConfig('notesDir') || '';
-    if (!notesDir) {
-      logger.warn('[Startup] Skip daily report: notesDir not configured');
+    if (!db.project.list('note').length) {
+      logger.warn('[Startup] Skip daily report: 尚未添加任何笔记库');
       return;
     }
     const modelResult = await listPiModels();

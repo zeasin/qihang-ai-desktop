@@ -104,7 +104,9 @@ export async function followUpTask(
 
   (async () => {
     try {
-      const notesDir = appConfig.getConfig('notesDir') || (project ? project.dir : '') || '';
+      // 多库口径：任务所属库优先；无库任务（含飞书旧任务）回落默认库指针
+      const noteProj: any = project || db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
+      const notesDir = (project && project.dir) || appConfig.getConfig('notesDir') || (noteProj && noteProj.dir) || '';
       const runtime = opts.runtime === 'opencode' ? 'opencode' : 'pi';
 
       let reply = '';
@@ -143,9 +145,8 @@ export async function followUpTask(
       const customTools: any[] = [];
       customTools.push(...(await buildReportToolDefs(undefined)));
       if (notesDir) customTools.push(...(await buildDataToolDefs(notesDir)));
-      const noteProj: any = project || db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
       if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id, { stage: opts.stage })));
-      const prompt = `以下是笔记库目录，请用笔记工具自行搜索相关文件后回答：\n笔记库路径：${notesDir || '（未配置）'}\n\n原始任务：${task.prompt || task.title || ''}\n用户追问：${question}`;
+      const prompt = `以下是笔记库「${(noteProj && noteProj.name) || '默认库'}」的目录，请用笔记工具自行搜索相关文件后回答：\n笔记库路径：${notesDir || '（未配置）'}\n\n原始任务：${task.prompt || task.title || ''}\n用户追问：${question}`;
 
       await runPi({
         prompt,
