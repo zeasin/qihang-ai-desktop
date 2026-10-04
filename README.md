@@ -120,7 +120,8 @@ A：数据保存在本机数据库，正常退出不丢失。可在「设置 →
 
 ### 环境要求
 
-- Node.js 18+
+- Node.js 22.19+（pi agent SDK 的硬性要求；Electron 39 内置 Node 22.22，开发用的命令行 Node 建议同版本）
+- Electron 39（应用内已固定，**不要单独升级/降级**；升级后必须 `npx electron-rebuild -f -w better-sqlite3` 重编原生模块）
 - 可选：Ollama（本地对话模型）
 
 ### 开发调试
@@ -129,6 +130,8 @@ A：数据保存在本机数据库，正常退出不丢失。可在「设置 →
 npm install        # 安装依赖（含 Electron 原生模块编译）
 npm run electron:dev   # 编译主进程 + 启动 Vite 开发服务器 + 启动 Electron
 ```
+
+> 验证 pi SDK 能否加载必须在 Electron 内跑（`npx electron some-script.cjs`）：本机命令行 Node 有 `fs.globSync`，而旧版 Electron 内置 Node 没有，用命令行测试会漏掉运行时问题。
 
 ### 构建
 
