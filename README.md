@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-> 详细的功能设计与使用说明见 [docs/功能设计与使用说明.md](docs/功能设计与使用说明.md)。
+> 详细的功能设计与使用说明见 [docs/功能设计与使用说明.md](docs/功能设计与使用说明.md)，历次更新记录见 [docs/更新日志.md](docs/更新日志.md)。
 
 ---
 
