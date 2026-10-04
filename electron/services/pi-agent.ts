@@ -35,9 +35,11 @@ function loadSdk(): Promise<any> {
 }
 
 // ---- 运行时组件缓存（按 cwd 复用，避免每个会话重复建服务） ----
+// pi SDK 1.0：ModelRuntime 是权威的模型/凭据运行时（异步创建），
+// ModelRegistry 只是它的同步只读门面（new ModelRegistry(runtime)），保留给同步查询用。
 interface RuntimeBundle {
-  authStorage: any;
-  modelRegistry: any;
+  modelRuntime: any;
+  registry: any;
 }
 const runtimeCache = new Map<string, Promise<RuntimeBundle>>();
 function getAgentDir(): string {
@@ -46,10 +48,12 @@ function getAgentDir(): string {
 async function getRuntime(): Promise<RuntimeBundle> {
   const agentDir = getAgentDir();
   if (!runtimeCache.has(agentDir)) {
-    const p = loadSdk().then((sdk) => {
-      const authStorage = sdk.AuthStorage.create(path.join(agentDir, 'auth.json'));
-      const modelRegistry = sdk.ModelRegistry.create(authStorage, path.join(agentDir, 'models.json'));
-      return { authStorage, modelRegistry };
+    const p = loadSdk().then(async (sdk) => {
+      const modelRuntime = await sdk.ModelRuntime.create({
+        authPath: path.join(agentDir, 'auth.json'),
+        modelsPath: path.join(agentDir, 'models.json'),
+      });
+      return { modelRuntime, registry: new sdk.ModelRegistry(modelRuntime) };
     });
     runtimeCache.set(agentDir, p);
     p.catch(() => runtimeCache.delete(agentDir));
@@ -60,7 +64,7 @@ async function getRuntime(): Promise<RuntimeBundle> {
 // ---- 会话缓存：sessionId -> AgentSession ----
 interface SessionHandle {
   session: any;
-  modelRegistry: any;
+  registry: any;
   currentModelPattern?: string;
   customTools: any[];
   tail: Promise<void>; // 同一会话内的串行链，保证 prompt 不并发
@@ -105,7 +109,7 @@ async function getSession(opts: {
       try {
         const idx = modelPattern.indexOf('/');
         if (idx >= 0) {
-          const model = (await getRuntime()).modelRegistry.find(modelPattern.slice(0, idx), modelPattern.slice(idx + 1));
+          const model = (await getRuntime()).registry.find(modelPattern.slice(0, idx), modelPattern.slice(idx + 1));
           if (model) {
             await handle.session.setModel(model);
             handle.currentModelPattern = modelPattern;
@@ -126,7 +130,7 @@ async function getSession(opts: {
     const idx = modelPattern.indexOf('/');
     const provider = idx >= 0 ? modelPattern.slice(0, idx) : undefined;
     const modelId = idx >= 0 ? modelPattern.slice(idx + 1) : modelPattern;
-    if (provider) model = bundle.modelRegistry.find(provider, modelId);
+    if (provider) model = bundle.registry.find(provider, modelId);
     if (!model) modelFallbackMessage = `model ${modelPattern} not found, using default`;
   }
 
@@ -141,8 +145,7 @@ async function getSession(opts: {
   const { session } = await sdk.createAgentSession({
     cwd: cwd || process.cwd(),
     agentDir: getAgentDir(),
-    authStorage: bundle.authStorage,
-    modelRegistry: bundle.modelRegistry,
+    modelRuntime: bundle.modelRuntime,
     model,
     sessionManager: sm,
     thinkingLevel: 'off',
@@ -152,7 +155,7 @@ async function getSession(opts: {
   });
   if (modelFallbackMessage) logger.warn('[PiAgent] %s', modelFallbackMessage);
 
-  handle = { session, modelRegistry: bundle.modelRegistry, customTools, tail: Promise.resolve() };
+  handle = { session, registry: bundle.registry, customTools, tail: Promise.resolve() };
   sessions.set(sessionId, handle);
   return handle;
 }
@@ -163,7 +166,7 @@ export async function resolvePiModel(modelPattern: string | undefined): Promise<
   const bundle = await getRuntime();
   const idx = modelPattern.indexOf('/');
   if (idx < 0) return null;
-  return bundle.modelRegistry.find(modelPattern.slice(0, idx), modelPattern.slice(idx + 1)) || null;
+  return bundle.registry.find(modelPattern.slice(0, idx), modelPattern.slice(idx + 1)) || null;
 }
 
 export interface PiModelInfo {
@@ -198,13 +201,13 @@ function friendlyPiError(message: string | undefined): string {
 }
 
 /**
- * 列出 pi agent 可用的模型（来自 ~/.pi/agent 的 ModelRegistry）。
- * 优先返回已配置认证的模型（getAvailable），一个都没有时兜底列出全部内置模型。
+ * 列出 pi agent 可用的模型（来自 ~/.pi/agent 的 ModelRuntime）。
+ * 优先返回已配置认证的模型（getAvailable 快照），一个都没有时兜底列出全部内置模型。
  */
 export async function listPiModels(): Promise<{ models: PiModelInfo[]; error?: string }> {
   try {
     const bundle = await getRuntime();
-    const registry = bundle.modelRegistry;
+    const registry = bundle.registry;
     const available = (registry.getAvailable() || []) as any[];
     const configured = available.length > 0;
     const list = (configured ? available : (registry.getAll() || [])) as any[];
@@ -609,12 +612,12 @@ export async function saveBuiltinModelConfigs(providers: {
   await syncDefaultModelSettings();
 }
 
-/** 热重载 ModelRegistry（配置变更后立即生效，无需重启） */
+/** 热重载模型运行时（配置变更后立即生效，无需重启；pi 1.0 的 refresh 会重新读取 models.json） */
 export async function reloadModelRegistry(): Promise<void> {
   try {
     const bundle = await getRuntime();
-    if (bundle.modelRegistry && typeof bundle.modelRegistry.refresh === 'function') {
-      bundle.modelRegistry.refresh();
+    if (bundle.registry && typeof bundle.registry.refresh === 'function') {
+      await bundle.registry.refresh();
     }
   } catch (e: any) {
     logger.warn('[PiAgent] reloadModelRegistry failed: %s', e && e.message ? e.message : e);
@@ -652,8 +655,8 @@ export async function syncDefaultModelSettings(): Promise<void> {
   if (currentProvider && currentModel) {
     try {
       const bundle = await getRuntime();
-      const found = bundle.modelRegistry.find(currentProvider, currentModel);
-      if (found && bundle.modelRegistry.hasConfiguredAuth(found)) return;
+      const found = bundle.registry.find(currentProvider, currentModel);
+      if (found && bundle.registry.hasConfiguredAuth(found)) return;
     } catch (e: any) {
       logger.warn('[PiAgent] 默认模型有效性检查失败: %s', e && e.message ? e.message : e);
     }

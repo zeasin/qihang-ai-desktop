@@ -80,8 +80,6 @@ interface ElectronAPI {
   };
   agent: {
     status: () => Promise<{ pi: any; langchain?: any }>;
-    runtimeGet: () => Promise<{ runtime: string; oc?: any }>;
-    runtimeSet: (runtime: string) => Promise<{ runtime: string; oc?: any }>;
   };
   pi: {
     models: () => Promise<{
@@ -129,7 +127,7 @@ interface ElectronAPI {
     update: (id: number, data: any) => Promise<void>;
     remove: (id: number) => Promise<void>;
     execute: (id: number) => Promise<boolean>;
-    followup: (taskId: number, question: string) => Promise<boolean>;
+    followup: (taskId: number, question: string, model?: string) => Promise<boolean>;
     executions: (taskId: number) => Promise<any[]>;
     executionList: (page: number, pageSize: number) => Promise<{ total: number; rows: any[] }>;
     executionGet: (id: number) => Promise<any>;

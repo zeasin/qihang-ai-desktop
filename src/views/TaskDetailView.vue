@@ -101,15 +101,10 @@
         <div v-if="task.followupDone" class="followup-reply markdown-body" v-html="renderMarkdown(task.followupReply)"></div>
         <div v-if="task.followupRunning" class="followup-reply markdown-body" v-html="renderMarkdown(task.followupReply)"></div>
         <div class="followup-toolbar">
-          <select class="model-selector" v-model="runtime" :disabled="task.followupRunning" title="AI 引擎" @change="onRuntimeChange">
-            <option value="pi">pi 引擎</option>
-            <option value="opencode">opencode</option>
-          </select>
           <select class="model-selector" v-model="selectedModel" :disabled="task.followupRunning" title="选择模型">
             <option value="">默认模型</option>
             <option v-for="m in followupModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
           </select>
-          <span v-if="runtime === 'opencode'" class="followup-engine-hint">opencode 引擎暂无本地工具，追问为纯对话</span>
         </div>
         <div class="followup-input-row">
           <textarea
@@ -404,17 +399,9 @@ async function confirmDelete() {
 }
 
 // ========== 追问 ==========
-// 引擎与模型选择（与对话页一致：引擎为全局运行时，切换同步后端）
-const runtime = ref<'pi' | 'opencode'>('pi');
+// 模型选择（与对话页一致，单一引擎 pi）
 const followupModels = ref<any[]>([]);
 const selectedModel = ref('');
-
-async function loadRuntime() {
-  try {
-    const s = await API.agent.runtimeGet();
-    if (s?.runtime === 'opencode') runtime.value = 'opencode';
-  } catch { /* 保持默认 pi */ }
-}
 
 async function loadFollowupModels() {
   try {
@@ -427,16 +414,6 @@ async function loadFollowupModels() {
   } catch { followupModels.value = []; }
 }
 
-async function onRuntimeChange() {
-  try {
-    const s = await API.agent.runtimeSet(runtime.value);
-    if (s?.runtime) runtime.value = s.runtime as 'pi' | 'opencode';
-  } catch { /* 切换失败保持本地选择 */ }
-  selectedModel.value = '';
-  followupModels.value = [];
-  await loadFollowupModels();
-}
-
 async function sendFollowup() {
   if (!task.value) return;
   const q = (task.value.followupText || '').trim();
@@ -446,7 +423,7 @@ async function sendFollowup() {
   task.value.followupDone = false;
   task.value.followupReply = '> ' + q + '\n\n';
   try {
-    const ok = await API.task.followup(task.value.id, q, runtime.value, selectedModel.value || undefined);
+    const ok = await API.task.followup(task.value.id, q, selectedModel.value || undefined);
     if (!ok) {
       task.value.followupRunning = false;
       task.value.followupReply += '\n❌ 追问失败：任务不存在或正在执行中';
@@ -498,7 +475,6 @@ async function onGateReady() {
 }
 
 onMounted(async () => {
-  await loadRuntime();
   await Promise.all([loadTask(), loadProjects(), loadExecutions(), loadFollowupModels()]);
   notesLoaded.value = true;
   await loadMessages();
@@ -737,11 +713,6 @@ onBeforeUnmount(() => {
   outline: none;
   cursor: pointer;
   transition: all 0.2s;
-}
-
-.followup-engine-hint {
-  font-size: 11px;
-  color: var(--text-muted, #94a3b8);
 }
 
 .followup-input-row {

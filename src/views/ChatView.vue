@@ -138,10 +138,6 @@
                 <select class="model-selector" v-model="selectedKbId" :disabled="isStreaming" title="本对话工作的笔记库" @change="onKbPickChange">
                   <option v-for="l in kbLibraries" :key="l.id" :value="l.id">📚 {{ l.name }}</option>
                 </select>
-                <select class="model-selector runtime-selector" v-model="runtime" :disabled="isStreaming" title="AI 引擎（对比测试）" @change="onRuntimeChange">
-                  <option value="pi">pi 引擎</option>
-                  <option value="opencode">opencode</option>
-                </select>
                 <select class="model-selector" v-model="selectedModel" :disabled="isStreaming" title="选择模型">
                   <option value="">默认模型</option>
                   <option v-for="m in piModels" :key="m.pattern" :value="m.pattern">
@@ -210,28 +206,8 @@ const modelsLoaded = ref(false);
 
 const CHAT_STATE_KEY = 'chat_home_state';
 
-// AI 引擎运行时（pi 默认 / opencode 对比测试）
-const runtime = ref<'pi' | 'opencode'>('pi');
-function chatModelKey(): string {
-  return `chat_home_model_${runtime.value}`;
-}
-
-async function loadRuntime() {
-  try {
-    const s = await API.agent.runtimeGet();
-    if (s?.runtime === 'opencode') runtime.value = 'opencode';
-  } catch { /* 保持默认 pi */ }
-}
-
-async function onRuntimeChange() {
-  try {
-    const s = await API.agent.runtimeSet(runtime.value);
-    if (s?.runtime) runtime.value = s.runtime as 'pi' | 'opencode';
-  } catch { /* 切换失败保持本地选择 */ }
-  selectedModel.value = '';
-  piModels.value = [];
-  await loadPiModels();
-}
+// 模型记忆键（单一引擎 pi；沿用原 pi 引擎的键，保留用户已选模型）
+const CHAT_MODEL_KEY = 'chat_home_model_pi';
 
 // ========== 加载数据 ==========
 // ===== 多笔记库：本会话所选库（按会话记忆，默认 = 默认库） =====
@@ -261,8 +237,7 @@ async function loadPiModels() {
   try {
     const res = await API.pi.models();
     piModels.value = (res?.models || []).filter((m) => m.pattern);
-    const key = chatModelKey();
-    const saved = localStorage.getItem(key);
+    const saved = localStorage.getItem(CHAT_MODEL_KEY);
     if (saved && piModels.value.some((m) => m.pattern === saved)) {
       selectedModel.value = saved;
     } else if (!selectedModel.value && piModels.value.some((m) => m.configured)) {
@@ -275,7 +250,6 @@ async function loadPiModels() {
 }
 
 async function onGateReady() {
-  await loadRuntime();
   await Promise.all([loadKbLibraries(), loadSessions(), loadPiModels()]);
 }
 
@@ -514,8 +488,8 @@ async function doSend(text: string) {
 
   try {
     await API.chat.send(text, sid, selectedKb.value?.dir || '', kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
-    if (selectedModel.value) localStorage.setItem(chatModelKey(), selectedModel.value);
-    else localStorage.removeItem(chatModelKey());
+    if (selectedModel.value) localStorage.setItem(CHAT_MODEL_KEY, selectedModel.value);
+    else localStorage.removeItem(CHAT_MODEL_KEY);
   } catch (err: any) {
     isStreaming.value = false;
     const msg = messages.value[msgIdx];
@@ -568,8 +542,6 @@ const autoResizeTextarea = () => {
 
 // ========== 生命周期 ==========
 onMounted(async () => {
-  // 先同步引擎运行时（后端每次启动按环境检测默认引擎），再加载模型列表（模型记忆按引擎分开）
-  await loadRuntime();
   await Promise.all([loadKbLibraries(), loadSessions(), loadPiModels()]);
   
   // 尝试恢复上次的会话状态
@@ -1217,12 +1189,6 @@ onBeforeUnmount(() => {
   outline: none;
   cursor: pointer;
   transition: all 0.2s;
-}
-
-.runtime-selector {
-  max-width: 105px;
-  color: #6366f1;
-  font-weight: 500;
 }
 
 .model-selector:hover {
