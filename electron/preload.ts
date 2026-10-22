@@ -122,6 +122,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Agent
   agent: {
     status: () => ipcRenderer.invoke('agent:status'),
+    runtimeGet: () => ipcRenderer.invoke('agent:runtime:get'),
+    runtimeSet: (runtime: string) => ipcRenderer.invoke('agent:runtime:set', { runtime }),
+    versions: () => ipcRenderer.invoke('agent:versions'),
   },
 
   // pi agent 模型
@@ -177,7 +180,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: number, data: unknown) => ipcRenderer.invoke('task:update', id, data),
     remove: (id: number) => ipcRenderer.invoke('task:remove', id),
     execute: (id: number) => ipcRenderer.invoke('task:execute', id),
-    followup: (taskId: number, question: string, model?: string) => ipcRenderer.invoke('task:followup', { taskId, question, model }),
+    followup: (taskId: number, question: string, runtime?: string, model?: string) => ipcRenderer.invoke('task:followup', { taskId, question, runtime, model }),
     executions: (taskId: number) => ipcRenderer.invoke('task:executions', taskId),
     executionList: (page: number, pageSize: number) => ipcRenderer.invoke('task:execution:list', page, pageSize),
     executionGet: (id: number) => ipcRenderer.invoke('task:execution:get', id),

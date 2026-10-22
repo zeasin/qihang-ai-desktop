@@ -127,10 +127,16 @@
               <div v-if="selectedTask.followupDone" class="followup-reply markdown-body" v-html="renderMarkdown(selectedTask.followupReply)"></div>
               <div v-if="selectedTask.followupRunning" class="followup-reply markdown-body followup-streaming" v-html="renderMarkdown(selectedTask.followupReply)"></div>
               <div class="followup-toolbar">
+                <select class="model-selector" v-model="runtime" :disabled="selectedTask.followupRunning" title="AI 引擎" @change="onRuntimeChange">
+                  <option value="pi">pi 引擎</option>
+                  <option value="opencode">opencode</option>
+                </select>
                 <select class="model-selector" v-model="selectedModel" :disabled="selectedTask.followupRunning" title="选择模型">
                   <option value="">默认模型</option>
                   <option v-for="m in followupModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
                 </select>
+                <span v-if="runtime === 'opencode'" class="followup-engine-hint">opencode 引擎暂无本地工具，追问为纯对话</span>
+                <span v-if="runtimeError" class="followup-engine-error">⚠️ {{ runtimeError }}</span>
               </div>
               <div class="followup-input-row">
                 <textarea
@@ -533,13 +539,32 @@ async function confirmDelete() {
 }
 
 // ========== 追问 ==========
-// 模型选择（与对话页一致，单一引擎 pi）
+// 引擎与模型选择（与对话页一致：引擎为全局运行时，切换同步后端）
+const runtime = ref<'pi' | 'opencode'>('pi');
+const appliedRuntime = ref<'pi' | 'opencode'>('pi');
+const runtimeError = ref('');
 const followupModels = ref<any[]>([]);
 const selectedModel = ref('');
 
+async function loadRuntime() {
+  try {
+    const s = await API.agent.runtimeGet();
+    const r = s?.runtime === 'opencode' ? 'opencode' : 'pi';
+    runtime.value = r;
+    appliedRuntime.value = r;
+  } catch { /* 保持默认 pi */ }
+}
+
 async function loadFollowupModels() {
+  const want = runtime.value;
   try {
     const res = await API.pi.models();
+    if (want !== runtime.value) return;
+    if (res?.runtime && res.runtime !== want) {
+      runtimeError.value = `主进程仍在使用 ${res.runtime} 引擎，请重启应用后再切换`;
+      followupModels.value = [];
+      return;
+    }
     followupModels.value = (res?.models || []).filter((m: any) => m.pattern);
     if (!selectedModel.value && followupModels.value.some((m: any) => m.configured)) {
       const first = followupModels.value.find((m: any) => m.configured);
@@ -548,13 +573,38 @@ async function loadFollowupModels() {
   } catch { followupModels.value = []; }
 }
 
+async function onRuntimeChange() {
+  const target = runtime.value;
+  runtimeError.value = '';
+  try {
+    const s = await API.agent.runtimeSet(target);
+    const actual = s?.runtime === 'opencode' ? 'opencode' : s?.runtime === 'pi' ? 'pi' : null;
+    if (!actual) throw new Error('主进程未返回引擎状态');
+    appliedRuntime.value = actual;
+    if (actual !== target) {
+      runtime.value = actual;
+      runtimeError.value = `引擎切换未生效（当前为 ${actual}），请重启应用后再试`;
+      await loadFollowupModels();
+      return;
+    }
+  } catch {
+    runtime.value = appliedRuntime.value;
+    runtimeError.value = '引擎切换失败，请重启应用后再试';
+    await loadFollowupModels();
+    return;
+  }
+  selectedModel.value = '';
+  followupModels.value = [];
+  await loadFollowupModels();
+}
+
 async function sendFollowup(task: AiTask) {
   const q = (task.followupText || '').trim();
   if (!q || task.followupRunning) return;
   task.followupText = ''; task.followupRunning = true; task.followupDone = false;
   task.followupReply = '> ' + q + '\n\n';
   try {
-    const ok = await API.task.followup(task.id, q, selectedModel.value || undefined);
+    const ok = await API.task.followup(task.id, q, runtime.value, selectedModel.value || undefined);
     if (!ok) { task.followupRunning = false; task.followupReply += '\n❌ 追问失败：任务不存在或正在执行中'; }
   } catch (e: any) { task.followupRunning = false; task.followupDone = true; task.followupReply += '\n❌ ' + (e.message || e); }
 }
@@ -623,6 +673,7 @@ async function onGateReady() {
 }
 
 onMounted(async () => {
+  await loadRuntime();
   await Promise.all([loadProjects(), loadTasks(), loadFollowupModels()]);
   notesLoaded.value = true;
   ensureSelectedTask();
@@ -950,6 +1001,8 @@ onBeforeUnmount(() => {
 .followup-input:focus { border-color: var(--primary); }
 .followup-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .followup-toolbar .model-selector { font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; color: var(--text-primary); max-width: 180px; outline: none; cursor: pointer; transition: all 0.2s; }
+.followup-engine-hint { font-size: 11px; color: var(--text-muted, #94a3b8); }
+.followup-engine-error { font-size: 11px; color: #ef4444; }
 
 /* ========== 通用 ========== */
 .btn-xs { padding: 4px 10px; font-size: 12px; }

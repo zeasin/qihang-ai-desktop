@@ -5,6 +5,7 @@
  * 继续执行，流式进度以 task:followup:* 事件回传桌面端。
  */
 import { runPi } from './pi-agent';
+import { runOc } from './opencode-agent';
 import logger from './logger';
 import * as appConfig from './app-config';
 
@@ -61,13 +62,14 @@ function emitFollowup(type: string, payload: any) {
 
 /**
  * 任务追问：复用任务的原始会话继续对话。
- * opts.model：显式模型 pattern（不传则用pi 默认模型）。
+ * opts.runtime：'pi'（默认，飞书等无人值守场景固定 pi）| 'opencode'（桌面端手动选择，纯对话无本地工具）。
+ * opts.model：显式模型 pattern（pi / opencode 引擎使用）。
  * 结果以 task:followup:delta / done / error 事件流式回传。
  * opts.stage：传入后笔记写入类工具（写/编辑/删除）改为落暂存区，等待用户确认落地。
  */
 export async function followUpTask(
   taskId: number, question: string, db: any,
-  opts: { stage?: { taskId: number }; model?: string; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
+  opts: { stage?: { taskId: number }; runtime?: string; model?: string; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
 ): Promise<boolean> {
   const task = db.task.get(taskId);
   if (!task) return false;
@@ -105,6 +107,7 @@ export async function followUpTask(
       // 多库口径：任务所属库优先；无库任务（含飞书旧任务）回落默认库指针
       const noteProj: any = project || db.qOne("SELECT * FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1");
       const notesDir = (project && project.dir) || appConfig.getConfig('notesDir') || (noteProj && noteProj.dir) || '';
+      const runtime = opts.runtime === 'opencode' ? 'opencode' : 'pi';
 
       let reply = '';
       const onDelta = (delta: string) => {
@@ -125,6 +128,18 @@ export async function followUpTask(
         emitFollowup('error', { taskId, error: String(err) });
         try { opts.onError && opts.onError(String(err)); } catch (e: any) { logger.warn('[Followup] onError callback failed: %s', e?.message); }
       };
+
+      if (runtime === 'opencode') {
+        // opencode 引擎：本地工具经 MCP 接入前为纯对话，仅基于任务上下文回答
+        await runOc({
+          prompt: `原始任务：${task.prompt || task.title || ''}\n用户追问：${question}`,
+          sessionId,
+          cwd: notesDir || undefined,
+          modelPattern: opts.model || undefined,
+          onDelta, onTool, onDone, onError,
+        });
+        return;
+      }
 
       const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs } = require('./tools');
       const customTools: any[] = [];
