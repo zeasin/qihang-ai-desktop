@@ -286,9 +286,12 @@
         <span v-if="embeddingStatus" class="text-muted" :style="{ color: embeddingStatus.startsWith('✅') ? '#22c55e' : embeddingStatus.startsWith('⏳') ? '#f59e0b' : '#ef4444' }">{{ embeddingStatus }}</span>
       </div>
 
-      <!-- Feishu Webhook -->
+      <!-- 移动端（飞书 + 中继） -->
       <div class="card">
-        <h2>🔗 飞书 Webhook 配置</h2>
+        <h2>📱 移动端</h2>
+        <div class="text-muted mb-2">手机指挥桌面端的两条通道，互相独立、可任选或同时开启：<b>飞书</b>在飞书里 @助手 下发任务、收日报；<b>中继连接</b>让手机 App 直连桌面端完整对话与浏览历史。</div>
+
+        <h3>🔗 飞书 Webhook（群通知推送）</h3>
         <div class="text-muted mb-2">用于发送通知消息到飞书群（如日报、提醒等）。仅支持发送。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
           <div class="form-group" style="flex:1;min-width:300px;">
@@ -299,11 +302,10 @@
           <button class="btn btn-secondary" @click="testWebhook" style="margin-bottom:12px;">测试</button>
         </div>
         <span v-if="webhookStatus" class="text-muted" :style="{ color: webhookStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ webhookStatus }}</span>
-      </div>
 
-      <!-- Feishu Bot -->
-      <div class="card">
-        <h2>📩 飞书 Bot 配置（App ID + Secret）</h2>
+        <hr class="mobile-divider">
+
+        <h3>📩 飞书 Bot（飞书内对话）</h3>
         <div class="text-muted mb-2">配置飞书自建应用凭据，连接到飞书事件订阅，实时接收和回复消息。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
           <div class="form-group" style="flex:1;min-width:200px;">
@@ -324,11 +326,10 @@
           <span v-else class="badge badge-gray">○ 已停止</span>
         </div>
         <span v-if="feishuStatus" class="text-muted" :style="{ color: feishuStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ feishuStatus }}</span>
-      </div>
 
-      <!-- 移动端远程连接（中继服务） -->
-      <div class="card">
-        <h2>📱 移动端连接</h2>
+        <hr class="mobile-divider">
+
+        <h3>📶 中继连接（手机 App 远程对话）</h3>
         <div class="text-muted mb-2">
           桌面端出站连接中继服务，手机 App 经同一条中继读数据快照并下发对话。
           笔记本关机时手机仍可浏览历史，但不能发起新对话。
@@ -1470,6 +1471,8 @@ onBeforeUnmount(() => {
 .code-editor:focus { outline: none; border-color: var(--primary); }
 .code-editor::placeholder { color: #64748b; }
 .card h2 { font-size: 16px; font-weight: 600; margin: 0 0 8px; color: var(--text-primary); }
+.card h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; color: var(--text-primary); }
+.mobile-divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 
 /* AI 引擎版本 */
 .engine-version-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
