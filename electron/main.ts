@@ -54,6 +54,7 @@ import * as indexer from './services/indexer';
 import logger from './services/logger';
 import { relayClient, probeRelayHealth } from './services/relay-client';
 import * as relayDevice from './services/relay-device';
+import { notify } from './services/notify';
 import { createTrayIcon, getWindowIcon } from './icon';
 import * as rag from './services/rag';
 
@@ -1196,6 +1197,23 @@ function toMobileSession(row: any) {
   };
 }
 
+/** 点通知：把窗口捞回前台并跳到那条会话 */
+function openSessionFromRemote(sessionId: string): void {
+  showWindow();
+  sendToRenderer('nav:open-session', { sessionId });
+}
+
+/** 移动端发来的一条消息：桌面窗口即时补上这条气泡，并弹系统通知 */
+function announceMobileMessage(sessionId: string, title: string, text: string): void {
+  sendToRenderer('chat:remote', { sessionId, title, text });
+  const preview = String(text || '').replace(/\s+/g, ' ').trim();
+  notify(
+    `📱 移动端消息 · ${title || '新对话'}`,
+    preview.length > 60 ? preview.slice(0, 60) + '…' : preview,
+    () => { openSessionFromRemote(sessionId); },
+  );
+}
+
 /**
  * 移动端会经中继打过来的 RPC。
  * 只实现本仓库真正具备的能力；没有对等机制的方法明确拒绝，不静默返回成功。
@@ -1205,6 +1223,7 @@ function registerRelayRpc(): void {
     const sid = 'chat_' + Date.now();
     const row = db.chat.createSession(sid, p?.projectId, p?.title || '新对话', 'general', p?.agent || 'pi', 'ui');
     relayClient.syncSession(sid);
+    sendToRenderer('chat:created', { sessionId: sid });
     return toMobileSession(row);
   });
 
@@ -1218,7 +1237,9 @@ function registerRelayRpc(): void {
       if (!proj) throw new Error('会话在桌面端已删除，且桌面端已无该项目，无法重建');
       row = db.chat.createSession(String(p.sessionId), proj.id, p?.title || '新对话', 'general', p?.agent || 'pi', 'ui');
       relayClient.syncSession(String(p.sessionId));
+      sendToRenderer('chat:created', { sessionId: String(p.sessionId) });
     }
+    announceMobileMessage(String(p.sessionId), row.title || '新对话', text);
     void runChatTurn({
       question: text,
       sessionId: String(p.sessionId),
@@ -1226,7 +1247,10 @@ function registerRelayRpc(): void {
       images: Array.isArray(p?.images) ? p.images : undefined,
       agent: p?.agent || row.active_agent || 'pi',
       modelName: row.model_id || undefined,
-    }, emitChatEvent);
+    }, emitChatEvent).finally(() => {
+      // 这一轮跑完（含出错）：让渲染层重拉该会话，桌面才补得上移动端的问答
+      sendToRenderer('chat:remote-settled', { sessionId: String(p.sessionId) });
+    });
     // 立即回执：内容经 chat.delta/status/done 事件流回传，避免移动端 RPC 超时
     return { ok: true };
   });
@@ -1263,9 +1287,19 @@ function registerRelayRpc(): void {
   });
 }
 
-// 启动接线：注册 RPC + 按已保存的中继地址建连
+// 启动接线：注册 RPC + 中继事件旁路 + 按已保存的中继地址建连
 function startRelay(): void {
   registerRelayRpc();
+  // 移动端「发测试消息给桌面端」走的是中继事件帧，不是 RPC：只弹系统通知。
+  // 渲染层只有停在设置页时才挂着，不弹系统通知的话离开那页就毫无线索。
+  relayClient.onRelayEvent((event, data) => {
+    if (event !== 'test:message') return;
+    const sentAt = Number(data?.ts) || Date.now();
+    notify(
+      '📲 收到移动端测试消息',
+      `${data?.name || '移动端'} · ${new Date(sentAt).toLocaleTimeString('zh-CN', { hour12: false })}`,
+    );
+  });
   const saved = relayDevice.load();
   // 从没配过中继地址就不建设备文件、不发起任何外连
   if (!saved || !saved.relayUrl) return;
@@ -2086,6 +2120,8 @@ app.whenReady().then(async () => {
   } else {
     Menu.setApplicationMenu(null);
   }
+  // Windows 的系统通知按 AppUserModelID 归属，不设时 toast 可能整条不弹（dev 模式尤其明显）
+  if (process.platform === 'win32') app.setAppUserModelId('com.qihang.qihang-ai-desktop');
   try {
     await db.getDb();
     logger.info('Database mode: local (SQLite)');

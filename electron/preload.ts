@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const VALID_CHANNELS = [
   'chat:delta', 'chat:status', 'chat:tool', 'chat:done', 'chat:error',
+  'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session',
   'kb:scan-progress', 'service:status', 'service:toggle', 'feishu:message',
   'indexer:progress', 'report:generated', 'aitool:delta', 'task:changed',
   'task:followup:delta', 'task:followup:done', 'task:followup:error',

@@ -555,6 +555,33 @@ async function doSend(text: string) {
   }
 }
 
+// ========== 移动端发起的对话 ==========
+// 本组件的 chat:delta 等监听是「发送时临时绑、收口即解绑」，收不到移动端发起的那一轮，
+// 所以移动端动态另走 chat:remote* 独立通道，在 onMounted 里全程挂着。
+async function onRemoteMessage(data: any) {
+  await loadSessions();
+  if (!data?.sessionId || data.sessionId !== currentSessionId.value || isStreaming.value) return;
+  messages.value.push({ role: 'user', content: String(data.text || '') });
+  scrollToBottom();
+}
+
+async function onRemoteSettled(data: any) {
+  await loadSessions();
+  if (data?.sessionId && data.sessionId === currentSessionId.value && !isStreaming.value) {
+    await loadMessages(data.sessionId);
+  }
+}
+
+/** 点系统通知跳过来的会话 */
+async function onOpenSession(data: any) {
+  const sid = String(data?.sessionId || '');
+  if (!sid || sid === currentSessionId.value) return;
+  const find = () => sessions.value.find((s: any) => (s.session_id || String(s.id)) === sid);
+  let target = find();
+  if (!target) { await loadSessions(); target = find(); }
+  if (target) await selectSession(target);
+}
+
 // ========== 工具函数 ==========
 const renderMarkdown = (content: string) => {
   if (!content) return '';
@@ -621,6 +648,12 @@ onMounted(async () => {
     inputText.value = qp.trim();
     nextTick(() => inputRef.value?.focus());
   }
+
+  // 移动端经中继打进来的动态：全程挂着，不随切会话收放
+  API.on('chat:remote', onRemoteMessage);
+  API.on('chat:remote-settled', onRemoteSettled);
+  API.on('chat:created', () => { void loadSessions(); });
+  API.on('nav:open-session', onOpenSession);
 });
 
 onBeforeUnmount(() => {
@@ -629,6 +662,10 @@ onBeforeUnmount(() => {
   API.removeAllListeners('chat:tool');
   API.removeAllListeners('chat:done');
   API.removeAllListeners('chat:error');
+  API.removeAllListeners('chat:remote');
+  API.removeAllListeners('chat:remote-settled');
+  API.removeAllListeners('chat:created');
+  API.removeAllListeners('nav:open-session');
 });
 </script>
 
