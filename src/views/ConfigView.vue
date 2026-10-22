@@ -326,6 +326,51 @@
         <span v-if="feishuStatus" class="text-muted" :style="{ color: feishuStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ feishuStatus }}</span>
       </div>
 
+      <!-- 移动端远程连接（中继服务） -->
+      <div class="card">
+        <h2>📱 移动端连接</h2>
+        <div class="text-muted mb-2">
+          桌面端出站连接中继服务，手机 App 经同一条中继读数据快照并下发对话。
+          笔记本关机时手机仍可浏览历史，但不能发起新对话。
+        </div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
+          <div class="form-group" style="flex:1;min-width:300px;">
+            <label style="font-size:12px;">中继服务地址（只填到域名或 IP:端口，不要带 /relay 路径）</label>
+            <input v-model="relayUrl" type="text" class="form-control" placeholder="https://work.qihangerp.cn">
+          </div>
+          <button class="btn btn-secondary" @click="probeRelay" style="margin-bottom:12px;" :disabled="relayBusy">探活</button>
+          <button class="btn btn-primary" @click="saveRelayUrl" style="margin-bottom:12px;" :disabled="relayBusy">保存并重连</button>
+        </div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
+          <div class="form-group" style="flex:1;min-width:300px;">
+            <label style="font-size:12px;">连接密码（至少 6 位；移动端凭它配对，全服务器唯一）</label>
+            <input v-model="relayPassword" type="password" class="form-control"
+                   :placeholder="relayDevice.hasPassword ? '已设置；输入新值可修改' : '设置一个仅你知晓的密码'">
+          </div>
+          <button class="btn btn-primary" @click="enableRelay" style="margin-bottom:12px;" :disabled="relayBusy">
+            {{ relayDevice.remoteEnabled ? '更新密码并开启' : '设置密码并开启' }}
+          </button>
+          <button v-if="relayDevice.remoteEnabled" class="btn btn-danger" @click="disableRelay" style="margin-bottom:12px;" :disabled="relayBusy">关闭</button>
+        </div>
+        <div class="flex" style="gap:12px;flex-wrap:wrap;align-items:center;">
+          <span v-if="relayConnected" class="badge badge-success">● 已连接中继</span>
+          <span v-else-if="relayDevice.remoteEnabled" class="badge badge-gray">○ 已开启，未连接</span>
+          <span v-else class="badge badge-gray">○ 未开启</span>
+          <span class="text-muted" style="font-size:12px;">设备 ID：{{ relayDevice.deviceId || '—' }}</span>
+          <span class="text-muted" style="font-size:12px;">设备名：{{ relayDevice.name || '—' }}</span>
+        </div>
+        <div v-if="relayStatus" class="text-muted" style="font-size:12px;margin-top:6px;"
+             :style="{ color: relayStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ relayStatus }}</div>
+        <div v-if="relayClients.length" style="margin-top:12px;">
+          <div class="text-muted" style="font-size:12px;margin-bottom:6px;">已接入的客户端（{{ relayClients.length }}）</div>
+          <div v-for="c in relayClients" :key="c.sessionId" class="flex" style="gap:8px;align-items:center;font-size:13px;margin-bottom:6px;">
+            <span>{{ c.name || '未命名客户端' }}</span>
+            <span class="text-muted">{{ c.platform }}</span>
+            <button class="btn btn-secondary" @click="kickRelayClient(c.sessionId)">踢下线</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Backup / Restore -->
       <div class="card">
         <h2>💾 数据备份与恢复</h2>
@@ -1248,6 +1293,109 @@ async function testEmbedding() {
   }, 10000);
 }
 
+// ===== 移动端远程连接（中继服务） =====
+const relayUrl = ref('');
+const relayPassword = ref('');
+const relayDevice = ref<any>({ hasPassword: false, remoteEnabled: false });
+const relayConnected = ref(false);
+const relayStatus = ref('');
+const relayClients = ref<any[]>([]);
+const relayBusy = ref(false);
+let relayPoll: ReturnType<typeof setInterval> | null = null;
+
+async function loadRelay(): Promise<void> {
+  try {
+    const s = await API.relay.status();
+    relayDevice.value = s.device || { hasPassword: false, remoteEnabled: false };
+    relayConnected.value = !!s.connected;
+    if (s.device && s.device.relayUrl && !relayUrl.value) relayUrl.value = s.device.relayUrl;
+    relayStatus.value = s.connected ? '' : String(s.error || '');
+  } catch {}
+  if (relayDevice.value.remoteEnabled) {
+    try {
+      const r = await API.relay.clients();
+      relayClients.value = r && r.ok ? (r.clients || []) : [];
+    } catch {}
+  } else {
+    relayClients.value = [];
+  }
+}
+
+function pickError(r: any, fallback: string): string {
+  return r && r.error ? String(r.error) : fallback;
+}
+
+async function probeRelay(): Promise<void> {
+  relayBusy.value = true;
+  relayStatus.value = '';
+  try {
+    const r = await API.relay.probe(relayUrl.value.trim());
+    relayStatus.value = r.ok
+      ? `✅ 中继在线，当前在线设备 ${String(r.devicesOnline ?? 0)} 台`
+      : '❌ ' + pickError(r, '探活失败');
+  } catch (e: any) {
+    relayStatus.value = '❌ ' + (e?.message || String(e));
+  } finally {
+    relayBusy.value = false;
+  }
+}
+
+async function saveRelayUrl(): Promise<void> {
+  relayBusy.value = true;
+  relayStatus.value = '';
+  try {
+    const r = await API.relay.setUrl(relayUrl.value.trim());
+    if (!r.ok) { relayStatus.value = '❌ ' + pickError(r, '保存失败'); return; }
+    relayDevice.value = r.device || relayDevice.value;
+    relayConnected.value = !!r.connected;
+    relayStatus.value = r.connected ? '✅ 已连接中继' : '⚠️ 地址已保存，但 ' + pickError(r, '未完成握手');
+  } catch (e: any) {
+    relayStatus.value = '❌ ' + (e?.message || String(e));
+  } finally {
+    relayBusy.value = false;
+    void loadRelay();
+  }
+}
+
+async function enableRelay(): Promise<void> {
+  const url = relayUrl.value.trim();
+  if (!url) { relayStatus.value = '❌ 请先填写中继服务地址'; return; }
+  const pwd = relayPassword.value.trim();
+  if (pwd.length < 6) { relayStatus.value = '❌ 密码至少 6 位'; return; }
+  relayBusy.value = true;
+  relayStatus.value = '';
+  try {
+    const r = await API.relay.enable(pwd, url);
+    if (!r.ok) { relayStatus.value = '❌ ' + pickError(r, '开启失败'); return; }
+    relayDevice.value = r.device || relayDevice.value;
+    relayConnected.value = !!r.connected;
+    relayPassword.value = '';
+    relayStatus.value = r.connected ? '✅ 已开启并连接中继，在手机 App 输入这个密码配对' : '⚠️ 已开启，但 ' + pickError(r, '未完成握手');
+  } catch (e: any) {
+    relayStatus.value = '❌ ' + (e?.message || String(e));
+  } finally {
+    relayBusy.value = false;
+    void loadRelay();
+  }
+}
+
+async function disableRelay(): Promise<void> {
+  relayBusy.value = true;
+  try {
+    const r = await API.relay.disable();
+    relayStatus.value = r.ok ? '✅ 已关闭，移动端连接全部断开' : '❌ ' + pickError(r, '关闭失败');
+  } finally {
+    relayBusy.value = false;
+    void loadRelay();
+  }
+}
+
+async function kickRelayClient(sessionId: string): Promise<void> {
+  const r = await API.relay.kick(sessionId);
+  if (!r.ok) relayStatus.value = '❌ ' + pickError(r, '踢下线失败');
+  void loadRelay();
+}
+
 onMounted(async () => {
   await loadConfig();
   await loadLlmConfig();
@@ -1258,13 +1406,17 @@ onMounted(async () => {
   await loadSchedulerStatus();
   await loadBackups();
   await loadAutoBackup();
+  await loadRelay();
+  relayPoll = setInterval(() => { void loadRelay(); }, 10000);
   try {
     const svc = await API.service.status();
     feishuRunning.value = svc.feishu;
   } catch {}
 });
 
-onBeforeUnmount(() => {});
+onBeforeUnmount(() => {
+  if (relayPoll) clearInterval(relayPoll);
+});
 </script>
 
 <style scoped>

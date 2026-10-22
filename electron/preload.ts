@@ -109,6 +109,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateAgent: (sessionId: string, agent: string) => ipcRenderer.invoke('chat:session:updateAgent', { sessionId, agent }),
   },
 
+  // 移动端远程连接（中继服务）
+  relay: {
+    status: () => ipcRenderer.invoke('relay:status'),
+    probe: (url: string) => ipcRenderer.invoke('relay:probe', { url }),
+    setUrl: (url: string) => ipcRenderer.invoke('relay:set-url', { url }),
+    enable: (password: string, url?: string) => ipcRenderer.invoke('relay:enable', { password, url }),
+    disable: () => ipcRenderer.invoke('relay:disable'),
+    clients: () => ipcRenderer.invoke('relay:clients'),
+    kick: (sessionId: string) => ipcRenderer.invoke('relay:kick', { sessionId }),
+  },
+
   // Projects
   project: {
     list: (type?: string) => ipcRenderer.invoke('project:list', { type }),

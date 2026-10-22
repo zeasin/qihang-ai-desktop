@@ -35,8 +35,8 @@ try {
 import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings } from './services/pi-agent';
-import { runOc, disposeOc } from './services/opencode-agent';
+import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession } from './services/pi-agent';
+import { runOc, disposeOc, abortOcSession } from './services/opencode-agent';
 import { currentRuntime, setAgentRuntime, listAgentModels, agentStatus } from './services/agent-runtime';
 import { agentVersions } from './services/agent-versions';
 import { restartOcServer } from './services/opencode-process';
@@ -52,6 +52,8 @@ import * as feishu from './services/feishu';
 import * as scheduler from './services/scheduler';
 import * as indexer from './services/indexer';
 import logger from './services/logger';
+import { relayClient, probeRelayHealth } from './services/relay-client';
+import * as relayDevice from './services/relay-device';
 import { createTrayIcon, getWindowIcon } from './icon';
 import * as rag from './services/rag';
 
@@ -1031,7 +1033,16 @@ ipcMain.handle('ds:pendingRecords', () => {
 });
 
 // --- Chat / Orchestrator ---
-ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbIds, images, agent, modelName }) => {
+/**
+ * 一轮对话的执行核心。
+ * emit 决定这轮的增量事件播给谁：桌面走 sendToRenderer，
+ * 移动端发起的轮次双播（既回中继，也让桌面窗口当场演出来）。
+ */
+async function runChatTurn(
+  { question, sessionId, projectDir, kbIds, images, agent, modelName }:
+    { question: string; sessionId?: string; projectDir?: string; kbIds?: any[]; images?: any[]; agent?: string; modelName?: string },
+  emit: (channel: string, data: any) => void,
+) {
   const sid = sessionId || 'session_' + Date.now();
   const activeAgent = agent || 'general';
   try {
@@ -1048,7 +1059,7 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
     // ===== 笔记库前置检查 =====
     // 查询事务/笔记/记录等本地知识类问题，若未配置笔记库则先引导用户配置，不再调用 AI
     if (isKBQuery(question) && !db.project.list('note').length) {
-      sendToRenderer('chat:status', { sessionId: sid, text: '需要笔记库支持...' });
+      emit('chat:status', { sessionId: sid, text: '需要笔记库支持...' });
       const guide = [
         '🤖 我需要先「📚 笔记库」来查询这类本地知识/事务类内容。',
         '',
@@ -1059,14 +1070,14 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
         '',
         '配置完成后，再问我一次相同的问题就能正常查询啦。',
       ].join('\n');
-      sendToRenderer('chat:delta', { sessionId: sid, text: guide });
-      sendToRenderer('chat:done', { sessionId: sid });
+      emit('chat:delta', { sessionId: sid, text: guide });
+      emit('chat:done', { sessionId: sid });
       db.chat.addMessage(sid, 'assistant', guide, activeAgent);
       return;
     }
 
     // ===== AI 引擎：按运行时开关分流（opencode 为可选引擎，pi 为默认/回退） =====
-    sendToRenderer('chat:status', { sessionId: sid, text: 'AI 正在分析问题...' });
+    emit('chat:status', { sessionId: sid, text: 'AI 正在分析问题...' });
     let reply = '';
 
     if (currentRuntime() === 'opencode') {
@@ -1079,14 +1090,14 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
         images,
         onDelta: (delta) => {
           reply += delta;
-          sendToRenderer('chat:delta', { sessionId: sid, text: delta });
+          emit('chat:delta', { sessionId: sid, text: delta });
         },
-        onTool: (toolEvent) => sendToRenderer('chat:tool', { sessionId: sid, ...toolEvent }),
+        onTool: (toolEvent) => emit('chat:tool', { sessionId: sid, ...toolEvent }),
         onDone: () => {
           if (reply) db.chat.addMessage(sid, 'assistant', reply, activeAgent);
-          sendToRenderer('chat:done', { sessionId: sid });
+          emit('chat:done', { sessionId: sid });
         },
-        onError: (err) => sendToRenderer('chat:error', { sessionId: sid, text: err }),
+        onError: (err) => emit('chat:error', { sessionId: sid, text: err }),
       });
       return;
     }
@@ -1118,30 +1129,179 @@ ipcMain.handle('chat:send', async (event, { question, sessionId, projectDir, kbI
       customTools: toolDefs,
       onDelta: (delta) => {
         reply += delta;
-        sendToRenderer('chat:delta', { sessionId: sid, text: delta });
+        emit('chat:delta', { sessionId: sid, text: delta });
       },
-      onTool: (toolEvent) => sendToRenderer('chat:tool', { sessionId: sid, ...toolEvent }),
+      onTool: (toolEvent) => emit('chat:tool', { sessionId: sid, ...toolEvent }),
       onDone: () => {
         if (reply) db.chat.addMessage(sid, 'assistant', reply, activeAgent);
-        sendToRenderer('chat:done', { sessionId: sid });
+        emit('chat:done', { sessionId: sid });
       },
-      onError: (err) => sendToRenderer('chat:error', { sessionId: sid, text: err }),
+      onError: (err) => emit('chat:error', { sessionId: sid, text: err }),
     });
-  } catch (err) {
-    sendToRenderer('chat:error', { sessionId: sid, text: err.message });
+  } catch (err: any) {
+    emit('chat:error', { sessionId: sid, text: err.message });
   }
-});
+}
+ipcMain.handle('chat:send', (_, payload) => runChatTurn(payload, emitChatEvent));
 ipcMain.handle('chat:session:create', (_, { id, projectId, title, mode, source, agent }) => {
   const sid = id || 'chat_' + Date.now();
-  return db.chat.createSession(sid, projectId, title, mode || 'general', agent, source || 'ui');
+  const row = db.chat.createSession(sid, projectId, title, mode || 'general', agent, source || 'ui');
+  relayClient.syncSession(sid);
+  return row;
 });
 ipcMain.handle('chat:session:list', (_, { projectId } = {}) => db.chat.sessions(projectId));
 ipcMain.handle('chat:session:listByProject', (_, { projectId }) => db.chat.sessions(projectId));
 ipcMain.handle('chat:session:listBySource', (_, { source, projectId }) => db.chat.sessionsBySource(source, projectId));
-ipcMain.handle('chat:session:updateAgent', (_, { sessionId, agent }) => db.chat.updateSessionAgent(sessionId, agent));
+ipcMain.handle('chat:session:updateAgent', (_, { sessionId, agent }) => {
+  db.chat.updateSessionAgent(sessionId, agent);
+  relayClient.syncSession(sessionId);
+});
 ipcMain.handle('chat:session:messages', (_, { sessionId }) => db.chat.messages(sessionId));
-ipcMain.handle('chat:session:delete', (_, { sessionId }) => db.chat.deleteSession(sessionId));
-ipcMain.handle('chat:session:updateTitle', (_, { sessionId, title }) => db.chat.updateSessionTitle(sessionId, title));
+ipcMain.handle('chat:session:delete', (_, { sessionId }) => {
+  db.chat.deleteSession(sessionId);
+  relayClient.syncSessionDeleted(sessionId);
+});
+ipcMain.handle('chat:session:updateTitle', (_, { sessionId, title }) => {
+  db.chat.updateSessionTitle(sessionId, title);
+  relayClient.syncSession(sessionId);
+});
+
+// ========== 移动端远程连接（中继） ==========
+
+/** 一轮对话的广播：桌面窗口演一遍，同时把事件推给中继转移动端并刷新服务端镜像 */
+function emitChatEvent(channel: string, data: any): void {
+  sendToRenderer(channel, data);
+  relayClient.mirrorRendererEvent(channel, data);
+}
+
+/** 会话的真实工作目录：只认桌面这台机器上的项目记录，绝不用移动端传来的 projectDir */
+function sessionProjectDir(row: any): string {
+  if (!row || row.project_id === null || row.project_id === undefined) return '';
+  const p: any = db.project.get(row.project_id);
+  return p && p.dir ? p.dir : '';
+}
+
+/** 中继/移动端的会话形状（字段名沿用三端约定：sessionId/adapterId） */
+function toMobileSession(row: any) {
+  if (!row) return null;
+  return {
+    sessionId: row.session_id,
+    projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
+    title: row.title || '新对话',
+    adapterId: row.active_agent || 'pi',
+    modelId: row.model_id || null,
+    status: 'active',
+    kind: 'chat',
+    ended: 0,
+  };
+}
+
+/**
+ * 移动端会经中继打过来的 RPC。
+ * 只实现本仓库真正具备的能力；没有对等机制的方法明确拒绝，不静默返回成功。
+ */
+function registerRelayRpc(): void {
+  relayClient.registerHandler('chat.create', (p: any) => {
+    const sid = 'chat_' + Date.now();
+    const row = db.chat.createSession(sid, p?.projectId, p?.title || '新对话', 'general', p?.agent || 'pi', 'ui');
+    relayClient.syncSession(sid);
+    return toMobileSession(row);
+  });
+
+  relayClient.registerHandler('chat.send', (p: any) => {
+    const text = String(p?.text || '').trim();
+    if (!text) throw new Error('消息内容为空');
+    let row: any = db.chat.getSession(String(p.sessionId));
+    if (!row) {
+      // 桌面删掉的会话在中继是残留的，移动端仍能点进来：按原 id 在桌面重建，用桌面自己的项目目录
+      const proj: any = p?.projectId ? db.project.get(Number(p.projectId)) : null;
+      if (!proj) throw new Error('会话在桌面端已删除，且桌面端已无该项目，无法重建');
+      row = db.chat.createSession(String(p.sessionId), proj.id, p?.title || '新对话', 'general', p?.agent || 'pi', 'ui');
+      relayClient.syncSession(String(p.sessionId));
+    }
+    void runChatTurn({
+      question: text,
+      sessionId: String(p.sessionId),
+      projectDir: sessionProjectDir(row),
+      images: Array.isArray(p?.images) ? p.images : undefined,
+      agent: p?.agent || row.active_agent || 'pi',
+      modelName: row.model_id || undefined,
+    }, emitChatEvent);
+    // 立即回执：内容经 chat.delta/status/done 事件流回传，避免移动端 RPC 超时
+    return { ok: true };
+  });
+
+  relayClient.registerHandler('chat.switch-agent', (p: any) => {
+    db.chat.updateSessionAgent(String(p.sessionId), String(p.agent || 'pi'));
+    relayClient.syncSession(String(p.sessionId));
+    return { ok: true };
+  });
+
+  relayClient.registerHandler('chat.select-model', (p: any) => {
+    const modelId = String(p.modelId || '');
+    db.chat.updateSessionModel(String(p.sessionId), modelId === 'auto' ? '' : modelId);
+    relayClient.syncSession(String(p.sessionId));
+    return { ok: true };
+  });
+
+  relayClient.registerHandler('chat.list-models', async () => {
+    const res = await listAgentModels();
+    return res.models || [];
+  });
+
+  relayClient.registerHandler('chat.stop', async (p: any) => {
+    const sid = String(p?.sessionId || '');
+    if (currentRuntime() === 'opencode') await abortOcSession(sid);
+    else await abortSession(sid);
+    return { ok: true };
+  });
+
+  // 本仓库的对话内核不向用户反问（工具自动放行），没有待答交互
+  relayClient.registerHandler('chat.interactions', () => []);
+  relayClient.registerHandler('chat.answer', () => {
+    throw new Error('桌面端当前没有待回答的 AI 反问');
+  });
+}
+
+// 启动接线：注册 RPC + 按已保存的中继地址建连
+function startRelay(): void {
+  registerRelayRpc();
+  const saved = relayDevice.load();
+  // 从没配过中继地址就不建设备文件、不发起任何外连
+  if (!saved || !saved.relayUrl) return;
+  void relayClient.start(saved.relayUrl);
+}
+
+ipcMain.handle('relay:status', () => relayClient.status());
+ipcMain.handle('relay:probe', (_, { url }) => probeRelayHealth(String(url || '')));
+ipcMain.handle('relay:set-url', async (_, { url }) => {
+  try {
+    const device = await relayClient.setRelayUrl(String(url || ''));
+    const probed = await relayClient.waitForConnected(8000);
+    return { ok: true, device, connected: probed.connected, error: probed.error };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+/** 设置/修改连接密码并开启：密码由中继判全库唯一，被拒时本机不改任何状态 */
+ipcMain.handle('relay:enable', async (_, { password, url }) => {
+  try {
+    const device = await relayClient.enableWithPassword(String(password || ''), String(url || ''));
+    const probed = await relayClient.waitForConnected(8000);
+    return { ok: true, device, connected: probed.connected, error: probed.error };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('relay:disable', async () => {
+  try {
+    return { ok: true, device: await relayClient.setRemoteEnabled(false) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('relay:clients', () => relayClient.listMobileClients());
+ipcMain.handle('relay:kick', (_, { sessionId }) => relayClient.kickMobileClient(String(sessionId || '')));
 
 // 判断是否为「查询本地知识」类问题（如事务/笔记/待办/记录/知识检索）。
 // 这类问题依赖笔记库，若未配置笔记库则先引导用户去设置。
@@ -1220,10 +1380,17 @@ ipcMain.handle('project:list', (_, { type } = {}) => db.project.list(type));
 ipcMain.handle('project:get', (_, { id }) => db.project.get(id));
 ipcMain.handle('project:add', (_, { name, type, dir, description, defaultBranch }) => {
   const result = db.project.add(name, type || 'note', dir, description, defaultBranch);
+  relayClient.syncProject(result.id);
   return result;
 });
-ipcMain.handle('project:update', (_, { id, data }) => db.project.update(id, data));
-ipcMain.handle('project:delete', (_, { id }) => db.project.remove(id));
+ipcMain.handle('project:update', (_, { id, data }) => {
+  db.project.update(id, data);
+  relayClient.syncProject(id);
+});
+ipcMain.handle('project:delete', (_, { id }) => {
+  db.project.remove(id);
+  relayClient.syncProjectDeleted(id);
+});
 
 // --- Agent Status ---
 ipcMain.handle('agent:status', async () => {
@@ -1291,11 +1458,13 @@ ipcMain.handle('task:list', () => db.task.list());
 ipcMain.handle('task:add', (_, data) => {
   const r = db.task.add({ ...data, source: data.source || 'ui' });
   scheduler.reloadTasks();
+  relayClient.syncTask(r.id);
   return r;
 });
 ipcMain.handle('task:update', (_, id, data) => {
   db.task.update(id, data);
   scheduler.reloadTasks();
+  relayClient.syncTask(id);
   return true;
 });
 ipcMain.handle('task:remove', (_, id) => {
@@ -1988,6 +2157,7 @@ app.whenReady().then(async () => {
 
   scheduler.start();
   backup.startAutoBackup();
+  startRelay();
   startupElapsed('services started');
 
   updateTrayMenu(getServicesStatus());

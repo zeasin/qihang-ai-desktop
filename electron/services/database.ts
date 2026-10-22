@@ -231,6 +231,8 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_status TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN session_id TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
+  // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
+  try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
   // kb_documents 多库归属迁移：存量索引挂到默认（或第一个）笔记库
   try { getDb().exec("ALTER TABLE kb_documents ADD COLUMN project_id INTEGER DEFAULT 0"); } catch (e) {}
   try {
@@ -425,6 +427,9 @@ const chat = {
   },
   updateSessionAgent: (id, agent) => {
     run("UPDATE prj_sessions SET active_agent = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", agent, id);
+  },
+  updateSessionModel: (id, modelId) => {
+    run("UPDATE prj_sessions SET model_id = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", modelId || '', id);
   },
   messages: (sessionId) => {
     const rows = q("SELECT * FROM prj_messages WHERE session_id = ? ORDER BY id", sessionId);
