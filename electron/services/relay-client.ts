@@ -497,11 +497,11 @@ export class RelayClient {
       messageUid: `${sessionId}_${m.id}`,
       role: m.role,
       content: m.content || '',
-      thinking: '',
+      thinking: m.thinking || '',
       status: 'done',
       modelId: null,
       tokens: 0,
-      durationMs: 0,
+      durationMs: Number(m.duration_ms) || 0,
       createdAt: toEpoch(m.created_at) || Date.now(),
     };
   }

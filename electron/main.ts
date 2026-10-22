@@ -1057,6 +1057,12 @@ async function runChatTurn(
 
     db.chat.addMessage(sid, 'user', question, activeAgent, images);
 
+    // 移动端实时补上这条问题气泡 + 立刻同步镜像；等 chat.done 才推的话，
+    // AI 工作期间移动端只能看到流式回答、看不到问的是什么
+    relayClient.pushEvent('chat.user', { sessionId: sid, text: question });
+    relayClient.syncSession(sid);
+    relayClient.syncRecentMessages(sid, 1);
+
     // ===== 笔记库前置检查 =====
     // 查询事务/笔记/记录等本地知识类问题，若未配置笔记库则先引导用户配置，不再调用 AI
     if (isKBQuery(question) && !db.project.list('note').length) {
@@ -1080,8 +1086,25 @@ async function runChatTurn(
     // ===== AI 引擎：按运行时开关分流（opencode 为可选引擎，pi 为默认/回退） =====
     emit('chat:status', { sessionId: sid, text: 'AI 正在分析问题...' });
     let reply = '';
+    let thinking = '';
+    const turnStart = Date.now();
 
-    if (currentRuntime() === 'opencode') {
+    // 收尾落库：思考过程与正文一起入库并随 chat:done 通告，移动端历史/实时才都有；
+    // 推理型模型（如 sensenova flash-lite）偶尔把结论全写进思考、正文只吐换行，
+    // 空白回复不落库，改成一条可操作的提示，桌面/移动端/库里三处看到的才一致
+    const settleReply = () => {
+      if (reply.trim()) {
+        db.chat.addMessage(sid, 'assistant', reply, activeAgent, undefined, thinking, Date.now() - turnStart);
+        return;
+      }
+      reply = '⚠️ 模型这一轮没有输出正文（结论都留在了思考过程里）。请重试一次，或在输入框下方换一个模型。';
+      db.chat.addMessage(sid, 'assistant', reply, activeAgent, undefined, thinking, Date.now() - turnStart);
+      emit('chat:delta', { sessionId: sid, text: reply });
+    };
+
+    // 引擎选择：移动端明确指定的 pi/opencode 优先于桌面全局开关；claude-code/codex 本机未接入，回退全局
+    const turnEngine = agent === 'opencode' || agent === 'pi' ? agent : currentRuntime();
+    if (turnEngine === 'opencode') {
       // opencode 引擎：工具经 MCP 注入（尚未接入），customTools 忽略
       await runOc({
         prompt: question,
@@ -1093,10 +1116,14 @@ async function runChatTurn(
           reply += delta;
           emit('chat:delta', { sessionId: sid, text: delta });
         },
+        onThinking: (t) => {
+          thinking += t;
+          emit('chat:thinking', { sessionId: sid, text: t });
+        },
         onTool: (toolEvent) => emit('chat:tool', { sessionId: sid, ...toolEvent }),
         onDone: () => {
-          if (reply) db.chat.addMessage(sid, 'assistant', reply, activeAgent);
-          emit('chat:done', { sessionId: sid });
+          settleReply();
+          emit('chat:done', { sessionId: sid, durationMs: Date.now() - turnStart });
         },
         onError: (err) => emit('chat:error', { sessionId: sid, text: err }),
       });
@@ -1132,10 +1159,14 @@ async function runChatTurn(
         reply += delta;
         emit('chat:delta', { sessionId: sid, text: delta });
       },
+      onThinking: (t) => {
+        thinking += t;
+        emit('chat:thinking', { sessionId: sid, text: t });
+      },
       onTool: (toolEvent) => emit('chat:tool', { sessionId: sid, ...toolEvent }),
       onDone: () => {
-        if (reply) db.chat.addMessage(sid, 'assistant', reply, activeAgent);
-        emit('chat:done', { sessionId: sid });
+        settleReply();
+        emit('chat:done', { sessionId: sid, durationMs: Date.now() - turnStart });
       },
       onError: (err) => emit('chat:error', { sessionId: sid, text: err }),
     });
@@ -1275,8 +1306,10 @@ function registerRelayRpc(): void {
 
   relayClient.registerHandler('chat.stop', async (p: any) => {
     const sid = String(p?.sessionId || '');
-    if (currentRuntime() === 'opencode') await abortOcSession(sid);
-    else await abortSession(sid);
+    // 移动端选的 agent 决定这轮跑在哪个引擎，别按桌面全局开关猜；
+    // 两边都喊一遍，引擎不own这个会话时本来就是空操作
+    await abortOcSession(sid);
+    await abortSession(sid);
     return { ok: true };
   });
 

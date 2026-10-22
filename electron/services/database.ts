@@ -50,6 +50,8 @@ function initSchema() {
       content TEXT NOT NULL,
       mode TEXT DEFAULT 'general',
       images TEXT DEFAULT NULL,
+      thinking TEXT DEFAULT '',
+      duration_ms INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
@@ -241,12 +243,63 @@ function initSchema() {
       WHERE (project_id = 0 OR project_id IS NULL)
         AND (SELECT id FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1) IS NOT NULL`);
   } catch (e) {}
+  // prj_messages 旧库补列：thinking 存思考过程、duration_ms 存该条回答耗时。
+  // 必须在主键迁移之前补，那套迁移会整表重建 prj_messages 并按列名逐列 SELECT，缺列会直接失败
+  ensureMessageExtraColumns();
   // prj_sessions 旧版迁移：id TEXT → id INTEGER AUTOINCREMENT + session_id TEXT
+  migrateSessionKeyTable();
+}
+
+function ensureMessageExtraColumns(): void {
+  const cols = getDb().prepare('PRAGMA table_info(prj_messages)').all() as any[];
+  if (!cols.length) return;
+  const has = (name: string) => cols.some((c: any) => c.name === name);
+  if (!has('thinking')) {
+    getDb().exec("ALTER TABLE prj_messages ADD COLUMN thinking TEXT DEFAULT ''");
+    logger.info('[DB] prj_messages 已补 thinking 列（思考过程落库）');
+  }
+  if (!has('duration_ms')) {
+    getDb().exec('ALTER TABLE prj_messages ADD COLUMN duration_ms INTEGER DEFAULT 0');
+    logger.info('[DB] prj_messages 已补 duration_ms 列（回答耗时）');
+  }
+}
+
+/**
+ * 上一版这段迁移是坏的：它先 ALTER 加出 session_id，再想 DROP 旧表重建，
+ * 但线上 prj_messages 还挂着 `session_id REFERENCES prj_sessions(id)` 这条遗留外键，
+ * DROP 被外键挡下，异常又被 catch 吞掉 —— 库就长期停在「有 session_id、id 仍是 TEXT 主键」的半迁移状态。
+ * 后果：createSession 的 INSERT 不写 id（新表结构里 id 是自增主键），在这套旧结构上 id 落成 NULL，
+ * 于是给新建会话插第一条消息时撞外键，报 FOREIGN KEY constraint failed。桌面新建对话和移动端都一样。
+ * 这里把两张表一起重建（消息行 id 原样保留，中继侧 messageUid 才不会变），遗留外键一并去掉。
+ */
+function migrateSessionKeyTable(): void {
+  const cols = getDb().prepare('PRAGMA table_info(prj_sessions)').all() as any[];
+  if (!cols.length) return;
+  const idType = String((cols.find((c: any) => c.name === 'id') || {}).type || '').toUpperCase();
+  const msgDdl = getDb().prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='prj_messages'").get() as any;
+  const hasStaleFk = !!msgDdl && /REFERENCES\s+prj_sessions\s*\(\s*id\s*\)/i.test(String(msgDdl.sql));
+  if (idType === 'INTEGER' && !hasStaleFk) return;
+
   try {
-    const cols = getDb().prepare("PRAGMA table_info(prj_sessions)").all() as any[];
-    if (!cols.some((c: any) => c.name === 'session_id')) {
-      getDb().exec("ALTER TABLE prj_sessions ADD COLUMN session_id TEXT");
-      getDb().exec("UPDATE prj_sessions SET session_id = id");
+    getDb().pragma('wal_checkpoint(TRUNCATE)');
+    fs.copyFileSync(DB_PATH, DB_PATH + '.pre-session-key');
+  } catch (e: any) {
+    logger.error('[DB] 迁移前备份失败，跳过主键迁移（库保持现状）: %s', e.message);
+    return;
+  }
+
+  try {
+    getDb().exec('PRAGMA foreign_keys=OFF');
+    getDb().transaction(() => {
+      // 当年那次失败的迁移是逐条 exec 的：CREATE prj_sessions_new 已经提交，DROP 旧表才报错，
+      // 于是库里留着一张半成品 prj_sessions_new。先清掉它，否则下面的 CREATE 直接撞名。
+      for (const leftover of ['prj_sessions_new', 'prj_messages_new']) {
+        const n = (getDb().prepare(`SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name=?`).get(leftover) as any).c;
+        if (!n) continue;
+        const rows = (getDb().prepare(`SELECT COUNT(*) c FROM ${leftover}`).get() as any).c;
+        logger.warn('[DB] 清理旧迁移残留表 %s（%d 行，内容已由 %s 承载）', leftover, rows, leftover === 'prj_sessions_new' ? 'prj_sessions' : 'prj_messages');
+        getDb().exec(`DROP TABLE ${leftover}`);
+      }
       getDb().exec(`
         CREATE TABLE prj_sessions_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,15 +312,40 @@ function initSchema() {
           project_id INTEGER,
           active_agent TEXT DEFAULT 'pi',
           created_at TEXT DEFAULT (datetime('now', '+8 hours')),
-          updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+          updated_at TEXT DEFAULT (datetime('now', '+8 hours')),
+          model_id TEXT DEFAULT ''
         );
-        INSERT INTO prj_sessions_new (session_id, source, title, chat_id, chat_type, mode, project_id, active_agent, created_at, updated_at)
-        SELECT session_id, source, title, chat_id, chat_type, mode, project_id, active_agent, created_at, updated_at FROM prj_sessions;
+        INSERT INTO prj_sessions_new (session_id, source, title, chat_id, chat_type, mode, project_id, active_agent, created_at, updated_at, model_id)
+          SELECT COALESCE(session_id, id), source, title, chat_id, chat_type, mode, project_id, active_agent, created_at, updated_at, model_id FROM prj_sessions;
         DROP TABLE prj_sessions;
         ALTER TABLE prj_sessions_new RENAME TO prj_sessions;
+
+        CREATE TABLE prj_messages_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          source TEXT DEFAULT 'ui',
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          mode TEXT DEFAULT 'general',
+          images TEXT DEFAULT NULL,
+          thinking TEXT DEFAULT '',
+          duration_ms INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+        );
+        INSERT INTO prj_messages_new (id, session_id, source, role, content, mode, images, thinking, duration_ms, created_at)
+          SELECT id, session_id, source, role, content, mode, images, thinking, duration_ms, created_at FROM prj_messages;
+        DROP TABLE prj_messages;
+        ALTER TABLE prj_messages_new RENAME TO prj_messages;
       `);
-    }
-  } catch (e) {}
+    })();
+    getDb().exec('PRAGMA foreign_keys=ON');
+    const broken = getDb().prepare('PRAGMA foreign_key_check').all() as any[];
+    const orphans = (getDb().prepare('SELECT COUNT(*) c FROM prj_messages WHERE session_id NOT IN (SELECT session_id FROM prj_sessions)').get() as any).c;
+    logger.info('[DB] prj_sessions 主键迁移完成：外键异常 %d 条，孤儿消息 %d 条（备份在 qihang-ai-desktop.db.pre-session-key）', broken.length, orphans);
+  } catch (e: any) {
+    try { getDb().exec('PRAGMA foreign_keys=ON'); } catch {}
+    logger.error('[DB] prj_sessions 主键迁移失败，库保持原样（备份在 qihang-ai-desktop.db.pre-session-key）: %s', e.message);
+  }
 }
 
 // ========== Helpers ==========
@@ -435,9 +513,9 @@ const chat = {
     const rows = q("SELECT * FROM prj_messages WHERE session_id = ? ORDER BY id", sessionId);
     return rows.map(r => ({ ...r, images: r.images ? JSON.parse(r.images) : null }));
   },
-  addMessage: (sessionId, role, content, mode?, images?) => {
+  addMessage: (sessionId, role, content, mode?, images?, thinking?, durationMs?) => {
     const imagesJson = images?.length ? JSON.stringify(images) : null;
-    run("INSERT INTO prj_messages (session_id, role, content, mode, images) VALUES (?, ?, ?, ?, ?)", sessionId, role, content, mode || 'general', imagesJson);
+    run("INSERT INTO prj_messages (session_id, role, content, mode, images, thinking, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)", sessionId, role, content, mode || 'general', imagesJson, thinking || '', Math.max(0, Math.round(Number(durationMs) || 0)));
     run("UPDATE prj_sessions SET updated_at = datetime('now', '+8 hours') WHERE session_id = ?", sessionId);
   },
 };

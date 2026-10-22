@@ -282,6 +282,19 @@ export interface RunPiOptions extends RunPiCallbacks {
  * 使用官方 SDK 执行一轮 pi agent 对话。
  * 事件与旧的 CLI JSON 流语义保持一致（start/end/thinking），前端无需改动。
  */
+
+/** 消息本体里的纯文本部分（不含 thinking/tool） */
+function assistantText(m: any): string {
+  return ((m && m.content) || [])
+    .filter((c: any) => c.type === 'text')
+    .map((c: any) => c.text ?? '')
+    .join('');
+}
+
+/** 空白正文收尾时的自动追问（同会话续问，工具结果都是现成的） */
+const EMPTY_REPLY_NUDGE =
+  '你上一轮没有输出任何正文内容（只有空白）。请不要再调用任何工具，直接基于已经查询到的信息，输出面向用户的完整最终回答。';
+
 export async function runPi(opts: RunPiOptions): Promise<void> {
   const {
     prompt,
@@ -321,11 +334,10 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
   }
 
   let finalText = '';
-  let settled = false;
-  const settle = () => { settled = true; };
+  let finished = false; // 置位后停止消费事件并视为已上报（超时中止或正常收尾）
 
   const unsubscribe = session.subscribe((evt: any) => {
-    if (settled) return;
+    if (finished) return;
     switch (evt.type) {
       case 'message_update': {
         const aev = evt.assistantMessageEvent;
@@ -353,7 +365,7 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
   if (timeoutMs > 0) {
     hardTimeout = setTimeout(() => {
       logger.warn('[PiAgent] timeout %sms, aborting session %s', timeoutMs, sessionId);
-      settle();
+      finished = true;
       void session.abort().catch(() => {});
       if (finalText) onDone(finalText);
       else onError('pi 处理超时');
@@ -375,32 +387,45 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
     handle.tail = session.prompt(prompt, promptOptions).then(
       () => {},
       (err: Error) => {
-        if (settled) return; // 超时/中止已处理
+        if (finished) return; // 超时/中止已处理
+        finished = true;
         logger.error('[PiAgent] prompt error: %s', err.message);
         onError(friendlyPiError(err.message));
       },
     );
     await handle.tail;
     // prompt 正常结束（含工具调用链）
-    if (!settled) {
-      settle();
+    if (!finished) {
       const msgs = session.agent?.state?.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === 'assistant' && last.stopReason === 'error') {
+        finished = true;
         onError(last.errorMessage ? friendlyPiError(last.errorMessage) : 'pi 处理出错');
-      } else if (!finalText && last && last.role === 'assistant') {
-        const textParts = (last.content || [])
-          .filter((c: any) => c.type === 'text')
-          .map((c: any) => c.text)
-          .join('');
-        if (textParts) finalText = textParts;
-        onDelta(finalText);
+      } else {
+        const lastText = last && last.role === 'assistant' ? assistantText(last) : '';
+        if (last && last.role === 'assistant' && !lastText.trim()) {
+          // 推理型小模型（如 sensenova flash-lite）常把结论写进思考、正文只吐空白就收工；
+          // 借同一会话追问一次让它直接交答案，正文照样流进当前气泡，会话状态里数据都是现成的
+          logger.warn('[PiAgent] 空白正文收尾，自动追问一次 session=%s', sessionId);
+          handle.tail = session.prompt(EMPTY_REPLY_NUDGE, promptOptions).then(
+            () => {},
+            (err: Error) => {
+              logger.warn('[PiAgent] 追问失败: %s', err.message);
+            },
+          );
+          await handle.tail;
+        } else if (!finalText && lastText) {
+          // text_delta 一条都没到但消息本体有正文：从消息补，别让用户白等
+          finalText = lastText;
+          onDelta(finalText);
+        }
+        finished = true;
+        onDone(finalText);
       }
-      onDone(finalText);
     }
   } catch (e: any) {
-    if (!settled) {
-      settle();
+    if (!finished) {
+      finished = true;
       onError(friendlyPiError(e.message));
     }
   } finally {

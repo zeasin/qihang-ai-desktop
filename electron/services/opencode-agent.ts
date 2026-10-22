@@ -68,6 +68,15 @@ const listeners = new Map<string, OcCallbacks>(); // ocSessionId → callbacks
 const printed = new Map<string, number>(); // `${messageID}:${partID}` → 已打印长度
 let sseStarted = false;
 
+/** 静默多久算卡死：工具执行（bash/检索）期间不会有事件，留足余量 */
+const OC_IDLE_TIMEOUT_MS = 180000;
+/** 单轮总时长上限：再能干活也不能无限跑 */
+const OC_TURN_MAX_MS = 20 * 60000;
+
+/** 空白正文收尾时的自动追问（同会话续问，工具结果都是现成的） */
+const EMPTY_REPLY_NUDGE =
+  '你上一轮没有输出任何正文内容（只有空白）。请不要再调用任何工具，直接基于已经查询到的信息，输出面向用户的完整最终回答。';
+
 function diffText(partId: string, messageID: string, text: string): string {
   const key = `${messageID}:${partId}`;
   const from = printed.get(key) ?? 0;
@@ -220,8 +229,27 @@ export async function runOc(opts: RunOcOptions): Promise<void> {
 
   // 同一会话内串行（对齐 pi 的 tail 语义）
   entry.tail = entry.tail.then(async () => {
-    listeners.set(entry.ocId, { onDelta, onThinking, onTool, onError });
+    let lastActivity = Date.now();
+    let timeoutMsg = '';
+    let streamed = '';
+    listeners.set(entry.ocId, {
+      onDelta: (t) => { lastActivity = Date.now(); streamed += t; onDelta(t); },
+      onThinking: (t) => { lastActivity = Date.now(); onThinking(t); },
+      onTool: (e) => { lastActivity = Date.now(); onTool(e); },
+      onError,
+    });
     const t0 = Date.now();
+    /** 超时收尾：已流出的正文按正常完成入库，全程零输出才报错 */
+    const handleTimeout = (): boolean => {
+      if (!timeoutMsg) return false;
+      if (streamed) {
+        logger.warn('[OcAgent] %s，但已流出 %d 字，按完成收尾', timeoutMsg, streamed.length);
+        onDone(streamed);
+      } else {
+        onError(`${timeoutMsg}，已自动中止。请重试或更换模型`);
+      }
+      return true;
+    };
     logger.info('[OcAgent] prompt start: session=%s model=%s/%s cwd=%s images=%d', entry.ocId, providerID, modelID, cwd || '-', images?.length ?? 0);
     try {
       const promptPromise = client.session.prompt({
@@ -229,44 +257,60 @@ export async function runOc(opts: RunOcOptions): Promise<void> {
         path: { id: entry.ocId },
         body: { parts: buildParts(prompt, images), model: { providerID, modelID } },
       });
-      // 单轮硬超时：到点中止会话并报错，避免 UI 永久转圈
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        logger.warn('[OcAgent] prompt timeout after 180s, aborting session %s', entry.ocId);
+      // 看门狗按「有没有新进展」判超时：agentic 模型一轮跑十几步工具是正常干活，
+      // 只有真的静默或超出总时长才中止，避免把正在干活的会话掐死。
+      const watchdog = setInterval(() => {
+        const idleMs = Date.now() - lastActivity;
+        const totalMs = Date.now() - t0;
+        if (idleMs <= OC_IDLE_TIMEOUT_MS && totalMs <= OC_TURN_MAX_MS) return;
+        timeoutMsg = idleMs > OC_IDLE_TIMEOUT_MS
+          ? `AI 已 ${Math.round(idleMs / 1000)} 秒没有任何响应`
+          : `AI 单轮超过 ${Math.round(OC_TURN_MAX_MS / 60000)} 分钟`;
+        clearInterval(watchdog);
+        logger.warn('[OcAgent] %s (idle=%dms total=%dms), aborting session %s', timeoutMsg, idleMs, totalMs, entry.ocId);
         client.session.abort({ path: { id: entry.ocId } }).catch(() => {});
-      }, 180000);
+      }, 5000);
       let res: any;
       try {
         res = unwrap(await promptPromise);
       } finally {
-        clearTimeout(timer);
+        clearInterval(watchdog);
       }
-      if (timedOut) {
-        onError('AI 响应超时（180 秒），已自动中止。请重试或更换模型');
-        return;
-      }
+      if (handleTimeout()) return;
       const elapsed = Date.now() - t0;
       // 最终文本以 POST 响应为准，补发 SSE 滞后导致的差值
-      const finalText = (res?.parts ?? [])
-        .filter((p: any) => p.type === 'text')
-        .map((p: any) => p.text ?? '')
+      const textOf = (r: any) => ((r?.parts ?? []) as any[])
+        .filter((p) => p.type === 'text')
+        .map((p) => p.text ?? '')
         .join('');
+      let finalText = textOf(res);
+      let finalRes: any = res;
       const finish = res?.info?.finish ?? res?.finish;
       logger.info('[OcAgent] prompt done in %dms finish=%s textLen=%d', elapsed, finish, finalText.length);
-      const emitted = [...printed.entries()]
-        .filter(([k]) => k.startsWith(`${res?.info?.id ?? res?.id ?? ''}:`))
-        .reduce((acc, [, v]) => acc + v, 0);
       if (finish === 'error') {
         const errMsg = res?.info?.error?.data?.message ?? res?.error?.data?.message;
         onError(friendlyOcError(errMsg));
         return;
       }
+      if (!finalText.trim()) {
+        // 推理型小模型常把结论写进思考、正文只吐空白就收工；借同一会话追问一次让它直接交答案
+        logger.warn('[OcAgent] 空白正文收尾，自动追问一次 session=%s', entry.ocId);
+        finalRes = unwrap(await client.session.prompt({
+          query: cwd ? { directory: cwd } : undefined,
+          path: { id: entry.ocId },
+          body: { parts: [{ type: 'text', text: EMPTY_REPLY_NUDGE }], model: { providerID, modelID } },
+        }));
+        finalText = textOf(finalRes);
+      }
+      const emitted = [...printed.entries()]
+        .filter(([k]) => k.startsWith(`${finalRes?.info?.id ?? finalRes?.id ?? ''}:`))
+        .reduce((acc, [, v]) => acc + v, 0);
       if (finalText.length > emitted) onDelta(finalText.slice(emitted));
       onDone(finalText);
     } catch (e: any) {
+      if (handleTimeout()) return;
       if (e?.name === 'AbortError' || /abort/i.test(e?.message ?? '')) {
-        onDone('');
+        onDone(streamed);
         return;
       }
       logger.error('[OcAgent] runOc failed after %dms: %s', Date.now() - t0, e?.message ?? e);

@@ -2,20 +2,22 @@
  * agent 运行时选择器
  *
  * - 默认 pi：本地工具全量可用，飞书/定时任务固定走 pi
- * - 用户在对话页手动切到 opencode 仅对当前会话生效，重启后回到 pi
+ * - 用户在对话页切的运行时写入 config.json（agentRuntime），重启后保持
  * - 切回 pi 时停掉 opencode serve；切到 opencode 懒启动，首次对话再拉起
  */
 import logger from './logger';
+import * as appConfig from './app-config';
 import { listOcModels, disposeOc, ocStatus } from './opencode-agent';
 import { listPiModels } from './pi-agent';
 
 export type AgentRuntime = 'pi' | 'opencode';
 
-/** 会话内手动切换的运行时（不持久化） */
+/** 本次进程内已显式切换过的运行时；未切过时读 config.json */
 let sessionRuntime: AgentRuntime | null = null;
 
 export function currentRuntime(): AgentRuntime {
-  return sessionRuntime || 'pi';
+  if (sessionRuntime) return sessionRuntime;
+  return appConfig.getConfig('agentRuntime') === 'opencode' ? 'opencode' : 'pi';
 }
 
 export async function setAgentRuntime(runtime: string): Promise<void> {
@@ -23,7 +25,8 @@ export async function setAgentRuntime(runtime: string): Promise<void> {
   const prev = currentRuntime();
   if (next === prev) return;
   sessionRuntime = next;
-  logger.info('[AgentRuntime] %s -> %s (session only)', prev, next);
+  appConfig.saveConfig({ agentRuntime: next });
+  logger.info('[AgentRuntime] %s -> %s (persisted)', prev, next);
   if (next === 'pi') {
     disposeOc();
   }
