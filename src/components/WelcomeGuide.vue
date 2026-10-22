@@ -2,7 +2,7 @@
   <div class="welcome-overlay">
     <div class="welcome-modal">
       <div class="welcome-header">
-        <div class="welcome-logo">🚀</div>
+        <img class="welcome-logo" src="../assets/app-icon.png" alt="启航 AI 工作台" />
         <h1 class="welcome-title">欢迎使用启航 AI 工作台</h1>
         <p class="welcome-subtitle">首次使用？跟着以下步骤，3 分钟快速上手</p>
       </div>
@@ -180,8 +180,12 @@ onMounted(async () => {
 }
 
 .welcome-logo {
-  font-size: 40px;
-  margin-bottom: 8px;
+  width: 56px;
+  height: 56px;
+  display: block;
+  margin: 0 auto 10px;
+  border-radius: 13px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
 
 .welcome-title {
