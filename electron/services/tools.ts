@@ -206,6 +206,39 @@ async function deleteNoteTool({ path: relPath, projectId, stage }) {
   }
 }
 
+// ========== 待办落笔记（方案：新建待办自动追加到项目根 待办.md，笔记保持事实超集） ==========
+
+const TODO_NOTE_NAME = '待办.md';
+const TODO_NOTE_HEADER = '# 待办\n\n> 本文件由应用自动同步：新建待办会追加一行 `- [ ] 标题`；勾掉即完成。\n';
+
+function appendTodoNote(projectId: any, title: string): { ok: boolean; rel?: string; error?: string } {
+  try {
+    const t = String(title || '').replace(/\s+/g, ' ').trim();
+    if (!t) return { ok: false, error: '标题为空' };
+    const n = Number(projectId);
+    const pid = Number.isFinite(n) ? Math.trunc(n) : 0;
+    let proj: any = pid ? db.project.get(pid) : null;
+    if (!proj || !proj.dir || !fs.existsSync(proj.dir)) {
+      const d = db.project.getDefault() || db.project.list()[0] || null;
+      proj = d && d.dir && fs.existsSync(d.dir) ? d : null;
+    }
+    if (!proj) return { ok: false, error: '没有可用的项目目录' };
+    const target = safeNotePath(proj.dir, TODO_NOTE_NAME);
+    if (!target) return { ok: false, error: '待办文件路径越权' };
+    const line = `- [ ] ${t}`;
+    let text = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : '';
+    if (text.split(/\r?\n/).some((l: string) => l.trim() === line)) {
+      return { ok: true, rel: path.relative(proj.dir, target) };
+    }
+    if (!text) text = TODO_NOTE_HEADER;
+    if (!text.endsWith('\n')) text += '\n';
+    fs.writeFileSync(target, text + line + '\n', 'utf-8');
+    return { ok: true, rel: path.relative(proj.dir, target) };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 // ========== 本地数据工具 ==========
 
 async function queryDatasetTool({ datasetName, conditions, limit }, projectDir) {
@@ -412,9 +445,14 @@ async function createTaskTool({ title, prompt, project_name, trigger_type, sched
     if (scheduler.reloadTasks) scheduler.reloadTasks();
     if ((trigger_type || 'now') === 'now' && scheduler.executeTaskNow) scheduler.executeTaskNow(r.id);
   } catch (e) { logger.warn('[Tools] create_task reload failed: ' + e.message); }
+  const note = appendTodoNote(proj.id, String(title).trim());
+  if (!note.ok) logger.warn('[Tools] create_task 待办落笔记失败: ' + note.error);
   logger.info('[Tools] create_task: %s → id %s', title, r.id);
   const where = proj.id ? `项目「${proj.name}」` : '（未指定项目，仅记录）';
-  return `已创建任务 "${title}" (id: ${r.id}, 归属: ${where}, 触发: ${trigger_type || 'now'}${scheduled_start ? ' @ ' + scheduled_start : ''})。${(trigger_type || 'now') === 'now' ? '已开始执行。' : '到点将自动执行。'}`;
+  const sync = note.ok ? `已同步到笔记 ${note.rel}` : `笔记同步失败（${note.error}），可手动补记`;
+  const trigger = (trigger_type || 'now') === 'now' ? '已开始执行。' : '到点将自动执行。';
+  return '已创建任务 "' + title + '" (id: ' + r.id + ', 归属: ' + where + ', 触发: ' + (trigger_type || 'now')
+    + (scheduled_start ? ' @ ' + scheduled_start : '') + ')。' + trigger + ' ' + sync + '。';
 }
 
 async function updateTaskTool({ id, title, prompt, status, trigger_type, scheduled_start, cycle_type, cycle_value, cycle_time }) {
@@ -498,5 +536,5 @@ async function buildReportToolDefs(kbId) {
   ];
 }
 
-export { buildDataToolDefs, buildNoteToolDefs, buildReportToolDefs, getChinaDate };
+export { buildDataToolDefs, buildNoteToolDefs, buildReportToolDefs, getChinaDate, appendTodoNote };
 

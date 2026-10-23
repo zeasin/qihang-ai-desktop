@@ -41,7 +41,7 @@ import { currentRuntime, setAgentRuntime, listAgentModels, agentStatus } from '.
 import { agentVersions } from './services/agent-versions';
 import { restartOcServer } from './services/opencode-process';
 import { writeOpencodeConfig } from './services/opencode-config';
-import { buildNoteToolDefs, buildDataToolDefs } from './services/tools';
+import { buildNoteToolDefs, buildDataToolDefs, appendTodoNote } from './services/tools';
 import { recordFeishuTask, followUpTask } from './services/task-runner';
 import * as pending from './services/pending';
 import * as aitool from './services/ai-tools';
@@ -1525,7 +1525,12 @@ ipcMain.handle('reminder:setEnabled', (_, id, enabled) => {
   return true;
 });
 ipcMain.handle('todo:list', () => db.task.list());
-ipcMain.handle('todo:add', (_, data) => db.task.add({ ...data, trigger_type: 'manual', source: 'ui' }));
+ipcMain.handle('todo:add', (_, data) => {
+  const r = db.task.add({ ...data, trigger_type: 'manual', source: 'ui' });
+  const note = appendTodoNote(data?.project_id ?? null, data?.title || '');
+  if (!note.ok) logger.warn('[todo:add] 待办落笔记失败: ' + note.error);
+  return r;
+});
 ipcMain.handle('todo:update', (_, id, data) => { db.task.update(id, data); return true; });
 ipcMain.handle('todo:remove', (_, id) => { db.task.remove(id); return true; });
 
@@ -1533,6 +1538,8 @@ ipcMain.handle('todo:remove', (_, id) => { db.task.remove(id); return true; });
 ipcMain.handle('task:list', () => db.task.list());
 ipcMain.handle('task:add', (_, data) => {
   const r = db.task.add({ ...data, source: data.source || 'ui' });
+  const note = appendTodoNote(data?.project_id ?? null, data?.title || '');
+  if (!note.ok) logger.warn('[task:add] 待办落笔记失败: ' + note.error);
   scheduler.reloadTasks();
   relayClient.syncTask(r.id);
   return r;
