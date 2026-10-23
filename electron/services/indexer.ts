@@ -8,12 +8,12 @@ let watchers = new Map();
 let running = false;
 
 async function indexSingle(target: any, onProgress?) {
-  // 兼容传 dir 字符串：解析为对应笔记库项目；按库索引只清空该库旧索引
+  // 兼容传 dir 字符串：解析为对应项目；按项目索引只清空该项目旧索引
   const proj = (target && typeof target === 'object')
     ? target
-    : db.project.list('note').find((p: any) => p.dir === target);
+    : db.project.list().find((p: any) => p.dir === target);
   if (!proj || !proj.dir) {
-    logger.warn(`[Indexer] skip indexing: note project not found for ${typeof target === 'string' ? target : (proj && proj.name)}`);
+    logger.warn(`[Indexer] skip indexing: project not found for ${typeof target === 'string' ? target : (proj && proj.name)}`);
     return { totalChunks: 0, files: 0 };
   }
   const dir = proj.dir;
@@ -50,8 +50,8 @@ async function indexSingle(target: any, onProgress?) {
 }
 
 async function indexAll(onProgress?) {
-  const noteProjects = db.project.list('note');
-  for (const p of noteProjects) {
+  const projects = db.project.list();
+  for (const p of projects) {
     try {
       await indexSingle(p, onProgress);
     } catch (e) {
@@ -62,8 +62,8 @@ async function indexAll(onProgress?) {
 
 function watchAll() {
   stopWatching();
-  const noteProjects = db.project.list('note');
-  for (const p of noteProjects) {
+  const projects = db.project.list();
+  for (const p of projects) {
     if (!fs.existsSync(p.dir)) continue;
     try {
       const watcher = fs.watch(p.dir, { recursive: true }, (eventType, filename) => {

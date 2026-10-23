@@ -1,10 +1,10 @@
 <template>
   <div class="planner-view">
-    <!-- 一个笔记库都没有：AI 功能门禁 -->
-    <NotesGate v-if="notesLoaded && !noteProjects.length" @ready="onGateReady" />
+    <!-- 一个项目都没有：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !projectOptions.length" @ready="onGateReady" />
 
     <!-- ========== 笔记任务视图 ========== -->
-    <div v-if="!notesLoaded || noteProjects.length" class="planner-body">
+    <div v-if="!notesLoaded || projectOptions.length" class="planner-body">
       <!-- 左：任务列表 -->
       <div class="task-list-pane">
         <div class="list-pane-header">
@@ -189,10 +189,10 @@
           </div>
           <div class="modal-body">
             <div class="form-group">
-              <label>所属笔记库 *</label>
+              <label>所属项目 *</label>
               <select class="form-control" v-model="editing.project_id">
-                <option :value="null" disabled>请选择笔记库</option>
-                <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
+                <option :value="null" disabled>请选择项目</option>
+                <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
               </select>
             </div>
             <div class="form-group">
@@ -253,7 +253,7 @@
             </template>
             <div class="form-row">
               <div class="form-group">
-                <label>结果保存位置（相对笔记库，留空自动保存）</label>
+                <label>结果保存位置（相对项目目录，留空自动保存）</label>
                 <input type="text" class="form-control" v-model="editing.output_target" placeholder="如 任务输出/日报.md">
               </div>
               <div class="form-group">
@@ -317,13 +317,13 @@ const tasks = ref<AiTask[]>([]);
 const projects = ref<Project[]>([]);
 const notesLoaded = ref(false);
 
-const noteProjects = computed(() => projects.value.filter(p => p.type === 'note'));
+const projectOptions = computed(() => projects.value);
 
 // ========== 左栏：任务列表 ==========
 const noteTaskFilter = ref<number | null>(null);
 
 const visibleNoteTasks = computed(() => {
-  const noteIds = new Set(noteProjects.value.map(p => p.id));
+  const noteIds = new Set(projectOptions.value.map(p => p.id));
   return tasks.value
     .filter(t => noteIds.has(Number(t.project_id)))
     .filter(t => noteTaskFilter.value === null || Number(t.project_id) === Number(noteTaskFilter.value))
@@ -464,7 +464,7 @@ function createTask() {
   editing.value.project_id =
     noteTaskFilter.value ??
     selectedTask.value?.project_id ??
-    (noteProjects.value.find(p => p.is_default) ?? noteProjects.value[0])?.id ?? null;
+    (projectOptions.value.find(p => p.is_default) ?? projectOptions.value[0])?.id ?? null;
   editingWeekDays.value = [];
   editingMonthDays.value = 1;
   showTaskModal.value = true;
@@ -480,7 +480,7 @@ function editTask(task: AiTask) {
 
 async function saveTask() {
   const t = editing.value;
-  if (!t.project_id) { alert('请选择所属笔记库'); return; }
+  if (!t.project_id) { alert('请选择所属项目'); return; }
   if (!t.title.trim()) { alert('请输入任务标题'); return; }
   if (t.trigger_type === 'once' && !t.scheduled_start) { alert('指定时间任务请选择执行时间'); return; }
   let cycleValue = t.cycle_value || '';

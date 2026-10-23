@@ -235,13 +235,13 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
   // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
   try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
-  // kb_documents 多库归属迁移：存量索引挂到默认（或第一个）笔记库
+  // kb_documents 多项目归属迁移：存量索引挂到默认（或第一个）项目
   try { getDb().exec("ALTER TABLE kb_documents ADD COLUMN project_id INTEGER DEFAULT 0"); } catch (e) {}
   try {
     getDb().exec(`UPDATE kb_documents SET project_id =
-      (SELECT id FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1)
+      (SELECT id FROM prj_projects ORDER BY is_default DESC, id ASC LIMIT 1)
       WHERE (project_id = 0 OR project_id IS NULL)
-        AND (SELECT id FROM prj_projects WHERE type = 'note' ORDER BY is_default DESC, id ASC LIMIT 1) IS NOT NULL`);
+        AND (SELECT id FROM prj_projects ORDER BY is_default DESC, id ASC LIMIT 1) IS NOT NULL`);
   } catch (e) {}
   // prj_messages 旧库补列：thinking 存思考过程、duration_ms 存该条回答耗时。
   // 必须在主键迁移之前补，那套迁移会整表重建 prj_messages 并按列名逐列 SELECT，缺列会直接失败
@@ -386,11 +386,11 @@ function close() {
   if (db) { try { db.close(); } catch {} db = null; }
 }
 
-// ========== Projects（笔记库） ==========
+// ========== Projects（项目：本地目录，笔记库也是项目） ==========
 const project = {
   list: (type?) => {
     if (type) return q('SELECT * FROM prj_projects WHERE type = ? ORDER BY sort_order ASC, created_at DESC', type);
-    return q("SELECT * FROM prj_projects WHERE type != 'code' ORDER BY sort_order ASC, created_at DESC");
+    return q('SELECT * FROM prj_projects ORDER BY sort_order ASC, created_at DESC');
   },
   get: (id) => qOne('SELECT * FROM prj_projects WHERE id = ?', id),
   getDefault: () => qOne('SELECT * FROM prj_projects WHERE is_default = 1'),
@@ -505,6 +505,11 @@ const chat = {
   },
   updateSessionAgent: (id, agent) => {
     run("UPDATE prj_sessions SET active_agent = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", agent, id);
+  },
+  updateSessionProject: (id, projectId) => {
+    const n = (projectId === null || projectId === undefined || projectId === '') ? NaN : Number(projectId);
+    const pid = Number.isFinite(n) ? Math.trunc(n) : null;
+    run("UPDATE prj_sessions SET project_id = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", pid, id);
   },
   updateSessionModel: (id, modelId) => {
     run("UPDATE prj_sessions SET model_id = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", modelId || '', id);

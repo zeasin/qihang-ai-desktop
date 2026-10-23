@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteSession: (sessionId: string) => ipcRenderer.invoke('chat:session:delete', { sessionId }),
     updateSessionTitle: (sessionId: string, title: string) => ipcRenderer.invoke('chat:session:updateTitle', { sessionId, title }),
     updateAgent: (sessionId: string, agent: string) => ipcRenderer.invoke('chat:session:updateAgent', { sessionId, agent }),
+    updateProject: (sessionId: string, projectId: number | null) => ipcRenderer.invoke('chat:session:updateProject', { sessionId, projectId }),
   },
 
   // 移动端远程连接（中继服务）

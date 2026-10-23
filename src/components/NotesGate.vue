@@ -1,18 +1,18 @@
 <template>
   <div class="notes-gate" :class="{ compact }">
     <div class="gate-card">
-      <div class="gate-icon">📚</div>
-      <div class="gate-title">请先添加笔记库</div>
+      <div class="gate-icon">📁</div>
+      <div class="gate-title">请先添加项目</div>
       <div class="gate-desc">
         <template v-if="desc">{{ desc }}</template>
         <template v-else>
-          笔记库是本应用所有 AI 功能的数据基础，可添加多个。<br />
-          一个笔记库都没有时，AI 对话、任务执行、知识库浏览均不可用；选择目录即可添加第一个库。
+          项目就是本地目录，是本应用所有 AI 功能的数据基础，可添加多个。<br />
+          一个项目都没有时，AI 对话、任务执行、知识库浏览均不可用；选择目录即可添加第一个项目。
         </template>
       </div>
       <div class="gate-actions">
         <button class="btn btn-primary" :disabled="saving" @click="setupNotesDir">
-          {{ saving ? '正在保存...' : '📂 选择笔记库目录' }}
+          {{ saving ? '正在保存...' : '📂 选择项目目录' }}
         </button>
         <button class="btn btn-secondary" @click="goConfig">⚙️ 前往设置</button>
       </div>

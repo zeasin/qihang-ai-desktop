@@ -198,14 +198,14 @@ const groups = [
   {
     name: '内容生成',
     items: [
-      { id: 'ppt', name: '生成演示', icon: '📊', desc: '输入主题与详细要求，AI 基于笔记库内容生成演示文稿，可导出 HTML 或 PPTX。', actionLabel: '生成演示大纲', export: true, exportLabel: '导出', fields: [
+      { id: 'ppt', name: '生成演示', icon: '📊', desc: '输入主题与详细要求，AI 基于项目笔记内容生成演示文稿，可导出 HTML 或 PPTX。', actionLabel: '生成演示大纲', export: true, exportLabel: '导出', fields: [
         { key: 'topic', label: '主题', type: 'text', placeholder: '如：公司产品季度汇报' },
         { key: 'pages', label: '页数', type: 'number', default: 8, placeholder: '约多少页' },
         { key: 'style', label: '风格', type: 'select', options: ['商务汇报', '教学课件', '学术汇报', '产品发布', '创意提案'], default: '商务汇报' },
         { key: 'exportFormat', label: '导出格式', type: 'select', options: ['HTML 演示（单文件，浏览器打开）', 'PPTX（Office 演示文稿）', '两者都要'], default: 'HTML 演示（单文件，浏览器打开）' },
         { key: 'requirements', label: '详细要求（可选）', type: 'textarea', placeholder: '补充目标听众、重点内容、数据要求、页面结构等，如：面向投资人的融资路演，重点突出市场规模和财务数据，最后附风险提示页' },
       ] },
-      { id: 'report', name: '写周报/日报', icon: '📝', desc: '自动查询本地待办、数据集与笔记库，生成结构化日报/周报。', actionLabel: '生成报告', export: true, exportLabel: '导出 .md', fields: [
+      { id: 'report', name: '写周报/日报', icon: '📝', desc: '自动查询本地待办、数据集与项目笔记，生成结构化日报/周报。', actionLabel: '生成报告', export: true, exportLabel: '导出 .md', fields: [
         { key: 'type', label: '报告类型', type: 'select', options: ['日报', '周报'], default: '周报' },
         { key: 'period', label: '时间范围（可选）', type: 'text', placeholder: '如：2026-07-27 ~ 2026-08-02' },
         { key: 'notes', label: '补充要点（可选）', type: 'textarea', placeholder: '补充希望写进报告的进展、成果或问题...' },
@@ -423,10 +423,10 @@ const buildPrompt = (): string => {
   switch (t.id) {
     case 'ppt': {
       const bodyPages = Math.max((form.pages || 8) - 1, 4);
-      return `请为以下主题设计一份演示文稿。\n\n主题：${form.topic}\n正文页数：必须正好 ${bodyPages} 页（多了少了都算不合格）\n风格：${form.style || '商务汇报'}\n${form.requirements ? `详细要求：\n${form.requirements}\n` : ''}\n\n请基于上方笔记库资料创作，引用其中的真实项目、数据、名称，每页要点要具体详实，禁止空话套话。\n\n只输出一个 JSON 对象（不要输出任何其他文字，不要用 markdown 代码块包裹），格式严格如下：\n{"title":"演示标题","pages":[{"title":"第1页标题","points":["要点1","要点2","要点3"]},{"title":"第2页标题","points":["要点1","要点2"]}]}\n\n要求：\n1. title 为主题名\n2. pages 数组必须有 ${bodyPages} 个元素，每个元素是一页\n3. 每页 points 写 3-5 条要点，具体、有数据、有结论\n4. 第一页为主题介绍，最后一页为总结或行动建议\n5. 只输出 JSON，不要出现任何解释性文字`;
+      return `请为以下主题设计一份演示文稿。\n\n主题：${form.topic}\n正文页数：必须正好 ${bodyPages} 页（多了少了都算不合格）\n风格：${form.style || '商务汇报'}\n${form.requirements ? `详细要求：\n${form.requirements}\n` : ''}\n\n请基于上方项目笔记资料创作，引用其中的真实项目、数据、名称，每页要点要具体详实，禁止空话套话。\n\n只输出一个 JSON 对象（不要输出任何其他文字，不要用 markdown 代码块包裹），格式严格如下：\n{"title":"演示标题","pages":[{"title":"第1页标题","points":["要点1","要点2","要点3"]},{"title":"第2页标题","points":["要点1","要点2"]}]}\n\n要求：\n1. title 为主题名\n2. pages 数组必须有 ${bodyPages} 个元素，每个元素是一页\n3. 每页 points 写 3-5 条要点，具体、有数据、有结论\n4. 第一页为主题介绍，最后一页为总结或行动建议\n5. 只输出 JSON，不要出现任何解释性文字`;
     }
     case 'report':
-      return `请生成一份${form.type}。\n\n当前日期：${today}\n${form.period ? `时间范围：${form.period}\n` : ''}\n\n上方已提供笔记库文件内容，你可以结合笔记中的工作记录、项目进展来写；也可以调用工具查询待办、数据集等本地数据：\n\n要求：\n1. 开头概述整体情况\n2. 分模块列出完成的事项与进展（引用具体笔记内容、数据）\n3. 列出未完成/待跟进事项\n4. 下一步计划\n5. 遇到的问题与需要的支持\n${form.notes ? `补充要点：\n${form.notes}\n` : ''}\n用 Markdown 格式输出，标题用 ##。`;
+      return `请生成一份${form.type}。\n\n当前日期：${today}\n${form.period ? `时间范围：${form.period}\n` : ''}\n\n上方已提供项目笔记文件内容，你可以结合笔记中的工作记录、项目进展来写；也可以调用工具查询待办、数据集等本地数据：\n\n要求：\n1. 开头概述整体情况\n2. 分模块列出完成的事项与进展（引用具体笔记内容、数据）\n3. 列出未完成/待跟进事项\n4. 下一步计划\n5. 遇到的问题与需要的支持\n${form.notes ? `补充要点：\n${form.notes}\n` : ''}\n用 Markdown 格式输出，标题用 ##。`;
     case 'mindmap':
       return `请为主题「${form.topic}」设计一张思维导图大纲，用 Markdown 格式输出：\n\n格式要求：\n- 第一行 "# ${form.topic}" 作为中心主题\n- 主分支用 "## 主分支名"\n- 子分支用 "- 子节点"（每个主分支下 2-4 个子节点）\n- 约 ${form.branches || 4} 个主分支，内容有层次、逻辑清晰`;
     case 'copywriting':

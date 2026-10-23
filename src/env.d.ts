@@ -70,6 +70,7 @@ interface ElectronAPI {
     deleteSession: (sessionId: string) => Promise<void>;
     updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
     updateAgent: (sessionId: string, agent: string) => Promise<void>;
+    updateProject: (sessionId: string, projectId: number | null) => Promise<{ ok: boolean; error?: string }>;
   };
   relay: {
     status: () => Promise<{ connected: boolean; error: string; device: any }>;

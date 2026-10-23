@@ -35,7 +35,7 @@ try {
 import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession } from './services/pi-agent';
+import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
 import { runOc, disposeOc, abortOcSession } from './services/opencode-agent';
 import { currentRuntime, setAgentRuntime, listAgentModels, agentStatus } from './services/agent-runtime';
 import { agentVersions } from './services/agent-versions';
@@ -262,7 +262,7 @@ function sendToRenderer(channel, data) {
 // ========== Feishu message handler (shared) ==========
 
 function parseFeishuContext(text, db) {
-  const noteProjects = db.project.list('note');
+  const projects = db.project.list();
   let cleanText = text;
   const projectIds: any[] = [];
   let explicit = false;
@@ -270,7 +270,7 @@ function parseFeishuContext(text, db) {
   const bracketMatch = text.match(/\[笔记库\s*[：:]\s*([^\]]+)\]/);
   if (bracketMatch) {
     const projectName = bracketMatch[1].trim();
-    const found = noteProjects.find(p => p.name.includes(projectName) || projectName.includes(p.name));
+    const found = projects.find(p => p.name.includes(projectName) || projectName.includes(p.name));
     if (found) { projectIds.push(found.id); explicit = true; }
     cleanText = cleanText.replace(bracketMatch[0], '').trim();
   }
@@ -278,7 +278,7 @@ function parseFeishuContext(text, db) {
   const colonMatch = cleanText.match(/笔记库\s*[：:]\s*(\S+)/);
   if (colonMatch && projectIds.length === 0) {
     const projectName = colonMatch[1];
-    const found = noteProjects.find(p => p.name.includes(projectName) || projectName.includes(p.name));
+    const found = projects.find(p => p.name.includes(projectName) || projectName.includes(p.name));
     if (found) { projectIds.push(found.id); explicit = true; }
     cleanText = cleanText.replace(colonMatch[0], '').trim();
   }
@@ -287,7 +287,7 @@ function parseFeishuContext(text, db) {
     const idMatch = text.match(/^(\d+)\b/);
     if (idMatch) {
       const numId = parseInt(idMatch[1], 10);
-      const found = noteProjects.find(p => p.id === numId);
+      const found = projects.find(p => p.id === numId);
       if (found) {
         projectIds.push(found.id);
         explicit = true;
@@ -297,7 +297,7 @@ function parseFeishuContext(text, db) {
   }
 
   if (!explicit) {
-    for (const p of noteProjects) {
+    for (const p of projects) {
       if (text.startsWith(p.name)) {
         projectIds.push(p.id);
         explicit = true;
@@ -368,10 +368,10 @@ const feishuMessageHandler = async (msg) => {
       feishu.replyCard(msg, '当前没有待确认的暂存产物。', '📥 暂存区为空');
       return;
     }
-    // 落地根 = 任务所属库（飞书任务挂默认库，与旧口径一致），无库时回落默认库指针
+    // 落地根 = 任务所属项目，无项目时回落默认项目指针
     const stageTask: any = db.task.get(stage.taskId);
     const stageProj: any = stageTask && stageTask.project_id && Number.isFinite(Number(stageTask.project_id)) ? db.project.get(Number(stageTask.project_id)) : null;
-    const stageRoot = (stageProj && stageProj.type === 'note' && stageProj.dir) || appConfig.getConfig('notesDir') || '';
+    const stageRoot = (stageProj && stageProj.dir) || appConfig.getConfig('notesDir') || '';
     const r = pending.applyStage(stage.taskId, stageRoot);
     if (r.ok) {
       const lines = [...r.written.map(p => '✍️ ' + p), ...r.deleted.map(p => '🗑️ ' + p)];
@@ -463,7 +463,7 @@ const feishuMessageHandler = async (msg) => {
           if (r) inserted.push(r.id);
         }
         const summary = `✅ 已向「${ds.name}」数据集写入 ${inserted.length} 条工单（项目：${wo.project}）\n\n${items.map((it, i) => `${i + 1}. ${it.slice(0, 60)}${it.length > 60 ? '…' : ''}`).join('\n')}\n\n可在「数据中心 → 项目工单」中查看与编辑。`;
-        const noteProj = db.project.list('note').find(p => p.dir === (appConfig.getConfig('notesDir') || '')) || db.project.list('note')[0] || null;
+        const noteProj = db.project.list().find(p => p.dir === (appConfig.getConfig('notesDir') || '')) || db.project.list()[0] || null;
         const r2 = recordFeishuTask(db, noteProj, msg.text, '', 'note');
         feishuTaskId = r2.taskId;
         feishuExecId = r2.execId;
@@ -488,10 +488,10 @@ const feishuMessageHandler = async (msg) => {
   try {
     const context = parseFeishuContext(msg.text, db);
 
-    // ===== 笔记库前置检查：AI 功能门禁（飞书派活需先配置笔记库） =====
+    // ===== 项目前置检查：AI 功能门禁（飞书派活需先配置项目目录） =====
     const notesDir = appConfig.getConfig('notesDir') || '';
     if (!notesDir) {
-      feishu.replyCard(msg, '⚠️ 请先在「设置 → 📚 笔记库设置」中配置笔记库目录，配置完成后即可通过飞书派活。', '⚠️ 笔记库未配置');
+      feishu.replyCard(msg, '⚠️ 请先在「设置 → 项目」中添加项目目录，配置完成后即可通过飞书派活。', '⚠️ 项目未配置');
       return;
     }
 
@@ -500,8 +500,8 @@ const feishuMessageHandler = async (msg) => {
       feishuProjectId = context.projectIds[0];
     }
     if (!feishuProjectId) {
-      const noteProjects = db.project.list('note');
-      const byDir = noteProjects.find(p => p.dir === notesDir);
+      const projects = db.project.list();
+      const byDir = projects.find(p => p.dir === notesDir);
       if (byDir) {
         feishuProjectId = byDir.id;
         context.projectIds = [byDir.id];
@@ -538,10 +538,10 @@ const feishuMessageHandler = async (msg) => {
     const recordHint = /(记录|登记|新建).{0,16}(工单|需求|BUG)/.test(context.cleanText)
       ? '\n\n【记录要求】用户要求"记录/登记/新建 工单/需求/BUG"时，必须调用 insert_dataset_record 工具写入"项目工单"数据集（字段：项目、端、详细、优先级；一条工单一条记录），不要只写入笔记文件。'
       : '';
-    const prompt = `以下是笔记库目录，请用笔记工具自行搜索相关文件后回答：\n笔记库路径：${notesDir}\n\n用户问题：${context.cleanText}` + recordHint;
+    const prompt = `以下是项目笔记目录，请用笔记工具自行搜索相关文件后回答：\n项目路径：${notesDir}\n\n用户问题：${context.cleanText}` + recordHint;
     setMode('kb');
     const toolDefs: any[] = [];
-    const noteProj = db.project.list('note').find(p => p.dir === notesDir);
+    const noteProj = db.project.list().find(p => p.dir === notesDir);
     if (noteProj) toolDefs.push(...(await buildNoteToolDefs(noteProj.id, stageOpt ? { stage: stageOpt } : {})));
     toolDefs.push(...(await buildDataToolDefs(notesDir)));
     await runPi({
@@ -590,10 +590,10 @@ function startFeishu(configData) {
 
 // --- Knowledge Base（多笔记库；config.notesDir = 默认库目录指针） ---
 
-/** 维持不变量：config.notesDir ≡ 默认库 dir；无库则清空 */
+/** 维持不变量：config.notesDir ≡ 默认项目 dir；无项目则清空 */
 function syncDefaultNotesDir() {
-  const notes = db.project.list('note');
-  const d = db.project.getDefault() || notes[0] || null;
+  const projects = db.project.list();
+  const d = db.project.getDefault() || projects[0] || null;
   if (d) {
     db.project.setDefault(d.id);
     appConfig.setNotesDir(d.dir || '');
@@ -603,17 +603,17 @@ function syncDefaultNotesDir() {
   }
 }
 
-/** 启动迁移：旧版单库（config.notesDir）转正为默认笔记库；缺默认指针则补齐 */
+/** 启动迁移：旧版单库（config.notesDir）转正为默认项目；缺默认指针则补齐 */
 function ensureNotesLibraryMigration() {
-  const notes = db.project.list('note');
+  const projects = db.project.list();
   const cfgDir = appConfig.getNotesDir();
-  if (!notes.length && cfgDir) {
-    db.project.add('笔记库', 'note', cfgDir, '', '');
+  if (!projects.length && cfgDir) {
+    db.project.add(path.basename(cfgDir) || '项目', 'note', cfgDir, '', '');
   }
   syncDefaultNotesDir();
 }
 
-/** 库变更后重启文件监听 + 后台重建该库索引（嵌入不可用时会静默跳过向量化） */
+/** 项目变更后重启文件监听 + 后台重建该项目索引（嵌入不可用时会静默跳过向量化） */
 function refreshLibrariesAfterChange(projectId?: number) {
   try {
     const indexer = require('./services/indexer');
@@ -627,7 +627,7 @@ function refreshLibrariesAfterChange(projectId?: number) {
 
 ipcMain.handle('kb:getDir', () => appConfig.getNotesDir());
 
-ipcMain.handle('kb:list', () => db.project.list('note').map((p: any) => ({
+ipcMain.handle('kb:list', () => db.project.list().map((p: any) => ({
   ...p,
   docCount: db.project.docCount(p.id),
   isDefault: p.id === (db.project.getDefault() || {}).id,
@@ -637,8 +637,8 @@ ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
   if (!dirPath) return { error: '请选择目录' };
   if (!fs.existsSync(dirPath)) return { error: '目录不存在' };
   const abs = path.resolve(dirPath);
-  if (db.project.list('note').some((p: any) => p.dir && path.resolve(p.dir) === abs)) return { error: '该目录已在库列表中' };
-  const isFirst = !db.project.list('note').length;
+  if (db.project.list().some((p: any) => p.dir && path.resolve(p.dir) === abs)) return { error: '该目录已在项目列表中' };
+  const isFirst = !db.project.list().length;
   const r = db.project.add((name || '').trim() || path.basename(abs), 'note', abs, '', '');
   if (isFirst) db.project.setDefault(r.id);
   syncDefaultNotesDir();
@@ -648,13 +648,13 @@ ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
 
 ipcMain.handle('kb:update', (_, { id, name, dir }) => {
   const p = db.project.get(id);
-  if (!p || p.type !== 'note') return { error: '笔记库不存在' };
+  if (!p) return { error: '项目不存在' };
   const patch: any = {};
   if (name !== undefined && String(name).trim()) patch.name = String(name).trim();
   if (dir !== undefined && dir) {
     const abs = path.resolve(dir);
     if (!fs.existsSync(abs)) return { error: '目录不存在' };
-    if (db.project.list('note').some((x: any) => x.id !== id && x.dir && path.resolve(x.dir) === abs)) return { error: '该目录已被其他库使用' };
+    if (db.project.list().some((x: any) => x.id !== id && x.dir && path.resolve(x.dir) === abs)) return { error: '该目录已被其他项目使用' };
     patch.dir = abs;
   }
   if (!Object.keys(patch).length) return p;
@@ -668,18 +668,18 @@ ipcMain.handle('kb:update', (_, { id, name, dir }) => {
 });
 
 ipcMain.handle('kb:setDir', (_, { dir }) => {
-  // 兼容旧入口（首次配置门禁 NotesGate/WelcomeGuide）：无库则建默认库；有默认库则改其目录
+  // 兼容旧入口（首次配置门禁 NotesGate/WelcomeGuide）：无项目则建默认项目；有默认项目则改其目录
   if (!dir) return null;
-  const notes = db.project.list('note');
-  if (!notes.length) {
-    const p = db.project.add('笔记库', 'note', path.resolve(dir), '', '');
+  const projects = db.project.list();
+  const abs = path.resolve(dir);
+  if (!projects.length) {
+    const p = db.project.add(path.basename(abs) || '项目', 'note', abs, '', '');
     db.project.setDefault(p.id);
     syncDefaultNotesDir();
     refreshLibrariesAfterChange(p.id);
     return db.project.get(p.id);
   }
-  const d = db.project.getDefault() || notes[0];
-  const abs = path.resolve(dir);
+  const d = db.project.getDefault() || projects[0];
   if (d.dir && path.resolve(d.dir) === abs) return db.project.get(d.id);
   db.project.update(d.id, { dir: abs });
   db.project.deleteDocs(d.id);
@@ -689,8 +689,7 @@ ipcMain.handle('kb:setDir', (_, { dir }) => {
 });
 
 ipcMain.handle('kb:remove', (_, { id }) => {
-  const p = db.project.get(id);
-  if (p && p.type === 'note') {
+  if (db.project.get(id)) {
     db.project.remove(id);
     syncDefaultNotesDir();
     refreshLibrariesAfterChange();
@@ -699,14 +698,13 @@ ipcMain.handle('kb:remove', (_, { id }) => {
 });
 
 ipcMain.handle('kb:setDefault', (_, { id }) => {
-  const p = db.project.get(id);
-  if (!p || p.type !== 'note') return { error: '笔记库不存在' };
+  if (!db.project.get(id)) return { error: '项目不存在' };
   db.project.setDefault(id);
   syncDefaultNotesDir();
   return { ok: true };
 });
 
-ipcMain.handle('kb:getDefault', () => db.project.getDefault() || db.project.list('note')[0] || null);
+ipcMain.handle('kb:getDefault', () => db.project.getDefault() || db.project.list()[0] || null);
 ipcMain.handle('notes:tree', (_, { dir }) => {
   if (!dir || !fs.existsSync(dir)) return [];
   return listDir(dir);
@@ -715,7 +713,7 @@ ipcMain.handle('notes:treeChildren', (_, { dirPath }) => {
   return listDir(dirPath);
 });
 ipcMain.handle('notes:read', (_, { dir, filePath }) => {
-  if (!dir || !fs.existsSync(dir)) return { ok: false, error: '笔记库不存在' };
+  if (!dir || !fs.existsSync(dir)) return { ok: false, error: '项目目录不存在' };
   const fullPath = path.isAbsolute(filePath) ? filePath : path.join(dir, filePath);
   if (!fullPath.startsWith(dir)) return { ok: false, error: '路径越权' };
   if (!fs.existsSync(fullPath)) return { ok: false, error: '文件不存在' };
@@ -797,12 +795,12 @@ model: appConfig.getConfig('embeddingModel') || '',
 }
 
 ipcMain.handle('kb:scan', async (_, { projectId, dir }) => {
-  // 按库重建索引：优先 projectId，兼容旧入口传 dir
+  // 按项目重建索引：优先 projectId，兼容旧入口传 dir
   const proj = projectId
     ? db.project.get(projectId)
-    : db.project.list('note').find((p: any) => p.dir && dir && path.resolve(p.dir) === path.resolve(dir));
-  if (!proj || !proj.dir) return { error: '笔记库不存在' };
-  if (!fs.existsSync(proj.dir)) return { error: '笔记库目录不存在' };
+    : db.project.list().find((p: any) => p.dir && dir && path.resolve(p.dir) === path.resolve(dir));
+  if (!proj || !proj.dir) return { error: '项目不存在' };
+  if (!fs.existsSync(proj.dir)) return { error: '项目目录不存在' };
   if (_indexingLock) return { error: '正在索引中，请稍后再试' };
   try {
     _indexingLock = true;
@@ -1063,17 +1061,17 @@ async function runChatTurn(
     relayClient.syncSession(sid);
     relayClient.syncRecentMessages(sid, 1);
 
-    // ===== 笔记库前置检查 =====
-    // 查询事务/笔记/记录等本地知识类问题，若未配置笔记库则先引导用户配置，不再调用 AI
-    if (isKBQuery(question) && !db.project.list('note').length) {
-      emit('chat:status', { sessionId: sid, text: '需要笔记库支持...' });
+    // ===== 项目前置检查 =====
+    // 查询事务/笔记/记录等本地知识类问题，若未添加项目则先引导用户配置，不再调用 AI
+    if (isKBQuery(question) && !db.project.list().length) {
+      emit('chat:status', { sessionId: sid, text: '需要项目支持...' });
       const guide = [
-        '🤖 我需要先「📚 笔记库」来查询这类本地知识/事务类内容。',
+        '🤖 我需要先添加一个本地项目目录，才能查询这类本地知识/事务类内容。',
         '',
-        '当前尚未添加任何笔记库，请先完成以下设置：',
+        '当前尚未添加任何项目，请先完成以下设置：',
         '',
         '1️⃣ 点击左侧「⚙️ 设置」进入设置页',
-        '2️⃣ 在「📚 笔记库设置」中添加你的笔记目录并保存',
+        '2️⃣ 在「📁 项目」中添加目录并保存',
         '',
         '配置完成后，再问我一次相同的问题就能正常查询啦。',
       ].join('\n');
@@ -1131,20 +1129,20 @@ async function runChatTurn(
     }
 
     // pi agent 引擎（与工作台一致）
-    // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），笔记库读写（会话所选库，去重）
+    // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），项目笔记读写（按会话所选项目，去重）
     const toolDefs: any[] = [];
     const noteIds = new Set<number>();
     if (projectDir) {
       toolDefs.push(...(await buildDataToolDefs(projectDir)));
-      const noteProjByDir = db.project.list('note').find(p => p.dir === projectDir);
-      if (noteProjByDir) noteIds.add(noteProjByDir.id);
+      const projByDir = db.project.list().find(p => p.dir === projectDir);
+      if (projByDir) noteIds.add(projByDir.id);
     }
     if (kbIds && kbIds.length) {
       for (const kid of kbIds) if (kid) noteIds.add(Number(kid));
     }
     for (const id of noteIds) {
       const p: any = db.project.get(id);
-      if (p && p.type === 'note' && p.dir) toolDefs.push(...(await buildNoteToolDefs(p.id)));
+      if (p && p.dir) toolDefs.push(...(await buildNoteToolDefs(p.id)));
     }
 
     const modelPattern = piModelPattern(modelName);
@@ -1187,6 +1185,17 @@ ipcMain.handle('chat:session:listBySource', (_, { source, projectId }) => db.cha
 ipcMain.handle('chat:session:updateAgent', (_, { sessionId, agent }) => {
   db.chat.updateSessionAgent(sessionId, agent);
   relayClient.syncSession(sessionId);
+});
+ipcMain.handle('chat:session:updateProject', (_, { sessionId, projectId }) => {
+  const n = (projectId === null || projectId === undefined || projectId === '') ? NaN : Number(projectId);
+  if (!Number.isFinite(n) && projectId !== null && projectId !== undefined && projectId !== '') {
+    return { ok: false, error: '无效的项目 ID' };
+  }
+  db.chat.updateSessionProject(sessionId, Number.isFinite(n) ? Math.trunc(n) : null);
+  // 工作目录换了：丢掉缓存的 pi 会话，下一轮按新目录重建（历史仍从 jsonl 续上）
+  resetPiSession(sessionId);
+  relayClient.syncSession(sessionId);
+  return { ok: true };
 });
 ipcMain.handle('chat:session:messages', (_, { sessionId }) => db.chat.messages(sessionId));
 ipcMain.handle('chat:session:delete', (_, { sessionId }) => {
@@ -1668,15 +1677,15 @@ ipcMain.handle('archive:moduleAnalysisList', async (_, { moduleId }) => {
   return { ok: true, list };
 });
 
-// 将分析结果存档到笔记库
+// 将分析结果存档到默认项目目录
 ipcMain.handle('archive:saveAnalysisToNotes', async (_, { moduleId, analysisId }) => {
   const analysis = db.aa.get(analysisId);
   if (!analysis) return { ok: false, error: '分析记录不存在' };
   const mod = db.dm.get(moduleId);
   if (!mod) return { ok: false, error: '模块不存在' };
 
-  const notesDir = appConfig.getNotesDir() || (db.project.list('note')[0] || {}).dir || '';
-  if (!notesDir) return { ok: false, error: '尚未添加任何笔记库' };
+  const notesDir = appConfig.getNotesDir() || ((db.project.getDefault() || db.project.list()[0] || {}) as any).dir || '';
+  if (!notesDir) return { ok: false, error: '尚未添加任何项目' };
 
   const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   const fileName = `数据模块分析-${mod.name}-${today}.md`;
@@ -1729,7 +1738,7 @@ function countMarkdownFiles(dir: string): number {
 }
 
 ipcMain.handle('insights:stats', () => {
-  const libs = db.project.list('note');
+  const libs = db.project.list();
   let notesFileCount = 0;
   for (const p of libs) {
     if (p.dir && fs.existsSync(p.dir)) { try { notesFileCount += countMarkdownFiles(p.dir); } catch {} }
@@ -1738,7 +1747,7 @@ ipcMain.handle('insights:stats', () => {
   const chunkCount = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0;
   const totalChats = (db.qOne("SELECT COUNT(*) as c FROM prj_messages") || {}).c || 0;
   const todayModified = (db.qOne("SELECT COUNT(*) as c FROM kb_documents WHERE indexed_at >= date('now')") || {}).c || 0;
-  const projectCount = (db.qOne("SELECT COUNT(*) as c FROM prj_projects WHERE type = 'note'") || {}).c || 0;
+  const projectCount = (db.qOne("SELECT COUNT(*) as c FROM prj_projects") || {}).c || 0;
   const todoPending = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const todoOverdue = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE scheduled_start != '' AND scheduled_start < datetime('now', '+8 hours') AND status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const remindersActive = (db.qOne("SELECT COUNT(*) as c FROM plan_reminders WHERE enabled = 1") || {}).c || 0;
@@ -1841,8 +1850,8 @@ ipcMain.handle('service:indexAll', async () => {
   const { fork } = require('child_process');
   const worker = fork(path.join(__dirname, 'services', 'index-worker.js'));
 
-  const noteProjects = db.project.list('note');
-  const projects = noteProjects.map(p => ({ name: p.name, dir: p.dir, ignore_dirs: p.ignore_dirs, ignore_files: p.ignore_files }));
+  const projectsAll = db.project.list();
+  const projects = projectsAll.map(p => ({ name: p.name, dir: p.dir, ignore_dirs: p.ignore_dirs, ignore_files: p.ignore_files }));
 
   return new Promise((resolve) => {
     handleWorkerMessages(worker, sendProgress, resolve, null);
@@ -1868,7 +1877,7 @@ ipcMain.handle('insights:indexerInfo', () => {
 
 ipcMain.handle('insights:libraryStats', () => {
   const defaultId = (db.project.getDefault() || {}).id;
-  return db.project.list('note').map((p: any) => ({
+  return db.project.list().map((p: any) => ({
     projectId: p.id,
     name: p.name,
     isDefault: p.id === defaultId,
@@ -1994,15 +2003,15 @@ ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name,
     const { buildReportToolDefs, buildNoteToolDefs, buildDataToolDefs } = require('./services/tools');
     let customTools: any[] | undefined;
 
-    // 笔记库工具：PPT / 周报日报 基于所有笔记库内容（后端直接读取笔记内容注入 prompt，AI 有真实素材）
+    // 笔记库工具：PPT / 周报日报 基于所有项目内容（后端直接读取笔记内容注入 prompt，AI 有真实素材）
     let kbPrompt = prompt;
     if (tool === 'ppt' || tool === 'report') {
-      const libs = db.project.list('note').filter((p: any) => p.dir && fs.existsSync(p.dir));
+      const libs = db.project.list().filter((p: any) => p.dir && fs.existsSync(p.dir));
       if (libs.length) {
         const notesText = aitool.collectNotesTextAll(libs.map((p: any) => p.dir), 25000);
         const fileCount = notesText ? (notesText.match(/【/g) || []).length : 0;
         const notesBlock = notesText
-          ? `以下是 ${libs.length} 个笔记库中的文件内容（共 ${fileCount} 个文件，内容来自你的真实笔记，创作时请引用其中具体的项目、数据、名称）：\n\n${notesText}\n\n`
+          ? `以下是 ${libs.length} 个项目中的文件内容（共 ${fileCount} 个文件，内容来自你的真实笔记，创作时请引用其中具体的项目、数据、名称）：\n\n${notesText}\n\n`
           : '';
         const kbTools: any[] = [];
         for (const lp of libs) kbTools.push(...(await buildNoteToolDefs(lp.id)));
@@ -2238,8 +2247,8 @@ app.whenReady().then(async () => {
     const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);
     if (existing) return;
-    if (!db.project.list('note').length) {
-      logger.warn('[Startup] Skip daily report: 尚未添加任何笔记库');
+    if (!db.project.list().length) {
+      logger.warn('[Startup] Skip daily report: 尚未添加任何项目');
       return;
     }
     const modelResult = await listPiModels();

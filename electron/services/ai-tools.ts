@@ -138,7 +138,7 @@ export function collectNotesTextAll(dirs: string[], maxChars = 25000): string {
   const per = Math.max(4000, Math.floor(maxChars / valid.length));
   return valid.map(d => {
     const t = collectNotesText(d, per);
-    return t ? `━━ 笔记库「${path.basename(d) || d}」━━\n${t}` : '';
+    return t ? `━━ 项目「${path.basename(d) || d}」━━\n${t}` : '';
   }).filter(Boolean).join('\n\n');
 }
 

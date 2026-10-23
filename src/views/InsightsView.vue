@@ -5,7 +5,7 @@
     </div>
     <div class="content-body">
       <div class="stats-grid">
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(139,92,246,0.1);color:#8b5cf6;">📦</div><div class="stat-num">{{ stats.projectCount }}</div><div class="stat-label">笔记库</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(139,92,246,0.1);color:#8b5cf6;">📦</div><div class="stat-num">{{ stats.projectCount }}</div><div class="stat-label">项目</div></div>
         <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
         <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
         <div class="stat-card"><div class="stat-icon" style="background:rgba(99,102,241,0.1);color:#6366f1;">💬</div><div class="stat-num">{{ stats.totalChats }}</div><div class="stat-label">对话</div></div>
@@ -17,9 +17,9 @@
         <div class="index-card-header">
           <span class="index-model">{{ indexerInfo.model }} @ {{ indexerInfo.host }}</span>
         </div>
-        <div v-if="noteProjects.length">
+        <div v-if="indexProjects.length">
           <div class="index-lib-list">
-            <div v-for="p in noteProjects" :key="p.id" class="index-lib-section">
+            <div v-for="p in indexProjects" :key="p.id" class="index-lib-section">
               <div class="index-lib-header">
                 <span class="index-lib-name">{{ p.name }}<span v-if="p.isDefault" style="font-size:11px;color:#6366f1;margin-left:4px;">默认</span></span>
                 <div class="index-lib-header-actions">
@@ -49,8 +49,8 @@
         </div>
         <div v-else class="index-empty">
           <div class="index-empty-icon">📭</div>
-          <div class="index-empty-text">一个笔记库都没有</div>
-          <div class="index-empty-desc">请到「设置 → 笔记库」添加笔记库，系统会自动索引其中的 Markdown 文件；综合日报始终基于全部笔记库 + 数据集生成</div>
+          <div class="index-empty-text">一个项目都没有</div>
+          <div class="index-empty-desc">请到「设置 → 项目」添加项目，系统会自动索引其中的 Markdown 文件；综合日报始终基于全部项目 + 数据集生成</div>
         </div>
       </div>
 
@@ -143,7 +143,7 @@
     <div class="modal-overlay" :class="{ active: showSearchResults }" @click.self="closeSearchResults">
       <div class="modal search-modal">
         <div class="modal-header">
-          <span class="modal-title">搜索结果：{{ lastQuery }}（全部笔记库）</span>
+          <span class="modal-title">搜索结果：{{ lastQuery }}（全部项目）</span>
           <button class="modal-close" @click="closeSearchResults">✕</button>
         </div>
         <div class="modal-body">
@@ -214,7 +214,7 @@ const stats = ref({
   fileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
 });
 
-const noteProjects = computed(() => kbList.value.filter(k => k.type === 'note'));
+const indexProjects = computed(() => kbList.value);
 
 const reports = ref<any[]>([]);
 const expandedReport = ref<number | null>(null);
@@ -327,7 +327,7 @@ const performSearch = async () => {
   if (!query) return;
   lastQuery.value = query;
   try {
-    // 全库搜索：逐个笔记库检索后合并结果
+    // 全项目搜索：逐个项目检索后合并结果
     const libs = kbList.value.filter((l: any) => l.dir);
     const merged: any[] = [];
     const chunks = await Promise.all(libs.map(async (l: any) => {

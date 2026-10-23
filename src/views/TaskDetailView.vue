@@ -1,9 +1,9 @@
 <template>
   <div class="task-detail-view">
-    <!-- 一个笔记库都没有：AI 功能门禁 -->
-    <NotesGate v-if="notesLoaded && !noteProjects.length" @ready="onGateReady" />
+    <!-- 一个项目都没有：AI 功能门禁 -->
+    <NotesGate v-if="notesLoaded && !projectOptions.length" @ready="onGateReady" />
 
-    <div v-if="!notesLoaded || noteProjects.length" class="content-header">
+    <div v-if="!notesLoaded || projectOptions.length" class="content-header">
       <button class="btn btn-secondary btn-sm" @click="$router.push('/planner')">← 返回任务中心</button>
       <div class="header-actions">
         <span v-if="task" :class="['status-badge', 'status-' + task.status]">{{ statusText(task.status) }}</span>
@@ -14,11 +14,11 @@
       </div>
     </div>
 
-    <div v-if="(!notesLoaded || noteProjects.length) && !task" class="content-body">
+    <div v-if="(!notesLoaded || projectOptions.length) && !task" class="content-body">
       <div class="empty-state">加载中...</div>
     </div>
 
-    <div v-else-if="!notesLoaded || noteProjects.length" class="content-body">
+    <div v-else-if="!notesLoaded || projectOptions.length" class="content-body">
       <!-- 基本信息 -->
       <div class="detail-section">
         <h3 class="section-title">基本信息</h3>
@@ -32,7 +32,7 @@
             <span class="info-value">📚 知识</span>
           </div>
           <div class="info-item">
-            <span class="info-label">所属笔记库</span>
+            <span class="info-label">所属项目</span>
             <span class="info-value">{{ projectName || '未关联' }}</span>
           </div>
           <div class="info-item">
@@ -134,10 +134,10 @@
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label>所属笔记库 *</label>
+            <label>所属项目 *</label>
             <select class="form-control" v-model="editing.project_id">
-              <option :value="null" disabled>请选择笔记库</option>
-              <option v-for="p in noteProjects" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
+              <option :value="null" disabled>请选择项目</option>
+              <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -198,7 +198,7 @@
           </template>
           <div class="form-row">
             <div class="form-group">
-              <label>结果保存位置（相对笔记库，留空自动保存）</label>
+              <label>结果保存位置（相对项目目录，留空自动保存）</label>
               <input type="text" class="form-control" v-model="editing.output_target" placeholder="如 任务输出/日报.md">
             </div>
             <div class="form-group">
@@ -264,7 +264,7 @@ const weekDays = [
   { label: '周日', value: 0 },
 ];
 
-const noteProjects = computed(() => projects.value.filter(p => p.type === 'note'));
+const projectOptions = computed(() => projects.value);
 
 const projectName = computed(() => {
   if (!task.value || !task.value.project_id) return '';
@@ -364,7 +364,7 @@ function editTask() {
 
 async function saveTask() {
   const t = editing.value;
-  if (!t.project_id) { alert('请选择所属笔记库'); return; }
+  if (!t.project_id) { alert('请选择所属项目'); return; }
   if (!t.title.trim()) { alert('请输入任务标题'); return; }
   if (t.trigger_type === 'once' && !t.scheduled_start) { alert('指定时间任务请选择执行时间'); return; }
   let cycleValue = t.cycle_value || '';

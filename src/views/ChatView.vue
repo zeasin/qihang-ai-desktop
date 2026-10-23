@@ -6,23 +6,46 @@
     <div class="chat-sidebar">
       <div class="sidebar-header">
         <h3 class="sidebar-title">对话</h3>
-        <button class="btn btn-sm btn-primary" @click="newSession">+ 新对话</button>
+        <button class="btn btn-sm btn-primary" @click="newSession()">+ 新对话</button>
       </div>
 
-      <div class="conversation-list" v-if="sessions.length" ref="conversationListRef">
-        <div
-          v-for="session in sessions"
-          :key="session.session_id || session.id"
-          class="conversation-item"
-          :class="{ active: currentSessionId === (session.session_id || String(session.id)) }"
-          @click="selectSession(session)"
-        >
-          <span class="conv-icon">{{ runningSessionIds.has(session.session_id || String(session.id)) ? '⏳' : '🗨️' }}</span>
-          <div class="conv-info">
-            <div class="conv-title">{{ session.title || '新对话' }}</div>
-            <div class="conv-preview">{{ session.last_message || '' }}</div>
+      <div class="conversation-groups" v-if="sessions.length || workProjects.length" ref="conversationListRef">
+        <div v-for="group in convGroups" :key="group.key" class="conv-group">
+          <div
+            class="conv-group-header"
+            :class="{ current: groupIsCurrent(group) }"
+            :title="group.project ? (group.project.dir || group.project.name) + ' · 点击折叠/展开' : '未绑定项目的对话'"
+            @click="toggleGroup(group.key)"
+          >
+            <span class="group-arrow" :class="{ collapsed: isGroupCollapsed(group.key) }">▾</span>
+            <span class="group-icon">{{ group.project ? '📁' : '💬' }}</span>
+            <span class="group-name">{{ group.project ? group.project.name : '未分组' }}</span>
+            <span class="group-count">{{ group.sessions.length }}</span>
+            <button
+              v-if="group.project"
+              class="group-add"
+              title="在此项目下新建对话"
+              @click.stop="newSession(group.project.id)"
+            >＋</button>
           </div>
-          <span class="conv-delete" @click.stop="deleteSession(session.session_id || session.id)" title="删除">×</span>
+
+          <div v-show="!isGroupCollapsed(group.key)" class="conversation-list">
+            <div
+              v-for="session in group.sessions"
+              :key="session.session_id || session.id"
+              class="conversation-item"
+              :class="{ active: currentSessionId === (session.session_id || String(session.id)) }"
+              @click="selectSession(session)"
+            >
+              <span class="conv-icon">{{ runningSessionIds.has(session.session_id || String(session.id)) ? '⏳' : '🗨️' }}</span>
+              <div class="conv-info">
+                <div class="conv-title">{{ session.title || '新对话' }}</div>
+                <div class="conv-preview">{{ session.last_message || '' }}</div>
+              </div>
+              <span class="conv-delete" @click.stop="deleteSession(session.session_id || session.id)" title="删除">×</span>
+            </div>
+            <div v-if="!group.sessions.length" class="group-empty">暂无对话</div>
+          </div>
         </div>
       </div>
       <div v-else class="sidebar-empty">
@@ -33,7 +56,7 @@
 
     <!-- ========== 右栏：对话区 ========== -->
     <div class="chat-main">
-      <!-- 未添加笔记库：AI 功能门禁 -->
+      <!-- 未添加项目：AI 功能门禁 -->
       <NotesGate v-if="kbLoaded && !kbLibraries.length" @ready="onGateReady" />
 
       <!-- 无对话时：分步引导 -->
@@ -47,8 +70,21 @@
             <div class="step-index">1</div>
             <div class="step-content">
               <div class="step-title">开始第一个对话</div>
-              <div class="step-desc">支持 日常问答 · 笔记库检索 · 数据查询 · 图片识别</div>
-              <button class="btn btn-primary" @click="newSession">💬 开始对话</button>
+              <div class="step-desc">支持 日常问答 · 知识库检索 · 数据查询 · 图片识别 · 按项目工作目录运行</div>
+              <div class="step-actions">
+                <select
+                  class="model-selector project-selector"
+                  v-model="selectedProjectId"
+                  :disabled="isStreaming"
+                  title="选择对话所属项目（决定 AI 的工作目录）"
+                  @change="onProjectChange"
+                >
+                  <option :value="null">📁 不绑定项目</option>
+                  <option v-for="p in workProjects" :key="p.id" :value="p.id">📁 {{ p.name }}</option>
+                  <option :value="NEW_PROJECT">＋ 新建项目…</option>
+                </select>
+                <button class="btn btn-primary" @click="newSession()">💬 开始对话</button>
+              </div>
             </div>
           </div>
 
@@ -74,6 +110,7 @@
         <div class="chat-header">
           <div class="chat-header-left">
             <h3 class="chat-title">{{ currentSession?.title || '对话' }}</h3>
+            <span v-if="currentProject" class="chat-project-badge" :title="currentProject.dir || ''">📁 {{ currentProject.name }}</span>
           </div>
           <div class="chat-header-right">
             <span class="agent-status-dot" :class="isStreaming ? 'busy' : 'ready'"></span>
@@ -124,7 +161,7 @@
             <textarea
               v-model="inputText"
               class="chat-input"
-              :placeholder="selectedKb ? '输入问题，Enter 发送... (当前库：' + selectedKb.name + ')' : '输入问题，Enter 发送...'"
+              :placeholder="currentProject ? '输入问题，Enter 发送... (项目：' + currentProject.name + '，工作目录：' + (currentProject.dir || '未设置') + ')' : '输入问题，Enter 发送...'"
               @keydown.enter.exact.prevent="sendMessage"
               @paste="handlePaste"
               @compositionstart="composing = true"
@@ -149,8 +186,16 @@
                   </svg>
                 </button>
                 <input ref="fileInputRef" type="file" accept="image/*" multiple style="display:none" @change="handleImageUpload" />
-                <select class="model-selector" v-model="selectedKbId" :disabled="isStreaming" title="本对话工作的笔记库" @change="onKbPickChange">
-                  <option v-for="l in kbLibraries" :key="l.id" :value="l.id">📚 {{ l.name }}</option>
+                <select
+                  class="model-selector project-selector"
+                  v-model="selectedProjectId"
+                  :disabled="isStreaming"
+                  title="对话所属项目（决定 AI 的工作目录，发送后仍可切换）"
+                  @change="onProjectChange"
+                >
+                  <option :value="null">📁 不绑定项目</option>
+                  <option v-for="p in workProjects" :key="p.id" :value="p.id">📁 {{ p.name }}</option>
+                  <option :value="NEW_PROJECT">＋ 新建项目…</option>
                 </select>
                 <select class="model-selector runtime-selector" v-model="runtime" :disabled="isStreaming" title="AI 引擎（对比测试）" @change="onRuntimeChange">
                   <option value="pi">pi 引擎</option>
@@ -211,8 +256,31 @@ const messages = ref<any[]>([]);
 const inputText = ref('');
 const composing = ref(false);
 const kbLibraries = ref<any[]>([]);
-const selectedKbId = ref<number | null>(null);
 const kbLoaded = ref(false);
+// ===== 项目（本地目录；笔记库也是项目，统一管理） =====
+const workProjects = ref<any[]>([]);
+const NEW_PROJECT = '__new__';
+const PROJECT_PICK_KEY = 'chat_home_project';
+const GROUP_COLLAPSE_KEY = 'chat_home_collapsed_groups';
+const selectedProjectId = ref<number | null | typeof NEW_PROJECT>(null);
+const collapsedGroups = ref<string[]>(loadCollapsedGroups());
+const currentProject = computed(() => {
+  const id = Number(selectedProjectId.value);
+  return Number.isFinite(id) ? workProjects.value.find((p: any) => p.id === id) || null : null;
+});
+const defaultKb = computed(() => kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null);
+const convGroups = computed(() => {
+  const groups = workProjects.value.map((p: any) => ({ key: 'p' + p.id, project: p, sessions: [] as any[] }));
+  const byId = new Map(groups.map((g) => [g.project.id, g]));
+  const loose: any[] = [];
+  for (const s of sessions.value) {
+    const pid = s.project_id === null || s.project_id === undefined ? null : Number(s.project_id);
+    const g = pid !== null ? byId.get(pid) : undefined;
+    (g ? g.sessions : loose).push(s);
+  }
+  if (loose.length || !groups.length) groups.push({ key: 'loose', project: null, sessions: loose });
+  return groups;
+});
 const inputRef = ref<HTMLTextAreaElement>();
 const messagesContainer = ref<HTMLElement>();
 const conversationListRef = ref<HTMLElement>();
@@ -262,14 +330,24 @@ const viewMessages = computed(() => {
   return live ? messages.value.concat([live]) : messages.value;
 });
 
-/** 消息行上的时间：库里的 created_at 已是东八区的 'YYYY-MM-DD HH:mm:ss' */
-const fmtTime = (t: any) => (typeof t === 'string' && t.length >= 16 ? t.slice(11, 16) : '');
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** 今天的日期前缀，与库里的 created_at 同为东八区口径 */
+function todayDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** 消息行上的时间：今天的只显示时分，其余显示完整日期时间（created_at 已是 'YYYY-MM-DD HH:mm:ss'） */
+const fmtTime = (t: any) =>
+  typeof t === 'string' && t.length >= 16
+    ? (t.slice(0, 10) === todayDate() ? t.slice(11, 16) : `${t.slice(0, 10)} ${t.slice(11, 16)}`)
+    : '';
 
 /** 本地刚发出去的那条还没有落库时间，按同一格式造一个 */
 function nowLabel(): string {
   const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:00`;
+  return `${todayDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
 }
 
 const copiedIndex = ref(-1);
@@ -327,26 +405,76 @@ async function onRuntimeChange() {
 }
 
 // ========== 加载数据 ==========
-// ===== 多笔记库：本会话所选库（按会话记忆，默认 = 默认库） =====
-const KB_PICK_KEY = 'chat_kb_picks';
-const selectedKb = computed(() => kbLibraries.value.find((l: any) => l.id === selectedKbId.value) || null);
-function kbPickMap(): Record<string, number> {
-  try { return JSON.parse(localStorage.getItem(KB_PICK_KEY) || '{}'); } catch { return {}; }
+// ===== 项目：会话通过 project_id 归属，项目目录即 AI 的工作目录 =====
+function loadCollapsedGroups(): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) || '[]');
+    return Array.isArray(saved) ? saved.filter((k: any) => typeof k === 'string') : [];
+  } catch { return []; }
 }
-function applyKbPick() {
-  const pick = currentSessionId.value ? kbPickMap()[currentSessionId.value] : undefined;
-  const d = kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null;
-  selectedKbId.value = pick && kbLibraries.value.some((l: any) => l.id === pick) ? pick : (d ? d.id : null);
+function isGroupCollapsed(key: string): boolean {
+  return collapsedGroups.value.includes(key);
 }
-function onKbPickChange() {
-  if (!currentSessionId.value || selectedKbId.value == null) return;
-  const m = kbPickMap();
-  m[currentSessionId.value] = selectedKbId.value;
-  try { localStorage.setItem(KB_PICK_KEY, JSON.stringify(m)); } catch {}
+function toggleGroup(key: string) {
+  collapsedGroups.value = isGroupCollapsed(key)
+    ? collapsedGroups.value.filter((k) => k !== key)
+    : collapsedGroups.value.concat(key);
+  try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(collapsedGroups.value)); } catch {}
+}
+function expandGroup(key: string) {
+  if (!isGroupCollapsed(key)) return;
+  collapsedGroups.value = collapsedGroups.value.filter((k) => k !== key);
+  try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(collapsedGroups.value)); } catch {}
+}
+function groupIsCurrent(group: { sessions: any[] }): boolean {
+  return !!currentSessionId.value && group.sessions.some((s) => (s.session_id || String(s.id)) === currentSessionId.value);
+}
+
+/** 当前会话绑定的项目（历史会话可能挂在项目或 null） */
+function sessionProjectId(): number | null {
+  const pid = currentSession.value?.project_id;
+  if (pid === null || pid === undefined) return null;
+  const n = Number(pid);
+  return Number.isFinite(n) && workProjects.value.some((p: any) => p.id === n) ? n : null;
+}
+
+function syncProjectFromSession() {
+  selectedProjectId.value = sessionProjectId();
+  expandGroup(selectedProjectId.value !== null ? 'p' + selectedProjectId.value : 'loose');
+}
+function rememberProjectPick() {
+  try {
+    if (typeof selectedProjectId.value === 'number') localStorage.setItem(PROJECT_PICK_KEY, String(selectedProjectId.value));
+    else localStorage.removeItem(PROJECT_PICK_KEY);
+  } catch {}
+}
+function restoreProjectPick() {
+  if (currentSessionId.value) return;
+  const saved = Number(localStorage.getItem(PROJECT_PICK_KEY) || '');
+  if (Number.isFinite(saved) && workProjects.value.some((p: any) => p.id === saved)) selectedProjectId.value = saved;
+}
+
+/** 会话这一轮的工作目录与知识库：项目目录即该项目的笔记库；日常对话沿用默认项目 */
+function chatContext(): { projectDir: string; kbIds?: number[] } {
+  const proj = currentProject.value;
+  if (proj) {
+    const kb = kbLibraries.value.find((l: any) => sameDir(l.dir, proj.dir));
+    return { projectDir: proj.dir || kb?.dir || '', kbIds: kb ? [kb.id] : undefined };
+  }
+  const boundKb = kbLibraries.value.find((l: any) => l.id === Number(currentSession.value?.project_id));
+  const kb = boundKb || defaultKb.value;
+  return { projectDir: kb?.dir || '', kbIds: kb ? [kb.id] : undefined };
+}
+function sameDir(a: string, b: string): boolean {
+  const norm = (s: string) => String(s || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+  return !!a && !!b && norm(a) === norm(b);
+}
+
+async function loadWorkProjects() {
+  try { workProjects.value = (await API.project.list()) || []; } catch { workProjects.value = []; }
 }
 async function loadKbLibraries() {
   try { kbLibraries.value = await API.kb.list(); } catch { kbLibraries.value = []; }
-  applyKbPick();
   kbLoaded.value = true;
 }
 
@@ -378,7 +506,7 @@ async function loadPiModels() {
 
 async function onGateReady() {
   await loadRuntime();
-  await Promise.all([loadKbLibraries(), loadSessions(), loadPiModels()]);
+  await Promise.all([loadKbLibraries(), loadWorkProjects(), loadSessions(), loadPiModels()]);
 }
 
 async function loadSessions() {
@@ -422,18 +550,23 @@ async function selectSession(session: any) {
   }
   currentSessionId.value = sid;
   currentSession.value = session;
-  applyKbPick();
+  syncProjectFromSession();
   await loadMessages(sid);
   saveState();
 }
 
-async function newSession() {
+async function newSession(projectId?: number | null) {
+  const pid = typeof projectId === 'number'
+    ? projectId
+    : (typeof selectedProjectId.value === 'number' ? selectedProjectId.value : null);
   const id = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   try {
-    const session = await API.chat.createSession(id, null, '新对话', 'general', 'general', 'ui');
+    const session = await API.chat.createSession(id, pid, '新对话', 'general', 'general', 'ui');
     currentSessionId.value = id;
     currentSession.value = session;
-    applyKbPick();
+    selectedProjectId.value = pid;
+    expandGroup(pid !== null ? 'p' + pid : 'loose');
+    rememberProjectPick();
     messages.value = [];
     inputText.value = '';
     await loadSessions();
@@ -462,6 +595,60 @@ async function deleteSession(sessionId: string) {
   }
 }
 
+// ========== 项目切换 ==========
+function savedProjectPick(): number | null {
+  const n = Number(localStorage.getItem(PROJECT_PICK_KEY) || '');
+  return Number.isFinite(n) && workProjects.value.some((p: any) => p.id === n) ? n : null;
+}
+
+async function onProjectChange() {
+  if (selectedProjectId.value === NEW_PROJECT) {
+    await createProjectFromPicker();
+    return;
+  }
+  const pid = typeof selectedProjectId.value === 'number' ? selectedProjectId.value : null;
+  if (!currentSessionId.value) {
+    rememberProjectPick();
+    if (pid !== null) expandGroup('p' + pid);
+    return;
+  }
+  try {
+    const r = await API.chat.updateProject(currentSessionId.value, pid);
+    if (r && r.ok === false) throw new Error(r.error || '切换项目失败');
+    if (currentSession.value) currentSession.value.project_id = pid;
+    rememberProjectPick();
+    await loadSessions();
+    expandGroup(pid !== null ? 'p' + pid : 'loose');
+  } catch (e: any) {
+    selectedProjectId.value = sessionProjectId();
+    alert('切换项目失败: ' + (e?.message || e));
+  }
+}
+
+async function createProjectFromPicker() {
+  const previous = currentSessionId.value ? sessionProjectId() : savedProjectPick();
+  try {
+    const dir = await API.dialog.openDirectory();
+    if (!dir) { selectedProjectId.value = previous; return; }
+    const base = String(dir).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '新项目';
+    const name = (prompt('项目名称', base) || '').trim() || base;
+    const p = await API.project.add(name, 'note', dir, '', '');
+    await loadWorkProjects();
+    selectedProjectId.value = p.id;
+    rememberProjectPick();
+    if (currentSessionId.value) {
+      const r = await API.chat.updateProject(currentSessionId.value, p.id);
+      if (r && r.ok === false) throw new Error(r.error || '绑定项目失败');
+      if (currentSession.value) currentSession.value.project_id = p.id;
+      await loadSessions();
+    }
+    expandGroup('p' + p.id);
+  } catch (e: any) {
+    selectedProjectId.value = previous;
+    alert('创建项目失败: ' + (e?.message || e));
+  }
+}
+
 // ========== 状态持久化 ==========
 function saveState() {
   try {
@@ -481,7 +668,7 @@ async function restoreState() {
     if (!session) return false;
     currentSessionId.value = session.session_id || String(session.id);
     currentSession.value = session;
-    applyKbPick();
+    syncProjectFromSession();
     await loadMessages(currentSessionId.value);
     return true;
   } catch { return false; }
@@ -562,10 +749,10 @@ async function doSend(text: string) {
   stream.status = '准备中...';
   scrollToBottom();
 
-  const kbIds = selectedKbId.value != null ? [selectedKbId.value] : undefined;
+  const { projectDir, kbIds } = chatContext();
 
   try {
-    await API.chat.send(text, sid, selectedKb.value?.dir || '', kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
+    await API.chat.send(text, sid, projectDir, kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
     if (selectedModel.value) localStorage.setItem(chatModelKey(), selectedModel.value);
     else localStorage.removeItem(chatModelKey());
   } catch (err: any) {
@@ -712,7 +899,7 @@ const autoResizeTextarea = () => {
 onMounted(async () => {
   // 先同步引擎运行时（后端每次启动按环境检测默认引擎），再加载模型列表（模型记忆按引擎分开）
   await loadRuntime();
-  await Promise.all([loadKbLibraries(), loadSessions(), loadPiModels()]);
+  await Promise.all([loadKbLibraries(), loadWorkProjects(), loadSessions(), loadPiModels()]);
   
   // 尝试恢复上次的会话状态
   const restored = await restoreState();
@@ -724,6 +911,9 @@ onMounted(async () => {
     // 如果没有恢复到上次状态，但有会话存在，自动选择最新的会话（最后一条）
     await selectSession(sessions.value[sessions.value.length - 1]);
     scrollToActiveConversation();
+  } else {
+    // 没有会话时，沿用上次选的项目作为新对话的默认归属
+    restoreProjectPick();
   }
   
   // 工具箱跳转：?prompt= 预填输入框
@@ -796,10 +986,99 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-.conversation-list {
+.conversation-groups {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+}
+
+.conv-group {
+  margin-bottom: 6px;
+}
+
+.conv-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  color: #475569;
+  transition: background 0.15s;
+}
+
+.conv-group-header:hover {
+  background: #eef2f7;
+}
+
+.conv-group-header.current .group-name {
+  color: var(--primary);
+}
+
+.group-arrow {
+  font-size: 10px;
+  width: 12px;
+  text-align: center;
+  color: #94a3b8;
+  transition: transform 0.15s;
+}
+
+.group-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+
+.group-icon {
+  font-size: 12px;
+}
+
+.group-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-count {
+  font-size: 10px;
+  color: #94a3b8;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+
+.group-add {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 5px;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.conv-group-header:hover .group-add {
+  visibility: visible;
+}
+
+.group-add:hover {
+  color: var(--primary);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.conversation-list {
+  padding: 2px 0 2px 12px;
+}
+
+.group-empty {
+  font-size: 11px;
+  color: #b0bac7;
+  padding: 6px 12px;
 }
 
 .conversation-item {
@@ -1025,6 +1304,13 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
 }
 
+.step-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .guide-links {
   display: flex;
   flex-wrap: wrap;
@@ -1074,6 +1360,20 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-project-badge {
+  font-size: 11px;
+  color: #4f46e5;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 6px;
+  padding: 2px 8px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chat-header-right {

@@ -102,7 +102,7 @@ function notFoundHint(rootDir, relPath, listToolName) {
 
 async function listNotesTool({ path: relPath, projectId }) {
   const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '未关联可用的笔记库，请先在会话中关联笔记库（note 类型项目）。';
+  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
   const target = safeNotePath(noteDir, relPath || '.');
   if (!target) return '路径越权，只能访问笔记库目录';
   if (!fs.existsSync(target)) return `目录不存在: ${relPath || '.'}。请用 list_notes 查看笔记库根目录结构。`;
@@ -119,7 +119,7 @@ async function listNotesTool({ path: relPath, projectId }) {
 
 async function readNoteTool({ path: relPath, projectId }) {
   const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '未关联可用的笔记库，请先在会话中关联笔记库（note 类型项目）。';
+  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
   const target = safeNotePath(noteDir, relPath);
   if (!target) return '路径越权，只能访问笔记库目录';
   if (!fs.existsSync(target)) return notFoundHint(noteDir, relPath, 'list_notes');
@@ -133,7 +133,7 @@ async function readNoteTool({ path: relPath, projectId }) {
 
 async function writeNoteTool({ path: relPath, content, projectId, stage }) {
   const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '未关联可用的笔记库，请先在会话中关联笔记库（note 类型项目）。';
+  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
   const target = safeNotePath(noteDir, relPath);
   if (!target) return '路径越权，只能访问笔记库目录';
   const rel = path.relative(noteDir, target);
@@ -160,7 +160,7 @@ async function writeNoteTool({ path: relPath, content, projectId, stage }) {
 
 async function editNoteTool({ path: relPath, oldString, newString, projectId, stage }) {
   const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '未关联可用的笔记库，请先在会话中关联笔记库（note 类型项目）。';
+  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
   const target = safeNotePath(noteDir, relPath);
   if (!target) return '路径越权，只能访问笔记库目录';
   const rel = path.relative(noteDir, target);
@@ -189,7 +189,7 @@ async function editNoteTool({ path: relPath, oldString, newString, projectId, st
 
 async function deleteNoteTool({ path: relPath, projectId, stage }) {
   const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '未关联可用的笔记库，请先在会话中关联笔记库（note 类型项目）。';
+  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
   const target = safeNotePath(noteDir, relPath);
   if (!target) return '路径越权，只能访问笔记库目录';
   if (!fs.existsSync(target)) return '文件不存在';
@@ -363,7 +363,7 @@ async function queryRemindersTool() {
 }
 
 async function getTodayInfoTool({}, kbId) {
-  const projectName = kbId ? (db.qOne("SELECT name FROM prj_projects WHERE id = ?", kbId) || {}).name || '笔记库' : '笔记库';
+  const projectName = kbId ? (db.qOne("SELECT name FROM prj_projects WHERE id = ?", kbId) || {}).name || '项目' : '项目';
   return JSON.stringify({ today: getChinaDate(), yesterday: getChinaDate(-1), weekAgo: getChinaDate(-7), projectId: kbId || null, projectName }, null, 2);
 }
 

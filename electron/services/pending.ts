@@ -128,7 +128,7 @@ export function latestPendingStage(): StageManifest | null {
 export function applyStage(taskId: number, notesDir: string): { ok: boolean; written: string[]; deleted: string[]; error?: string } {
   const m = readManifest(taskId);
   if (!m || m.status !== 'pending') return { ok: false, written: [], deleted: [], error: '没有待确认的暂存产物' };
-  if (!notesDir || !fs.existsSync(notesDir)) return { ok: false, written: [], deleted: [], error: '笔记库目录不存在，请先配置笔记库' };
+  if (!notesDir || !fs.existsSync(notesDir)) return { ok: false, written: [], deleted: [], error: '项目目录不存在，请先在「设置 → 项目」中添加项目' };
   const root = path.resolve(notesDir);
   const written: string[] = [];
   const deleted: string[] = [];

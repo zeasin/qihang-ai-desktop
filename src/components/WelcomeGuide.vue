@@ -22,17 +22,17 @@
           </div>
         </div>
 
-        <!-- 步骤 2：添加笔记库 -->
+        <!-- 步骤 2：添加项目 -->
         <div class="guide-step" :class="{ done: kbCount > 0 }">
           <div class="step-index">2</div>
           <div class="step-content">
             <div class="step-title">
-              添加笔记库
+              添加项目
               <span class="step-status" v-if="kbCount > 0">✓ 已有 {{ kbCount }} 个</span>
             </div>
-            <p class="step-desc">笔记库是本应用所有 AI 功能的数据基础，可添加多个；一个都没有时 AI 对话、任务执行、知识库浏览均不可用。选择一个包含 Markdown 文件的本地文件夹即可添加，之后的库管理在「设置」页进行。</p>
+            <p class="step-desc">项目就是本地目录，是本应用所有 AI 功能的数据基础，可添加多个；一个都没有时 AI 对话、任务执行、知识库浏览均不可用。选择一个本地文件夹即可添加，之后在「设置」页统一管理。</p>
             <button class="btn btn-sm btn-primary" @click="setupNotesDir" :disabled="kbDirLoading">
-              {{ kbDirLoading ? '正在添加...' : '📂 选择文件夹添加笔记库' }}
+              {{ kbDirLoading ? '正在添加...' : '📂 选择文件夹添加项目' }}
             </button>
             <p class="step-path" v-if="kbDir">{{ kbDir }}</p>
           </div>

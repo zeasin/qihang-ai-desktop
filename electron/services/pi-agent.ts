@@ -471,6 +471,14 @@ export async function abortSession(sessionId: string): Promise<void> {
   }
 }
 
+/** 释放指定会话（切换工作目录后下一轮按新 cwd 重建，历史仍在 jsonl 里） */
+export function resetPiSession(sessionId: string): void {
+  const handle = sessions.get(sessionId);
+  if (!handle) return;
+  try { handle.session.dispose(); } catch {}
+  sessions.delete(sessionId);
+}
+
 /** 释放全部会话（应用退出时调用） */
 export async function disposeAll(): Promise<void> {
   for (const [, handle] of sessions) {

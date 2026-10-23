@@ -60,7 +60,7 @@
                 <div class="ai-text" v-html="renderMarkdown(activeModule.aiAnalysis.content)"></div>
                 <div class="ai-bar">
                   <button class="text-btn" @click="refreshAiAnalysis(activeModule, true)">↻ 刷新</button>
-                  <button class="text-btn" @click="archiveAnalysis(activeModule)" :disabled="activeModule.saving">📥 存档到笔记库</button>
+                  <button class="text-btn" @click="archiveAnalysis(activeModule)" :disabled="activeModule.saving">📥 存档到默认项目</button>
                 </div>
               </div>
               <div v-else class="ai-loading">
@@ -826,7 +826,7 @@ async function archiveAnalysis(mod: ModuleData) {
   try {
     const res = await API.archive.saveAnalysisToNotes(mod.id, analysisId);
     if (res.ok) {
-      alert('已存档到笔记库: ' + res.filePath);
+      alert('已存档到默认项目: ' + res.filePath);
     } else {
       alert('存档失败: ' + (res.error || '未知错误'));
     }

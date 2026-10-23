@@ -524,7 +524,7 @@ export class RelayClient {
     };
   }
 
-  /** 镜像范围含代码库：project.list() 会滤掉 type='code'，移动端要的是全部项目 */
+  /** 移动端镜像全部项目（笔记库与代码目录一视同仁） */
   private allProjects(): any[] {
     return q('SELECT * FROM prj_projects ORDER BY sort_order ASC, created_at DESC');
   }

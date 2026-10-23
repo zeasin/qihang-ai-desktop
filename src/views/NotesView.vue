@@ -1,6 +1,6 @@
 ﻿<template>
   <div class="notes-view">
-    <!-- 一个笔记库都没有：AI 功能门禁 -->
+    <!-- 一个项目都没有：AI 功能门禁 -->
     <NotesGate v-if="notesLoaded && !libs.length" @ready="onGateReady" />
 
     <!-- ========== 文件浏览 ========== -->
@@ -13,10 +13,10 @@
           <select v-if="libs.length" class="proj-select" v-model.number="currentLibId" @change="onLibChange">
             <option v-for="l in libs" :key="l.id" :value="l.id">{{ l.name }}{{ l.isDefault ? '（默认）' : '' }}</option>
           </select>
-          <span v-else class="proj-name text-muted">未选择笔记库</span>
+          <span v-else class="proj-name text-muted">未选择项目</span>
         </div>
         <div class="search-bar">
-          <input v-model="searchQuery" class="search-input" placeholder="搜索当前笔记库..." @keydown.enter="doSearch" />
+          <input v-model="searchQuery" class="search-input" placeholder="搜索当前项目..." @keydown.enter="doSearch" />
           <button class="btn-icon" @click="doSearch" title="搜索">🔍</button>
           <button v-if="searchActive" class="btn-icon" @click="clearSearch" title="返回文件树">✕</button>
         </div>

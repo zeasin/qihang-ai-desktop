@@ -4,7 +4,7 @@
       <div class="stat-card kb-card" @click="openNotes" title="浏览知识库">
         <div class="stat-icon" style="background:rgba(16,185,129,0.1);color:#10b981;">📚</div>
         <div class="stat-num">{{ stats.notesFileCount }}</div>
-        <div class="stat-label">笔记库<span class="kb-settings" @click.stop="openConfig" title="管理笔记库">⚙</span></div>
+        <div class="stat-label">项目笔记<span class="kb-settings" @click.stop="openConfig" title="管理项目">⚙</span></div>
       </div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
@@ -16,11 +16,11 @@
       <div class="dashboard-left">
         <div class="section-header">📊 综合日报 <span v-if="kbCount" class="report-schedule">{{ reportScheduleText }}</span></div>
 
-        <!-- 一个笔记库都没有：日报不可用（AI 功能门禁） -->
+        <!-- 一个项目都没有：日报不可用（AI 功能门禁） -->
         <NotesGate
           v-if="notesLoaded && !kbCount"
           compact
-          desc="综合日报由 AI 基于全部笔记库 + 数据集生成，添加至少一个笔记库后自动可用；数据集、提醒、待办不受影响。"
+          desc="综合日报由 AI 基于全部项目 + 数据集生成，添加至少一个项目后自动可用；数据集、提醒、待办不受影响。"
           @ready="onGateReady"
         />
 

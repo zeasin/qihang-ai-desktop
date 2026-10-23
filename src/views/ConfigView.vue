@@ -6,14 +6,14 @@
 
     <div class="content-body">
 
-      <!-- Note Library Settings -->
+      <!-- Project Management -->
       <div class="card">
-        <h2>📚 笔记库设置</h2>
-        <div class="text-muted mb-2">可添加多个笔记库。AI 对话与任务按所选库工作；综合日报聚合<b>所有库 + 数据集</b>分析；飞书派活、任务结果存档与数据归档默认写入<b>默认库</b>。</div>
-        <div v-if="!kbLibraries.length" class="text-muted mb-2" style="font-size:13px;">尚未添加任何笔记库。添加后 AI 对话、任务执行、日报生成、知识库浏览方可使用。</div>
+        <h2>📁 项目</h2>
+        <div class="text-muted mb-2">项目就是本地目录。AI 对话按所选项目目录运行；知识库按项目目录索引其中的 Markdown 文件；综合日报聚合<b>所有项目 + 数据集</b>；飞书派活、任务结果存档与数据归档默认写入<b>默认项目</b>。</div>
+        <div v-if="!kbLibraries.length" class="text-muted mb-2" style="font-size:13px;">尚未添加任何项目。添加后 AI 对话、任务执行、日报生成、知识库浏览方可使用。</div>
         <div v-for="lib in kbLibraries" :key="lib.id" class="kb-lib-row">
           <div class="kb-lib-main">
-            <span class="kb-lib-name">📚 {{ lib.name }}</span>
+            <span class="kb-lib-name">📁 {{ lib.name }}</span>
             <span v-if="lib.isDefault" class="kb-lib-badge">默认</span>
             <span class="kb-lib-dir text-muted">{{ lib.dir }}</span>
             <span class="text-muted kb-lib-count">已索引 {{ lib.docCount || 0 }} 篇</span>
@@ -27,7 +27,7 @@
           </div>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
-          <button class="btn btn-primary" @click="addLib">➕ 添加笔记库</button>
+          <button class="btn btn-primary" @click="addLib">➕ 添加项目</button>
           <span v-if="notesDirStatus" class="text-muted" :style="{ color: notesDirStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ notesDirStatus }}</span>
         </div>
       </div>
@@ -262,7 +262,7 @@
       <!-- Embedding Model Configuration (hidden) -->
       <div v-if="false" class="card">
         <h2>🧠 嵌入模型配置</h2>
-        <div class="text-muted mb-2">配置笔记库索引使用的嵌入模型（Embedding Model），用于语义搜索。支持 Ollama 和 OpenAI 兼容接口（如 vLLM、LM Studio 等）。填写 API Key 则使用 OpenAI 兼容接口，否则使用 Ollama。</div>
+        <div class="text-muted mb-2">配置项目知识库索引使用的嵌入模型（Embedding Model），用于语义搜索。支持 Ollama 和 OpenAI 兼容接口（如 vLLM、LM Studio 等）。填写 API Key 则使用 OpenAI 兼容接口，否则使用 Ollama。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
           <div class="form-group" style="flex:1;min-width:130px;">
             <label style="font-size:12px;">提供商名称</label>
@@ -947,7 +947,7 @@ async function loadProjects() {
   try { projects.value = await API.project.list(); } catch { projects.value = []; }
 }
 
-// ===== 多笔记库管理 =====
+// ===== 项目管理 =====
 const kbLibraries = ref<any[]>([]);
 async function loadKbLibraries() {
   try { kbLibraries.value = await API.kb.list(); } catch { kbLibraries.value = []; }
@@ -960,16 +960,16 @@ async function addLib() {
   try {
     const dir = await API.dialog.openDirectory();
     if (!dir) return;
-    const name = prompt('为这个笔记库起个名字（留空则用目录名）', dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '') ?? '';
+    const name = prompt('为这个项目起个名字（留空则用目录名）', dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '') ?? '';
     const r = await API.kb.add(name.trim(), dir);
     if (r?.error) { kbFlash('❌ ' + r.error); return; }
-    kbFlash('✅ 已添加笔记库「' + (r?.name || '') + '」，正在后台建立索引');
+    kbFlash('✅ 已添加项目「' + (r?.name || '') + '」，正在后台建立索引');
     await loadKbLibraries();
     await loadProjects();
   } catch (e: any) { kbFlash('❌ ' + (e.message || '添加失败')); }
 }
 async function renameLib(lib: any) {
-  const name = prompt('新的库名称', lib.name);
+  const name = prompt('新的项目名称', lib.name);
   if (!name || !name.trim() || name.trim() === lib.name) return;
   const r = await API.kb.update(lib.id, { name: name.trim() });
   if (r?.error) { kbFlash('❌ ' + r.error); return; }
@@ -979,7 +979,7 @@ async function changeLibDir(lib: any) {
   try {
     const dir = await API.dialog.openDirectory();
     if (!dir || dir === lib.dir) return;
-    if (!confirm(`笔记库「${lib.name}」将改指向新目录，原目录的索引会被清除并在新目录重建（笔记文件本身不受影响）。继续？`)) return;
+    if (!confirm(`项目「${lib.name}」将改指向新目录，原目录的索引会被清除并在新目录重建（文件本身不受影响）。继续？`)) return;
     const r = await API.kb.update(lib.id, { dir });
     if (r?.error) { kbFlash('❌ ' + r.error); return; }
     kbFlash('✅ 已更新目录，正在后台重建索引');
@@ -999,10 +999,10 @@ async function reindexLib(lib: any) {
 async function setDefaultLib(lib: any) {
   await API.kb.setDefault(lib.id);
   await loadKbLibraries();
-  kbFlash('✅ 已将「' + lib.name + '」设为默认库');
+  kbFlash('✅ 已将「' + lib.name + '」设为默认项目');
 }
 async function removeLib(lib: any) {
-  if (!confirm(`删除笔记库「${lib.name}」？\n\n· 磁盘上的笔记文件不会被删除\n· 该库的索引与执行结果归档记录会一并清除`)) return;
+  if (!confirm(`删除项目「${lib.name}」？\n\n· 磁盘上的文件不会被删除\n· 该项目的索引与执行结果归档记录会一并清除\n· 该项目下的对话会变为未分组`)) return;
   await API.kb.remove(lib.id);
   await loadKbLibraries();
   await loadProjects();
