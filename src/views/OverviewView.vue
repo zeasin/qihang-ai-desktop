@@ -1,113 +1,158 @@
 <template>
   <div class="overview-view">
-    <div class="stats-grid">
-      <div class="stat-card kb-card" @click="openNotes" title="浏览知识库">
-        <div class="stat-icon" style="background:rgba(16,185,129,0.1);color:#10b981;">📚</div>
-        <div class="stat-num">{{ stats.notesFileCount }}</div>
-        <div class="stat-label">项目笔记<span class="kb-settings" @click.stop="openConfig" title="管理项目">⚙</span></div>
+    <!-- ========== 顶部条：笔记库看板 ========== -->
+    <div class="board-bar">
+      <div class="board-brand">
+        <span class="board-title">📚 笔记库看板</span>
+        <span class="board-sub">{{ digestMeta }}</span>
       </div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(99,102,241,0.1);color:#6366f1;">💬</div><div class="stat-num">{{ stats.totalChats }}</div><div class="stat-label">对话</div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(251,146,60,0.1);color:#fb923c;">📊</div><div class="stat-num">{{ stats.todayDataRecords }}</div><div class="stat-label">今日数据</div></div>
-    </div>
-
-    <div class="dashboard-grid">
-      <div class="dashboard-left">
-        <div class="section-header">📊 综合日报 <span v-if="kbCount" class="report-schedule">{{ reportScheduleText }}</span></div>
-
-        <!-- 一个项目都没有：日报不可用（AI 功能门禁） -->
-        <NotesGate
-          v-if="notesLoaded && !kbCount"
-          compact
-          desc="综合日报由 AI 基于全部项目 + 数据集生成，添加至少一个项目后自动可用；数据集、提醒、待办不受影响。"
-          @ready="onGateReady"
-        />
-
-        <div class="card" v-if="(!notesLoaded || kbCount) && latestReport">
-          <div class="latest-header">
-            <div class="latest-info">
-              <div class="latest-date">{{ latestReport.report_date || '最新日报' }}</div>
-              <div class="latest-time">{{ latestReport.created_at }}</div>
-            </div>
-            <button class="btn btn-sm btn-secondary" @click="openReportModal(latestReport)">查看详情</button>
-          </div>
-          <div v-if="keyPointGroups.length" class="key-points">
-            <div v-for="g in keyPointGroups" :key="g.label" class="key-point-group">
-              <div class="key-points-title">{{ g.label }}</div>
-              <div v-for="(p, i) in g.items" :key="i" class="key-point">• {{ p }}</div>
-            </div>
-          </div>
-          <div v-else class="key-points">
-            <div class="key-point">{{ (latestReport.summary || '').slice(0, 200) }}</div>
-          </div>
-        </div>
-        <div class="card" v-if="!notesLoaded || kbCount">
-          <div v-if="reports.length" class="report-list">
-            <div v-for="(r, i) in reports" :key="r.id" class="report-item" @click="openReportModal(r)">
-              <div class="report-header">
-                <span class="report-date">{{ r.report_date || '日报' }}</span>
-                <span class="report-time" style="margin:0;">{{ r.created_at }}</span>
-                <span class="report-expand">查看详情</span>
-              </div>
-              <div class="report-summary">{{ (r.summary || '').slice(0, 200) }}</div>
-            </div>
-          </div>
-          <div v-else class="empty-state" style="padding:20px;">
-            <div class="empty-icon">📊</div>
-            <div class="empty-title">暂无日报</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="dashboard-right">
-        <div class="section-header">✅ 待办事项</div>
-        <div class="card">
-          <div v-if="todos.length" class="todo-list">
-            <div v-for="t in todos" :key="t.id" class="todo-item" :class="{ overdue: t.due_date && t.due_date < todayStr && t.status !== 'done' }">
-              <div class="todo-priority" :class="t.priority">{{ t.priority === 'high' ? '🔴' : t.priority === 'mid' ? '🟡' : '🟢' }}</div>
-              <div class="todo-body">
-                <div class="todo-title">{{ t.title }}</div>
-                <div class="todo-meta" v-if="t.due_date">{{ t.due_date }}</div>
-              </div>
-              <button class="todo-done-btn" @click="toggleTodo(t)">{{ t.status === 'done' ? '↩' : '✓' }}</button>
-            </div>
-          </div>
-          <div v-else class="empty-state" style="padding:20px;">
-            <div class="empty-title" style="font-size:13px;">暂无待办</div>
-          </div>
-        </div>
-
-        <div class="section-header">🔔 提醒</div>
-        <div class="card">
-          <div v-if="reminders.length" class="reminder-list">
-            <div v-for="r in reminders" :key="r.id" class="reminder-item">
-              <div class="reminder-name">{{ r.name }}</div>
-              <div class="reminder-time">{{ r.time || '09:00' }}{{ r.date ? ' · ' + r.date : '' }}</div>
-            </div>
-          </div>
-          <div v-else class="empty-state" style="padding:20px;">
-            <div class="empty-title" style="font-size:13px;">暂无提醒</div>
-          </div>
-        </div>
-
-        <div class="section-header">📋 待处理记录</div>
-        <div class="card">
-          <div v-if="pendingRecords.length" class="pending-list">
-            <div v-for="group in pendingRecords" :key="group.datasetId" class="pending-group">
-              <div class="pending-group-title">{{ group.datasetName }}</div>
-              <div v-for="rec in group.records" :key="rec.id" class="pending-item">
-                <div class="pending-text">{{ Object.values(rec).filter(v => typeof v === 'string' && v.length < 80 && v !== rec._created_at).slice(0, 2).join(' · ') || '(无标题)' }}</div>
-                <div class="pending-time">{{ rec._created_at || '' }}</div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="empty-state" style="padding:20px;">
-            <div class="empty-title" style="font-size:13px;">暂无待处理记录</div>
-          </div>
-        </div>
+      <div class="board-actions">
+        <button class="btn btn-sm btn-secondary" :disabled="digestLoading" @click="loadNoteDigest">{{ digestLoading ? '扫描中…' : '↻ 重新扫描' }}</button>
+        <button class="btn btn-sm btn-secondary" :disabled="syncing" @click="syncDone" title="把笔记里已勾选的 - [x] 对应任务标记完成">⇄ 同步完成项</button>
+        <button class="btn btn-sm btn-secondary" @click="openNotes">浏览笔记</button>
+        <button class="btn btn-sm btn-secondary" @click="openConfig" title="管理项目">⚙</button>
       </div>
     </div>
+
+    <!-- 一个笔记库都没有：AI 功能门禁 -->
+    <NotesGate
+      v-if="notesLoaded && !kbCount"
+      compact
+      desc="概览的待办、跟进、工作日志全部由笔记库提炼，添加至少一个笔记库后自动可用；数据集、提醒不受影响。"
+      @ready="onGateReady"
+    />
+
+    <template v-else>
+      <!-- ========== KPI：全部来自笔记提炼 ========== -->
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-num accent">{{ digestPending.length }}</div><div class="kpi-label">未勾待办</div></div>
+        <div class="kpi"><div class="kpi-num ok">{{ digestDoneCount }}</div><div class="kpi-label">笔记已勾</div></div>
+        <div class="kpi"><div class="kpi-num warn">{{ digestFollowups.length }}</div><div class="kpi-label">待跟进</div></div>
+        <div class="kpi"><div class="kpi-num">{{ digestLogs.length }}</div><div class="kpi-label">工作日志</div></div>
+        <div class="kpi clickable" @click="openNotes" title="浏览笔记库"><div class="kpi-num">{{ stats.notesFileCount }}</div><div class="kpi-label">笔记文件</div></div>
+      </div>
+
+      <!-- ========== 三栏看板 ========== -->
+      <div class="board-grid">
+        <section class="board-col">
+          <header class="col-head">☐ 待办<span class="col-count">{{ digestPending.length }}</span></header>
+          <div class="col-body">
+            <div v-for="g in digestTodoGroups" :key="g.file" class="src-group">
+              <div class="src-title" :title="g.file">{{ g.file }}<span class="src-count">{{ g.items.length }}</span></div>
+              <div v-for="(t, i) in g.items" :key="g.file + ':' + i" class="row" :title="g.file + ':' + t.line">
+                <span class="row-mark">☐</span>
+                <span class="row-text">{{ t.text }}</span>
+                <span class="row-line" v-if="t.line">{{ t.line }}</span>
+              </div>
+            </div>
+            <div v-if="digestPending.length > shownTodoCount" class="col-more">仅列出前 {{ shownTodoCount }} 条，共 {{ digestPending.length }} 条</div>
+            <div v-if="!digestPending.length" class="col-empty">{{ digestLoading ? '正在扫描笔记…' : '笔记里没有未勾选的待办' }}</div>
+          </div>
+        </section>
+
+        <section class="board-col">
+          <header class="col-head">📌 跟进<span class="col-count">{{ digestFollowups.length }}</span></header>
+          <div class="col-body">
+            <div v-for="(f, i) in digestFollowups.slice(0, 30)" :key="'f' + i" class="row" :title="f.file + ':' + f.line">
+              <span class="row-mark">📌</span>
+              <span class="row-text">{{ f.text }}</span>
+              <span class="row-line">{{ f.file.split('/').pop() }}</span>
+            </div>
+            <div v-if="!digestFollowups.length" class="col-empty">没有命中「待跟进 / 跟进中」这类话术</div>
+          </div>
+        </section>
+
+        <section class="board-col">
+          <header class="col-head">🗓️ 工作日志<span class="col-count">{{ digestLogs.length }}</span></header>
+          <div class="col-body">
+            <div v-for="(g, date) in digestLogGroups" :key="date" class="log-row" :title="g[0].file + ':' + g[0].line">
+              <div class="log-date">{{ date }}<span class="log-src">{{ g[0].file }}</span></div>
+              <div class="log-preview">{{ g[0].preview || '（无正文摘要）' }}</div>
+            </div>
+            <div v-if="!digestLogs.length" class="col-empty">没有日期命名的日志文件</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ========== 次级区：综合日报 + 本地库 ========== -->
+      <div class="sub-grid">
+        <section class="sub-card">
+          <header class="col-head">📊 综合日报<span class="col-sub">{{ reportScheduleText }}</span></header>
+          <div class="card" v-if="latestReport">
+            <div class="latest-header">
+              <div class="latest-info">
+                <div class="latest-date">{{ latestReport.report_date || '最新日报' }}</div>
+                <div class="latest-time">{{ latestReport.created_at }}</div>
+              </div>
+              <button class="btn btn-sm btn-secondary" @click="openReportModal(latestReport)">查看详情</button>
+            </div>
+            <div v-if="keyPointGroups.length" class="key-points">
+              <div v-for="g in keyPointGroups" :key="g.label" class="key-point-group">
+                <div class="key-points-title">{{ g.label }}</div>
+                <div v-for="(p, i) in g.items" :key="i" class="key-point">• {{ p }}</div>
+              </div>
+            </div>
+            <div v-else class="key-points"><div class="key-point">{{ (latestReport.summary || '').slice(0, 200) }}</div></div>
+          </div>
+          <div class="card">
+            <div v-if="reports.length" class="report-list">
+              <div v-for="r in reports" :key="r.id" class="report-item" @click="openReportModal(r)">
+                <div class="report-header">
+                  <span class="report-date">{{ r.report_date || '日报' }}</span>
+                  <span class="report-time" style="margin:0;">{{ r.created_at }}</span>
+                  <span class="report-expand">查看详情</span>
+                </div>
+                <div class="report-summary">{{ (r.summary || '').slice(0, 200) }}</div>
+              </div>
+            </div>
+            <div v-else class="empty-state" style="padding:20px;">
+              <div class="empty-icon">📊</div>
+              <div class="empty-title">暂无日报</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="sub-card">
+          <div class="tab-bar">
+            <button :class="{ on: subTab === 'todo' }" @click="subTab = 'todo'">本地待办 {{ stats.todoPending }}</button>
+            <button :class="{ on: subTab === 'reminder' }" @click="subTab = 'reminder'">提醒 {{ stats.remindersActive }}</button>
+            <button :class="{ on: subTab === 'pending' }" @click="subTab = 'pending'">待处理记录</button>
+          </div>
+          <div class="card tab-body">
+            <div v-if="subTab === 'todo'" class="stack">
+              <div v-for="t in todos" :key="t.id" class="todo-item" :class="{ overdue: t.due_date && t.due_date < todayStr && t.status !== 'done' }">
+                <div class="todo-priority" :class="t.priority">{{ t.priority === 'high' ? '🔴' : t.priority === 'mid' ? '🟡' : '🟢' }}</div>
+                <div class="todo-body">
+                  <div class="todo-title">{{ t.title }}</div>
+                  <div class="todo-meta" v-if="t.due_date">{{ t.due_date }}</div>
+                </div>
+                <button class="todo-done-btn" @click="toggleTodo(t)">{{ t.status === 'done' ? '↩' : '✓' }}</button>
+              </div>
+              <div v-if="!todos.length" class="col-empty">本地库暂无待办</div>
+            </div>
+
+            <div v-else-if="subTab === 'reminder'" class="stack">
+              <div v-for="r in reminders" :key="r.id" class="reminder-item">
+                <div class="reminder-name">{{ r.name }}</div>
+                <div class="reminder-time">{{ r.time || '09:00' }}{{ r.date ? ' · ' + r.date : '' }}</div>
+              </div>
+              <div v-if="!reminders.length" class="col-empty">暂无提醒</div>
+            </div>
+
+            <div v-else class="stack">
+              <div v-for="group in pendingRecords" :key="group.datasetId" class="pending-group">
+                <div class="pending-group-title">{{ group.datasetName }}</div>
+                <div v-for="rec in group.records" :key="rec.id" class="pending-item">
+                  <div class="pending-text">{{ Object.values(rec).filter(v => typeof v === 'string' && v.length < 80 && v !== rec._created_at).slice(0, 2).join(' · ') || '(无标题)' }}</div>
+                  <div class="pending-time">{{ rec._created_at || '' }}</div>
+                </div>
+              </div>
+              <div v-if="!pendingRecords.length" class="col-empty">暂无待处理记录</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </template>
   </div>
 
   <!-- ========== 日报详情弹窗 ========== -->
@@ -364,14 +409,79 @@ async function loadKbCount() {
   notesLoaded.value = true;
 }
 
+// ========== 来自笔记（规则提炼：待办/跟进/日志，出处到项目+文件+行） ==========
+const digest = ref<any>(null);
+const digestLoading = ref(false);
+const syncing = ref(false);
+const digestAt = ref('');
+
+const digestPending = computed(() => (digest.value?.todos || []).filter((t: any) => !t.done));
+const digestDoneCount = computed(() => (digest.value?.todos || []).length - digestPending.value.length);
+const digestFollowups = computed(() => digest.value?.followups || []);
+const digestLogs = computed(() => (digest.value?.logs || []).slice(0, 20));
+const digestLogGroups = computed(() => {
+  const m: Record<string, any[]> = {};
+  for (const g of digestLogs.value) (m[g.date] = m[g.date] || []).push(g);
+  return m;
+});
+const digestMeta = computed(() => {
+  if (digestLoading.value) return '扫描中…';
+  if (!digestAt.value) return '';
+  return `${digest.value?.scannedFiles ?? 0} 个文件 · ${digestAt.value}`;
+});
+
+// 待办按来源文件分组展示；一屏最多 40 条，多了不截断出处信息
+const shownTodoCount = 40;
+const digestTodoGroups = computed(() => {
+  const groups: { file: string; items: any[] }[] = [];
+  const byFile: Record<string, { file: string; items: any[] }> = {};
+  let n = 0;
+  for (const t of digestPending.value) {
+    if (n >= shownTodoCount) break;
+    n++;
+    let g = byFile[t.file];
+    if (!g) { g = byFile[t.file] = { file: t.file, items: [] }; groups.push(g); }
+    g.items.push(t);
+  }
+  return groups;
+});
+
+const subTab = ref<'todo' | 'reminder' | 'pending'>('todo');
+
+async function loadNoteDigest() {
+  digestLoading.value = true;
+  try {
+    const d = await API.noteDigest.extract();
+    digest.value = d;
+    const t = new Date(d.generated_at);
+    digestAt.value = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  } catch { digest.value = null; }
+  digestLoading.value = false;
+}
+
+async function syncDone() {
+  syncing.value = true;
+  try {
+    const r = await API.noteDigest.syncDone();
+    if (r?.touched) await loadOverviewData();
+    await loadNoteDigest();
+    alert(r?.touched ? `已将 ${r.touched} 个勾选完成的任务标记为 done` : '没有匹配的已勾选待办可回写');
+  } catch (e: any) {
+    alert('同步失败: ' + (e?.message || e));
+  }
+  syncing.value = false;
+}
+
 async function onGateReady() {
   await loadKbCount();
   await loadOverviewData();
+  loadNoteDigest();
 }
 
 onMounted(() => {
   loadOverviewData();
   loadKbCount();
+  loadNoteDigest();
   API.on('report:generated', () => {
     loadOverviewData();
   });
@@ -390,64 +500,36 @@ onUnmounted(() => {
   background: var(--bg-main);
 }
 
-.stats-grid {
+/* ========== 顶部条 ========== */
+.board-bar {
   display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
 }
-.stat-card {
+.board-brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.board-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.board-sub { font-size: 12px; color: var(--text-muted); }
+.board-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ========== KPI ========== */
+.kpi-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.kpi {
   flex: 1;
   min-width: 0;
   background: white;
-  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 2px;
-}
-.kb-card {
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.kb-card:hover {
-  border-color: var(--primary);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
-}
-.kb-settings {
-  margin-left: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0.6;
-}
-.kb-settings:hover {
-  opacity: 1;
-}
-.stat-icon {
-  width: 28px;
-  height: 28px;
   border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
+  padding: 10px 8px;
+  text-align: center;
 }
-.stat-num {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.2;
-}
-.stat-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+.kpi.clickable { cursor: pointer; transition: all 0.15s; }
+.kpi.clickable:hover { border-color: var(--primary); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.kpi-num { font-size: 20px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+.kpi-num.accent { color: var(--primary); }
+.kpi-num.ok { color: #16a34a; }
+.kpi-num.warn { color: #ef4444; }
+.kpi-label { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 
 .card {
   background: white;
@@ -458,38 +540,107 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
-.dashboard-grid {
+/* ========== 三栏看板 ========== */
+.board-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   align-items: start;
+  margin-bottom: 18px;
 }
-.dashboard-left {
+.board-col {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
-.dashboard-right {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.section-header {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
+.col-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
 }
-.section-header .report-schedule {
+.col-count {
   font-size: 11px;
-  font-weight: 400;
+  font-weight: 500;
   color: var(--text-muted);
-  margin-left: auto;
+  background: var(--bg-main);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.col-sub { font-size: 11px; font-weight: 400; color: var(--text-muted); margin-left: auto; }
+.col-body { padding: 8px 10px; max-height: 420px; overflow-y: auto; }
+.col-empty { font-size: 12px; color: var(--text-muted); padding: 14px 6px; text-align: center; }
+.col-more { font-size: 11px; color: var(--text-muted); padding: 6px; text-align: center; }
+
+.src-group { margin-bottom: 8px; }
+.src-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.src-count { margin-left: auto; flex-shrink: 0; }
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.row:hover { background: var(--hover); }
+.row-mark { flex-shrink: 0; font-size: 11px; opacity: 0.75; }
+.row-text { flex: 1; min-width: 0; color: var(--text-secondary); line-height: 1.5; }
+.row-line { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
+
+.log-row { padding: 6px; border-radius: var(--radius-sm); }
+.log-row:hover { background: var(--hover); }
+.log-date { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.log-src { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-preview { font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.5; }
+
+/* ========== 次级区 ========== */
+.sub-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.sub-card { min-width: 0; }
+.tab-bar { display: flex; gap: 4px; margin-bottom: 8px; }
+.tab-bar button {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.tab-bar button.on { border-color: var(--primary); color: var(--primary); background: var(--hover); font-weight: 600; }
+.tab-body { min-height: 160px; max-height: 420px; overflow-y: auto; }
+.stack { display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 1180px) {
+  .board-grid { grid-template-columns: minmax(0, 1fr); }
+  .sub-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
-.todo-list { display: flex; flex-direction: column; gap: 4px; }
 .todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .todo-item.overdue { border-color: #fca5a5; background: #fef2f2; }
 .todo-item:hover { border-color: var(--primary); }
@@ -500,12 +651,10 @@ onUnmounted(() => {
 .todo-done-btn { flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 50%; background: white; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
 .todo-done-btn:hover { border-color: var(--primary); color: var(--primary); }
 
-.reminder-list { display: flex; flex-direction: column; gap: 4px; }
 .reminder-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .reminder-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
 .reminder-time { font-size: 11px; color: var(--text-muted); }
 
-.pending-list { display: flex; flex-direction: column; gap: 8px; }
 .pending-group-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .pending-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: var(--radius-sm); }
 .pending-item:hover { background: var(--hover); }
@@ -556,6 +705,7 @@ onUnmounted(() => {
   -webkit-box-orient: vertical;
 }
 .report-item { cursor: pointer; }
+
 
 /* ========== 日报详情弹窗 ========== */
 .modal-overlay {

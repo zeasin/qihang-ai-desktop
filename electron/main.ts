@@ -53,6 +53,7 @@ import * as scheduler from './services/scheduler';
 import * as indexer from './services/indexer';
 import logger from './services/logger';
 import { relayClient, probeRelayHealth } from './services/relay-client';
+import { extractDigest, syncCheckedDone } from './services/note-digest';
 import * as relayDevice from './services/relay-device';
 import { notify } from './services/notify';
 import { createTrayIcon, getWindowIcon } from './icon';
@@ -1533,6 +1534,17 @@ ipcMain.handle('todo:add', (_, data) => {
 });
 ipcMain.handle('todo:update', (_, id, data) => { db.task.update(id, data); return true; });
 ipcMain.handle('todo:remove', (_, id) => { db.task.remove(id); return true; });
+
+// --- 笔记提炼（概览「来自笔记」） ---
+ipcMain.handle('noteDigest:extract', () => extractDigest());
+ipcMain.handle('noteDigest:syncDone', () => {
+  const touched = syncCheckedDone();
+  if (touched.length) {
+    scheduler.reloadTasks();
+    for (const id of touched) relayClient.syncTask(id);
+  }
+  return { touched: touched.length };
+});
 
 // --- AI 自执行任务 ---
 ipcMain.handle('task:list', () => db.task.list());

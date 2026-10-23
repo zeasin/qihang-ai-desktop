@@ -186,6 +186,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     remove: (id: number) => ipcRenderer.invoke('todo:remove', id),
   },
 
+  // 笔记提炼（概览「来自笔记」）
+  noteDigest: {
+    extract: () => ipcRenderer.invoke('noteDigest:extract'),
+    syncDone: () => ipcRenderer.invoke('noteDigest:syncDone'),
+  },
+
   // AI 自执行任务
   task: {
     list: () => ipcRenderer.invoke('task:list'),

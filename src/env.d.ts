@@ -130,6 +130,10 @@ interface ElectronAPI {
     update: (id: number, data: any) => Promise<void>;
     remove: (id: number) => Promise<void>;
   };
+  noteDigest: {
+    extract: () => Promise<{ todos: any[]; followups: any[]; logs: any[]; scannedFiles: number; generated_at: string }>;
+    syncDone: () => Promise<{ touched: number }>;
+  };
   reminder: {
     list: () => Promise<any[]>;
     add: (data: any) => Promise<{ id: string }>;
