@@ -42,10 +42,94 @@
 
       <!-- 右：任务详情 -->
       <div class="task-detail-pane">
-        <div v-if="!selectedTask" class="detail-empty">
-          <div class="empty-icon">🗂️</div>
-          <div class="empty-text">选择任务查看详情</div>
-          <button class="btn btn-sm btn-secondary empty-open-btn" @click.stop="toggleTaskList()">浏览任务列表</button>
+        <!-- 无任务：直接给新建任务页（保存后自动纳入调度） -->
+        <div v-if="!selectedTask" class="task-create-page">
+          <div class="tcp-top">
+            <button class="flyout-toggle" title="任务列表" @click.stop="toggleTaskList()">
+              <AppIcon name="list-checks" :size="14" />
+              <span>任务</span>
+              <AppIcon name="chevron-down" :size="12" />
+            </button>
+          </div>
+          <div class="tcp-inner">
+            <div class="tcp-head">
+              <AppIcon name="workflow" :size="20" />
+              <h1 class="tcp-title">新建任务</h1>
+            </div>
+            <p class="tcp-sub">描述要让 AI 执行的事：立即跑一次，或按周期自动执行，结果写入项目笔记。</p>
+            <div class="tcp-form">
+              <div class="form-group">
+                <label>所属项目 *</label>
+                <select class="form-control" v-model="editing.project_id">
+                  <option :value="null" disabled>请选择项目</option>
+                  <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>任务标题 *</label>
+                <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 竞品价格巡检">
+              </div>
+              <div class="form-group">
+                <label>任务诉求（AI 将据此执行）</label>
+                <textarea class="form-control tcp-prompt" v-model="editing.prompt" rows="4" placeholder="描述要让 AI 做什么，越具体越好…"></textarea>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>执行方式</label>
+                  <select class="form-control" v-model="editing.trigger_type">
+                    <option value="now">立即执行一次</option>
+                    <option value="once">指定时间执行一次</option>
+                    <option value="cycle">定时循环执行</option>
+                  </select>
+                </div>
+                <div class="form-group" v-if="editing.trigger_type === 'once'">
+                  <label>执行时间 *</label>
+                  <input type="datetime-local" class="form-control" v-model="editing.scheduled_start">
+                </div>
+              </div>
+              <template v-if="editing.trigger_type === 'cycle'">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>循环类型</label>
+                    <select class="form-control" v-model="editing.cycle_type">
+                      <option value="daily">每天</option>
+                      <option value="weekly">每周</option>
+                      <option value="monthly">每月</option>
+                      <option value="cron">Cron 表达式</option>
+                    </select>
+                  </div>
+                  <div class="form-group" v-if="editing.cycle_type !== 'cron'">
+                    <label>执行时间</label>
+                    <input type="time" class="form-control" v-model="editing.cycle_time">
+                  </div>
+                </div>
+                <div class="form-group" v-if="editing.cycle_type === 'weekly'">
+                  <label>星期几（可多选）</label>
+                  <div class="week-select">
+                    <label v-for="d in weekDays" :key="d.value" class="week-chip">
+                      <input type="checkbox" :value="d.value" v-model="editingWeekDays">
+                      {{ d.label }}
+                    </label>
+                  </div>
+                </div>
+                <div class="form-group" v-if="editing.cycle_type === 'monthly'">
+                  <label>每月几号</label>
+                  <input type="number" class="form-control" v-model.number="editingMonthDays" min="1" max="31" placeholder="如 1 或 1,15">
+                </div>
+                <div class="form-group" v-if="editing.cycle_type === 'cron'">
+                  <label>Cron 表达式</label>
+                  <input type="text" class="form-control" v-model="editing.cycle_value" placeholder="如 0 9 * * *（每天早上 9 点）">
+                </div>
+              </template>
+              <label class="check-item">
+                <input type="checkbox" v-model="editing.notify_feishu">
+                完成后推送飞书
+              </label>
+              <div class="tcp-actions">
+                <button class="btn btn-primary" :disabled="!canSaveTask" @click="saveTask">{{ editing.trigger_type === 'now' ? '保存并立即执行' : '保存任务' }}</button>
+              </div>
+            </div>
+          </div>
         </div>
         <template v-else>
           <div class="detail-header">
@@ -413,12 +497,33 @@ function ensureSelectedTask() {
 
 watch(noteTaskFilter, () => { ensureSelectedTask(); });
 
+// 任务清空时，把内联新建表单重置为默认状态
+watch(() => visibleNoteTasks.value.length, (n) => {
+  if (n === 0) {
+    const def = projectOptions.value.find((p) => p.is_default) || projectOptions.value[0];
+    editing.value = emptyTask();
+    editing.value.project_id = def ? def.id : null;
+  }
+});
+
 // ========== 模态框状态 ==========
 const showTaskModal = ref(false);
 const isEditing = ref(false);
 const editing = ref<AiTask>(emptyTask());
 const editingWeekDays = ref<number[]>([]);
 const editingMonthDays = ref<number | string>(1);
+
+// 内联新建页的可保存判断（与弹窗保存校验一致）
+const canSaveTask = computed(() => {
+  const t = editing.value;
+  if (!t.project_id || !t.title.trim() || !t.prompt.trim()) return false;
+  if (t.trigger_type === 'once' && !t.scheduled_start) return false;
+  if (t.trigger_type === 'cycle') {
+    if (t.cycle_type === 'weekly' && !editingWeekDays.value.length) return false;
+    if (t.cycle_type === 'cron' && !(t.cycle_value || '').trim()) return false;
+  }
+  return true;
+});
 const showDeleteModal = ref(false);
 const deletingTask = ref<AiTask | null>(null);
 const deletingProject = ref<Project | null>(null);
@@ -450,6 +555,11 @@ async function loadTasks() {
 
 async function loadProjects() {
   try { projects.value = (await API.project.list()) || []; } catch { projects.value = []; }
+  // 内联新建页的默认归属：默认项目（或第一个）
+  if (editing.value.project_id == null) {
+    const def = projects.value.find((p) => p.is_default) || projects.value[0];
+    if (def) editing.value.project_id = def.id;
+  }
   ensureSelectedTask();
 }
 
@@ -720,6 +830,52 @@ onBeforeUnmount(() => {
 }
 
 .empty-open-btn { margin-top: 6px; }
+
+/* ========== 无任务：内联新建任务页 ========== */
+.task-create-page {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-main);
+}
+.tcp-top {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 5;
+}
+.tcp-inner {
+  width: 100%;
+  max-width: 640px;
+  padding: 7vh 24px 40px;
+}
+.tcp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+}
+.tcp-head svg { color: var(--primary); }
+.tcp-title { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+.tcp-sub {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.tcp-form {
+  margin-top: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-sm);
+}
+.tcp-prompt { resize: vertical; min-height: 96px; }
+.tcp-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
 
 .list-pane-header {
   padding: 12px 16px;

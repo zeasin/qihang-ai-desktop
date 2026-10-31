@@ -11,32 +11,10 @@
       <span class="brand-text"><b>启航</b><small>AI 工作台</small></span>
     </div>
 
-    <!-- 默认项目切换 -->
-    <div v-if="projects.length" class="pop-wrap">
-      <button class="proj-btn" title="切换默认项目" @click.stop="projOpen = !projOpen">
-        <span class="proj-text"><small>默认项目</small><b>{{ defaultName }}</b></span>
-        <AppIcon name="chevrons-up-down" :size="13" class="proj-caret" />
-      </button>
-      <div v-if="projOpen" class="pop proj-pop" @click.stop>
-        <div class="pop-label">切换默认项目</div>
-        <button
-          v-for="p in projects"
-          :key="p.id"
-          class="pop-item"
-          :class="{ on: p.id === defaultId }"
-          @click="chooseDefault(p)"
-        >
-          <span class="mini"></span>
-          <span class="pop-item-name">{{ p.name }}</span>
-          <small v-if="p.is_default">默认</small>
-        </button>
-        <div class="pop-sep"></div>
-        <router-link class="pop-item" to="/config" @click="projOpen = false">
-          <AppIcon name="settings" :size="13" />
-          <span class="pop-item-name">管理项目…</span>
-        </router-link>
-      </div>
-    </div>
+    <!-- 快速新建对话（任意页面一键直达草稿） -->
+    <button class="quick-new" type="button" @click="quickNewChat()">
+      <span class="qn-ic"><AppIcon name="plus" :size="14" /></span>新对话
+    </button>
 
     <!-- 引擎状态 -->
     <div class="pop-wrap">
@@ -104,13 +82,20 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import AppIcon from './AppIcon.vue';
 import { toggleTheme, useTheme } from '../composables/theme';
 
 const API = window.electronAPI;
 const route = useRoute();
+const router = useRouter();
 const isDark = useTheme();
+
+// 快速新建对话：跨页面直达对话草稿
+function quickNewChat() {
+  engOpen.value = false;
+  router.push({ path: '/chat', query: { new: '1' } });
+}
 
 // ========== 导航 ==========
 const navItems = computed(() => [
@@ -126,34 +111,6 @@ const isActive = (path: string) => {
   if (path === '/planner' && route.path.startsWith('/task/')) return true;
   return route.path === path || route.path.startsWith(path + '/');
 };
-
-// ========== 默认项目 ==========
-const projects = ref<any[]>([]);
-const defaultId = ref<number | null>(null);
-const defaultName = computed(() => {
-  const d = projects.value.find((p) => p.id === defaultId.value);
-  return d ? d.name : '未设置';
-});
-const projOpen = ref(false);
-
-async function loadProjects() {
-  try {
-    projects.value = (await API.kb.list()) || [];
-  } catch { projects.value = []; }
-  try {
-    const d = await API.kb.getDefault();
-    defaultId.value = d && d.id != null ? d.id : null;
-  } catch { defaultId.value = null; }
-}
-
-async function chooseDefault(p: any) {
-  projOpen.value = false;
-  if (p.id === defaultId.value) return;
-  try {
-    await API.kb.setDefault(p.id);
-    defaultId.value = p.id;
-  } catch {}
-}
 
 // ========== 引擎状态 ==========
 const services = ref({ feishu: false, scheduler: false });
@@ -191,12 +148,10 @@ function refreshAll() {
 }
 
 function onDocClick() {
-  projOpen.value = false;
   engOpen.value = false;
 }
 
 onMounted(() => {
-  loadProjects();
   refreshAll();
   timer = window.setInterval(refreshAll, 60_000);
   document.addEventListener('click', onDocClick);
@@ -208,7 +163,6 @@ onUnmounted(() => {
 });
 
 watch(() => route.path, () => {
-  projOpen.value = false;
   engOpen.value = false;
 });
 </script>
@@ -246,6 +200,31 @@ watch(() => route.path, () => {
 .brand-text b { display: block; font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--text-primary); }
 .brand-text small { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.3; }
 
+/* 快速新建对话（安静的描边样式，与侧栏气质一致） */
+.quick-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.quick-new:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.qn-ic { display: flex; color: var(--primary); }
+
 /* ========== 弹出层通用 ========== */
 .pop-wrap { position: relative; }
 .pop {
@@ -261,27 +240,6 @@ watch(() => route.path, () => {
   padding: 8px;
 }
 .pop-label { font-size: 11px; color: var(--text-muted); padding: 4px 8px 6px; letter-spacing: 0.05em; }
-.pop-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 9px;
-  border-radius: 7px;
-  font-size: 12.5px;
-  color: var(--text-primary);
-  text-decoration: none;
-  border: none;
-  background: none;
-  cursor: pointer;
-  text-align: left;
-}
-.pop-item:hover { background: var(--hover); }
-.pop-item.on { color: var(--primary); font-weight: 600; }
-.pop-item small { margin-left: auto; font-size: 11px; color: var(--text-muted); }
-.pop-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mini { width: 8px; height: 8px; border-radius: 3px; background: var(--primary); flex-shrink: 0; }
-.pop-sep { height: 1px; background: var(--border); margin: 6px 4px; }
 .pop-more {
   display: flex;
   align-items: center;
@@ -291,26 +249,6 @@ watch(() => route.path, () => {
   margin: 8px 4px 2px;
   text-decoration: none;
 }
-
-/* ========== 项目切换 ========== */
-.proj-btn {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  cursor: pointer;
-  font-family: inherit;
-  transition: border-color 0.15s;
-}
-.proj-btn:hover { border-color: var(--text-muted); }
-.proj-text { flex: 1; min-width: 0; text-align: left; }
-.proj-text small { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.3; }
-.proj-text b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.3; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.proj-caret { color: var(--text-muted); flex-shrink: 0; }
 
 /* ========== 引擎状态 ========== */
 .engine-chip {

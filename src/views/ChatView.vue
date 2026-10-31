@@ -14,12 +14,12 @@
           <div
             class="conv-group-header"
             :class="{ current: groupIsCurrent(group) }"
-            :title="group.project ? (group.project.dir || group.project.name) + ' · 点击折叠/展开' : '未绑定项目的对话'"
+            :title="group.key === 'recent' ? '最近 72 小时内活跃的对话 · 点击折叠/展开' : (group.project ? (group.project.dir || group.project.name) + ' · 点击折叠/展开' : '未绑定项目的对话')"
             @click="toggleGroup(group.key)"
           >
             <span class="group-arrow" :class="{ collapsed: isGroupCollapsed(group.key) }">▾</span>
-            <span class="group-icon">{{ group.project ? '📁' : '💬' }}</span>
-            <span class="group-name">{{ group.project ? group.project.name : '未分组' }}</span>
+            <span class="group-icon">{{ group.key === 'recent' ? '🕘' : (group.project ? '📁' : '💬') }}</span>
+            <span class="group-name">{{ group.key === 'recent' ? '最近' : (group.project ? group.project.name : '未分组') }}</span>
             <span class="group-count">{{ group.sessions.length }}</span>
             <button
               v-if="group.project"
@@ -44,6 +44,7 @@
                 </div>
                 <div class="conv-preview">{{ session.last_message || '' }}</div>
               </div>
+              <span class="conv-time">{{ fmtSessionTime(session) }}</span>
               <span class="conv-delete" @click.stop="deleteSession(session.session_id || session.id)" title="删除">×</span>
             </div>
             <div v-if="!group.sessions.length" class="group-empty">暂无对话</div>
@@ -61,49 +62,65 @@
       <!-- 未添加项目：AI 功能门禁 -->
       <NotesGate v-if="kbLoaded && !kbLibraries.length" @ready="onGateReady" />
 
-      <!-- 无对话时：分步引导 -->
-      <div v-else-if="!currentSessionId && kbLoaded" class="chat-empty">
-        <div class="empty-icon">🚀</div>
-        <div class="empty-title">欢迎使用启航 AI 工作台</div>
-        <div class="empty-desc">首次使用？跟着以下步骤快速上手</div>
-
-        <div class="guide-card">
-          <div class="guide-step">
-            <div class="step-index">1</div>
-            <div class="step-content">
-              <div class="step-title">开始第一个对话</div>
-              <div class="step-desc">支持 日常问答 · 知识库检索 · 数据查询 · 图片识别 · 按项目工作目录运行</div>
-              <div class="step-actions">
-                <select
-                  class="model-selector project-selector"
-                  v-model="selectedProjectId"
-                  :disabled="isStreaming"
-                  title="选择对话所属项目（决定 AI 的工作目录）"
-                  @change="onProjectChange"
-                >
-                  <option :value="null">📁 不绑定项目</option>
-                  <option v-for="p in workProjects" :key="p.id" :value="p.id">📁 {{ p.name }}</option>
-                  <option :value="NEW_PROJECT">＋ 新建项目…</option>
-                </select>
-                <button class="btn btn-primary" @click="newSession()">💬 开始对话</button>
-                <button class="btn btn-secondary" @click.stop="sessionsOpen = !sessionsOpen"><AppIcon name="list-checks" :size="13" />历史会话</button>
+      <!-- 新建对话页（懒创建：真正发送后才创建会话） -->
+      <div v-else-if="kbLoaded && (draftMode || !currentSessionId)" class="draft-page">
+        <div class="draft-top">
+          <button class="sessions-toggle" title="会话记录" @click.stop="sessionsOpen = !sessionsOpen">
+            <AppIcon name="list-checks" :size="14" />
+            <span>会话</span>
+            <AppIcon name="chevron-down" :size="12" />
+          </button>
+        </div>
+        <div class="draft-inner">
+          <div class="draft-tabs">
+            <button class="draft-tab on" type="button"><AppIcon name="message-square" :size="13" />对话</button>
+            <button class="draft-tab" type="button" @click="router.push('/planner')"><AppIcon name="workflow" :size="13" />任务</button>
+          </div>
+          <h1 class="draft-title">新建对话</h1>
+          <p class="draft-sub">
+            在
+            <select class="draft-project" v-model="selectedProjectId" :disabled="isStreaming" @change="onProjectChange">
+              <option :value="null">不绑定项目</option>
+              <option v-for="p in workProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
+              <option :value="NEW_PROJECT">＋ 新建项目…</option>
+            </select>
+            里把要做的事说清楚，回车即开始
+          </p>
+          <div class="draft-composer">
+            <div v-if="pendingImages.length" class="draft-images">
+              <div v-for="(img, i) in pendingImages" :key="i" class="draft-img">
+                <img :src="'data:' + img.mimeType + ';base64,' + img.data" alt="" />
+                <button class="draft-img-del" @click="removeImage(i)">×</button>
               </div>
+            </div>
+            <textarea
+              ref="draftInputRef"
+              v-model="inputText"
+              class="draft-input"
+              rows="3"
+              placeholder="描述这次对话要做的事，Enter 发送…"
+              @keydown.enter.exact.prevent="sendMessage()"
+            ></textarea>
+            <div class="draft-toolbar">
+              <input ref="fileInputRef" type="file" accept="image/*" multiple style="display:none" @change="handleImageUpload" />
+              <button class="draft-tool" title="添加图片" @click="pickImage()"><AppIcon name="paperclip" :size="14" /></button>
+              <select class="draft-select" v-model="selectedModel" :disabled="isStreaming || modelsLoading" title="选择模型">
+                <option value="">默认模型</option>
+                <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
+                <option v-for="m in piModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
+              </select>
+              <span class="draft-hint">Enter 发送 · Shift+Enter 换行</span>
+              <button class="draft-send" :disabled="(!inputText.trim() && !pendingImages.length) || isStreaming" title="发送" @click="sendMessage()">
+                <AppIcon name="send" :size="15" />
+              </button>
             </div>
           </div>
-
-          <div class="guide-step">
-            <div class="step-index">2</div>
-            <div class="step-content">
-              <div class="step-title">探索更多功能</div>
-              <div class="step-desc">任务待办 · 数据集管理 · 定时提醒 · AI 工具箱</div>
-              <div class="guide-links">
-                <router-link to="/planner" class="guide-link">📋 任务</router-link>
-                <router-link to="/data" class="guide-link">🗃️ 数据</router-link>
-                <router-link to="/reminders" class="guide-link">🔔 提醒</router-link>
-                <router-link to="/tools" class="guide-link">🔧 工具箱</router-link>
-                <router-link to="/help" class="guide-link">❓ 帮助中心</router-link>
-              </div>
-            </div>
+          <div class="draft-meta">
+            <template v-if="draftProject">
+              <span>📁 {{ draftProject.name }}</span>
+              <span class="draft-meta-dim">{{ draftProject.dir }}</span>
+            </template>
+            <span v-else>未绑定项目 · 发送后可随时切换</span>
           </div>
         </div>
       </div>
@@ -126,6 +143,7 @@
             <span v-if="currentProject" class="chat-project-badge" :title="currentProject.dir || ''">📁 {{ currentProject.name }}</span>
           </div>
           <div class="chat-header-right">
+            <button class="btn btn-primary btn-sm" @click="newSession()" title="新建对话"><AppIcon name="plus" :size="13" />新对话</button>
             <span class="agent-status-dot" :class="isStreaming ? 'busy' : 'ready'"></span>
             <span class="agent-state">{{ isStreaming ? '生成中' : '空闲' }}</span>
           </div>
@@ -242,8 +260,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, computed, watch, onMounted, nextTick, onBeforeUnmount } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
 import AppIcon from '@/components/AppIcon.vue';
@@ -256,6 +274,7 @@ marked.setOptions({
 
 const API = window.electronAPI;
 const route = useRoute();
+const router = useRouter();
 
 // ========== 状态 ==========
 const sessions = ref<any[]>([]);
@@ -274,6 +293,13 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', onGlobalClickCloseSessions);
   document.removeEventListener('keydown', onEscCloseSessions);
 });
+// 侧栏「新对话」：同路由下点击也能触发草稿页
+watch(() => route.query.new, (v) => {
+  if (v === '1') {
+    newSession();
+    router.replace({ path: '/chat' });
+  }
+});
 const messages = ref<any[]>([]);
 const inputText = ref('');
 const composing = ref(false);
@@ -291,16 +317,48 @@ const currentProject = computed(() => {
   return Number.isFinite(id) ? workProjects.value.find((p: any) => p.id === id) || null : null;
 });
 const defaultKb = computed(() => kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null);
+// 会话活跃时间：列表排序与「最近」分组的依据（updated_at 为最后一条消息落库时间）
+function sessionTime(s: any): number {
+  const raw = String(s.updated_at || s.created_at || '').replace(' ', 'T');
+  const t = raw ? new Date(raw).getTime() : 0;
+  return Number.isFinite(t) ? t : 0;
+}
+
+function fmtSessionTime(s: any): string {
+  const t = sessionTime(s);
+  if (!t) return '';
+  const d = new Date(t);
+  const now = new Date();
+  const diff = now.getTime() - t;
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (diff < 5 * 60 * 1000) return '刚刚';
+  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)} 分钟前`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const yesterday = new Date(now.getTime() - 86400000);
+  if (d.toDateString() === yesterday.toDateString()) return `昨天 ${hm}`;
+  if (d.getFullYear() === now.getFullYear()) return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const RECENT_WINDOW = 72 * 3600 * 1000;
+
 const convGroups = computed(() => {
-  const groups = workProjects.value.map((p: any) => ({ key: 'p' + p.id, project: p, sessions: [] as any[] }));
-  const byId = new Map(groups.map((g) => [g.project.id, g]));
+  // 全列表按最近对话时间倒序
+  const sorted = [...sessions.value].sort((a, b) => sessionTime(b) - sessionTime(a));
+  const groups: { key: string; project: any; sessions: any[] }[] = [];
+  // 「最近」分组：72 小时内活跃的前 8 条，置顶快达（条目同时保留在各自项目分组里）
+  const recent = sorted.filter((s) => Date.now() - sessionTime(s) < RECENT_WINDOW).slice(0, 8);
+  if (recent.length) groups.push({ key: 'recent', project: null, sessions: recent });
+  const projGroups = workProjects.value.map((p: any) => ({ key: 'p' + p.id, project: p, sessions: [] as any[] }));
+  const byId = new Map(projGroups.map((g) => [g.project.id, g]));
   const loose: any[] = [];
-  for (const s of sessions.value) {
+  for (const s of sorted) {
     const pid = s.project_id === null || s.project_id === undefined ? null : Number(s.project_id);
     const g = pid !== null ? byId.get(pid) : undefined;
     (g ? g.sessions : loose).push(s);
   }
-  if (loose.length || !groups.length) groups.push({ key: 'loose', project: null, sessions: loose });
+  if (loose.length || !projGroups.length) projGroups.push({ key: 'loose', project: null, sessions: loose });
+  groups.push(...projGroups);
   return groups;
 });
 const inputRef = ref<HTMLTextAreaElement>();
@@ -312,6 +370,25 @@ const piModels = ref<{ provider: string; providerLabel: string; id: string; name
 const selectedModel = ref('');
 const modelsLoaded = ref(false);
 const modelsLoading = ref(false);
+
+// ========== 新建对话（懒创建：真正发送后才建数据库会话） ==========
+const draftMode = ref(false);
+const draftInputRef = ref<HTMLTextAreaElement | null>(null);
+const draftProject = computed(() => {
+  const id = Number(selectedProjectId.value);
+  return Number.isFinite(id) && id > 0 ? workProjects.value.find((p: any) => p.id === id) || null : null;
+});
+function enterDraft(projectId?: number | null) {
+  draftMode.value = true;
+  if (projectId !== undefined && projectId !== null) {
+    selectedProjectId.value = projectId;
+  } else if (typeof selectedProjectId.value !== 'number') {
+    const def = kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null;
+    selectedProjectId.value = def ? def.id : null;
+  }
+  sessionsOpen.value = false;
+  nextTick(() => draftInputRef.value?.focus());
+}
 
 // ========== 每会话进行中的流 ==========
 // 监听只绑一次，事件按 sessionId 落到各自的缓冲：切走再切回来仍能看到这一轮的真实进度，
@@ -518,6 +595,7 @@ async function loadMessages(sessionId: string) {
 
 // ========== 对话操作 ==========
 async function selectSession(session: any) {
+  draftMode.value = false;
   const sid = session.session_id || String(session.id);
   const stale = streams.value[sid];
   if (stale && !stale.running) {
@@ -534,10 +612,12 @@ async function selectSession(session: any) {
   saveState();
 }
 
-async function newSession(projectId?: number | null) {
-  const pid = typeof projectId === 'number'
-    ? projectId
-    : (typeof selectedProjectId.value === 'number' ? selectedProjectId.value : null);
+// 「新建对话」只进入草稿页，不再立刻写库；真正发送时才 createSession
+function newSession(projectId?: number | null) {
+  enterDraft(projectId);
+}
+
+async function createSessionNow(pid: number | null): Promise<string | null> {
   const id = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   try {
     const session = await API.chat.createSession(id, pid, '新对话', 'general', 'general', 'ui');
@@ -547,14 +627,12 @@ async function newSession(projectId?: number | null) {
     expandGroup(pid !== null ? 'p' + pid : 'loose');
     rememberProjectPick();
     messages.value = [];
-    inputText.value = '';
     await loadSessions();
-    sessionsOpen.value = false;
     saveState();
-    scrollToActiveConversation();
-    nextTick(() => inputRef.value?.focus());
+    return id;
   } catch (e: any) {
     console.error('创建对话失败:', e);
+    return null;
   }
 }
 
@@ -638,21 +716,7 @@ function saveState() {
   }
 }
 
-async function restoreState() {
-  try {
-    const saved = localStorage.getItem(CHAT_STATE_KEY);
-    if (!saved) return false;
-    const { sessionId } = JSON.parse(saved);
-    if (!sessionId) return false;
-    const session = sessions.value.find((s) => s.session_id === sessionId || String(s.id) === String(sessionId));
-    if (!session) return false;
-    currentSessionId.value = session.session_id || String(session.id);
-    currentSession.value = session;
-    syncProjectFromSession();
-    await loadMessages(currentSessionId.value);
-    return true;
-  } catch { return false; }
-}
+// 会话恢复策略已改为「进页展示最近活跃的一条」（见 onMounted），旧的状态恢复逻辑废弃
 
 // ========== 图片处理 ==========
 function handlePaste(event: ClipboardEvent) {
@@ -701,10 +765,14 @@ async function sendMessage() {
   const text = inputText.value.trim();
   if ((!text && !pendingImages.value.length) || isStreaming.value) return;
 
-  if (!currentSessionId.value) {
-    await newSession();
-    nextTick(() => { doSend(text); });
-    return;
+  // 草稿页首次发送：此刻才创建数据库会话
+  if (draftMode.value || !currentSessionId.value) {
+    const pid = selectedProjectId.value === NEW_PROJECT
+      ? null
+      : (typeof selectedProjectId.value === 'number' ? selectedProjectId.value : null);
+    const sid = await createSessionNow(pid);
+    if (!sid) return;
+    draftMode.value = false;
   }
   doSend(text);
 }
@@ -878,19 +946,18 @@ const autoResizeTextarea = () => {
 // ========== 生命周期 ==========
 onMounted(async () => {
   await Promise.all([loadKbLibraries(), loadWorkProjects(), loadSessions(), loadPiModels()]);
-  
-  // 尝试恢复上次的会话状态
-  const restored = await restoreState();
-  
-  if (restored) {
-    // 恢复成功，滚动到已恢复的会话
-    scrollToActiveConversation();
+
+  // 侧栏「新对话」快速入口：/chat?new=1 直接进草稿页
+  if (route.query.new === '1') {
+    newSession();
+    router.replace({ path: '/chat' });
   } else if (sessions.value.length > 0) {
-    // 如果没有恢复到上次状态，但有会话存在，自动选择最新的会话（最后一条）
-    await selectSession(sessions.value[sessions.value.length - 1]);
+    // 进入对话页默认展示最近活跃的一条（以最后一条消息时间为准）
+    const latest = [...sessions.value].sort((a, b) => sessionTime(b) - sessionTime(a))[0];
+    await selectSession(latest);
     scrollToActiveConversation();
   } else {
-    // 没有会话时，沿用上次选的项目作为新对话的默认归属
+    // 没有会话时进入新建对话页，沿用上次选的项目作为默认归属
     restoreProjectPick();
   }
   
@@ -973,6 +1040,227 @@ onBeforeUnmount(() => {
   color: var(--primary);
   border-color: var(--primary);
   background: var(--primary-soft);
+}
+
+/* 会话条目时间 */
+.conv-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ========== 新建对话页（懒创建） ========== */
+.draft-page {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-main);
+}
+.draft-top {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 5;
+}
+.draft-inner {
+  width: 100%;
+  max-width: 720px;
+  padding: 9vh 24px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.draft-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.draft-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.draft-tab.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.draft-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.draft-tab:not(.on):not(:disabled):hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.draft-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+.draft-sub {
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.draft-project {
+  border: none;
+  border-bottom: 1px dashed var(--primary);
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  outline: none;
+  padding: 0 2px;
+}
+.draft-composer {
+  width: 100%;
+  margin-top: 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s;
+}
+.draft-composer:focus-within { border-color: var(--primary); }
+.draft-images {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 14px 0;
+}
+.draft-img {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.draft-img img { width: 100%; height: 100%; object-fit: cover; }
+.draft-img-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.draft-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: none;
+  resize: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  padding: 16px 18px 8px;
+  min-height: 88px;
+}
+.draft-input::placeholder { color: var(--text-muted); }
+.draft-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+}
+.draft-tool {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.draft-tool:hover { background: var(--hover); color: var(--text-primary); }
+.draft-select {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  outline: none;
+  cursor: pointer;
+}
+.draft-hint {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.draft-send {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.draft-send:hover:not(:disabled) { background: var(--primary-dark); }
+.draft-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.draft-meta {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.draft-meta-dim {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
 }
 
 .sidebar-header {
