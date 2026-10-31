@@ -35,9 +35,9 @@
 
 **2. 本地优先**：笔记、数据集、对话记录全部留在本机，笔记库就是你磁盘上的 Markdown 文件夹，随时可用任何编辑器打开、随时带走。
 
-**3. 双引擎架构**：pi 引擎（默认，轻量稳定、本地工具全量可用）+ opencode 引擎（可选，免费模型与 MCP 生态），对话页一键切换、互为回退。pi SDK 直接跑在主进程内；opencode 由主进程托管 `opencode serve` 子进程，需本机已安装 opencode CLI（或将 `opencode.exe` 放到 `resources/opencode/` 随包分发）。
+**3. 单引擎架构**：pi 引擎（`@earendil-works/pi-coding-agent`）直接运行在主进程内，对话、飞书、任务、日报、工具箱共用一条链路；本地工具以 customTools 原生注入，无子进程、无需安装 CLI。
 
-**4. 连接器架构**：外部系统（如启航电商ERP）统一走 MCP 接入，核心产品与场景解耦；工作台本地工具 MCP 化后双引擎共享同一工具面（演进方向）。
+**4. 连接器架构**：外部系统（如启航电商ERP）统一走 MCP 接入，核心产品与场景解耦；工作台本地工具当前以 customTools 直注，后续统一 MCP 化（演进方向）。
 
 **5. 手机指挥**：飞书 Bot 是一等入口——手机下发任务、收日报、看分析、做确认。
 
@@ -46,7 +46,7 @@
 | 功能 | 说明 |
 |------|------|
 | 📚 **笔记库** | 多笔记库管理、Markdown 浏览预览、文件名搜索、让 AI 基于笔记回答问题——对话、任务、日报的数据主体 |
-| 💬 **AI 对话** | 多轮对话、图片粘贴/上传与识别、模型切换、引擎切换（pi / opencode）、流式输出；内含「对话 / 知识库 / 概览」三个 Tab；每个会话可挂到指定笔记库 |
+| 💬 **AI 对话** | 多轮对话、图片粘贴/上传与识别、模型切换、流式输出；内含「对话 / 知识库 / 概览」三个 Tab；每个会话可挂到指定笔记库 |
 | 📊 **概览** | 「AI」页内 Tab：统计卡片、综合日报、待办、提醒、待处理记录看板 |
 | 🔔 **任务中心** | 定时/循环任务（每天/每周/每月/Cron），结果自动保存到笔记库并可选推送飞书 |
 | 🗃️ **数据集** | 多数据集管理、自定义 Schema、内置模板一键安装、AI 业务分析、JSON 粘贴/URL 导入 |
@@ -54,15 +54,15 @@
 | 🔧 **工具箱（beta）** | 演示大纲（PPTX/HTML）、周报日报、思维导图（.mm）、文案、网站抓取、图片生成 |
 | 🔗 **飞书集成** | Webhook 推送消息；配置 Bot 后可在飞书里直接和 AI 对话、下发任务 |
 | 📋 **自动日报** | 每天定时汇总你的笔记、任务、对话，生成 AI 日报并推送（支持自定义提示词） |
-| 🤖 **双引擎（pi + opencode）** | pi 默认引擎；opencode 可选引擎全托管（懒启动/健康检查/崩溃自愈/超时保护），对话页一键切换对比（opencode 暂不含本地工具） |
-| 🔌 **MCP 服务器（演进中）** | 工作台内置工具 MCP 化后双引擎共享工具面；配置启航电商ERP 的 MCP 地址即可让 AI 查订单、库存、商品 |
+| 🤖 **pi 引擎** | SDK 内置主进程（模型注册/会话/流式输出/本地工具注入），无需安装 CLI；对话、飞书、定时任务、工具箱共用同一工具面 |
+| 🔌 **MCP 服务器（演进中）** | 工作台内置工具 MCP 化后统一工具面；配置启航电商ERP 的 MCP 地址即可让 AI 查订单、库存、商品 |
 
 ## 快速开始
 
-1. **安装启动**：双击安装包（pi 内核已内置，无需安装 Node；opencode 为可选引擎，需本机安装 opencode CLI 或随包放置二进制）。
+1. **安装启动**：双击安装包（pi 内核已内置，无需安装 Node 或任何 CLI）。
 2. **设置笔记库**：「设置 → 📚 笔记库设置」，选择一个 Markdown 文件夹——这是你的数据主体，之后所有对话、任务、日报都围绕它展开。
-3. **配置模型**：「设置 → 💬 对话模型配置」配置自己的 API（DeepSeek / Ollama / 任何 OpenAI 兼容接口）；opencode 引擎自带一批免费模型，配置好后可直接在列表中选择。
-4. **开始使用**：在「AI」页对话（可切知识库/概览），输入框左下角可在 pi / opencode 引擎间切换对比；「任务」页建定时任务，「数据」页管数据集，结果都会归档进笔记库。
+3. **配置模型**：「设置 → 💬 对话模型配置」配置自己的 API（DeepSeek / Ollama / 任何 OpenAI 兼容接口）。
+4. **开始使用**：在「AI」页对话（可切知识库/概览），输入框左下角可切换模型；「任务」页建定时任务，「数据」页管数据集，结果都会归档进笔记库。
 5. **连接外部系统（可选）**：「设置 → MCP 服务器」填入启航电商ERP 的 MCP 地址与 Token，连接测试通过后即可对话查数、分析经营、生成补货建议（MCP 接入就绪后）。
 
 ## 飞书使用指南
@@ -81,14 +81,12 @@
 
 - **OpenAI 兼容接口**：DeepSeek、硅基流动等（内置快捷模板），填 API Base URL / API Key / 模型名
 - **Ollama（本地/离线）**：填服务地址和模型名，完全离线可用
-- **免费模型**：opencode 引擎自带一批免费模型（需可访问 opencode.ai），无需自配 API 即可先体验
 
-可配置多个接入、每个接入多个模型，对话页可随时切换；模型配置会自动同步给 opencode 引擎。
+可配置多个接入、每个接入多个模型，对话页可随时切换。
 
 ### 2. AI 引擎与 ERP 连接
 
-- **引擎**：pi 为默认引擎（本地工具全量可用）；opencode 为可选引擎，需本机安装 opencode CLI，首次切换时主进程自动拉起并托管 `opencode serve`
-- **引擎切换**：对话页输入框左下角「pi 引擎 / opencode」下拉框，随时切换、互为回退（涉及本地工具的任务请用 pi 引擎，opencode 本地工具在 MCP 化后开放）
+- **引擎**：pi SDK 内置在主进程内，对话、飞书、定时任务、工具箱共用同一条链路，本地工具全量可用
 - 「设置 → MCP 服务器」（规划中）：ERP 连接（URL + Token + 连接测试）；工作台内置工具自动接入，无需配置
 
 ### 3. 任务与日报
@@ -127,7 +125,6 @@ A：数据保存在本机数据库，正常退出不丢失。可在「设置 →
 - Node.js 22.19+（pi agent SDK 的硬性要求；Electron 39 内置 Node 22.22，开发用的命令行 Node 建议同版本）
 - Electron 39（应用内已固定，**不要单独升级/降级**；升级后必须 `npx electron-rebuild -f -w better-sqlite3` 重编原生模块）
 - 可选：Ollama（本地对话模型）
-- 可选：opencode CLI（`npm i -g opencode-ai`，使用 opencode 引擎时需要；也可把 `opencode.exe` 放到 `resources/opencode/`）
 
 ### 开发调试
 
@@ -152,11 +149,7 @@ npm run electron:build   # vite build + tsc 编译 + electron-builder 打包
 │   ├── preload.ts     # 渲染进程桥接（contextBridge）
 │   ├── worker/        # 数据库 Worker
 │   └── services/      # 核心服务
-│       ├── pi-agent.ts         # AI 引擎（pi，默认）：模型注册/会话/流式输出/customTools
-│       ├── agent-runtime.ts    # 双引擎运行时选择器（pi 默认 / opencode 可选）
-│       ├── opencode-process.ts # opencode serve 进程全托管（懒启动/健康检查/自愈）
-│       ├── opencode-agent.ts   # opencode 对话适配层（SSE 流式/超时保护/会话映射）
-│       ├── opencode-config.ts  # opencode 自管配置（模型配置自动同步 opencode.json）
+│       ├── pi-agent.ts         # AI 引擎：模型注册/会话/流式输出/customTools
 │       ├── tools.ts       # 工具定义（笔记/数据集/提醒/任务/日报/搜索）
 │       ├── ai-tools.ts    # AI 内容工具（演示/日报周报/思维导图/文案/抓取/图片）
 │       ├── task-runner.ts # 飞书任务记录与追问续跑
@@ -174,7 +167,7 @@ npm run electron:build   # vite build + tsc 编译 + electron-builder 打包
     └── router/        # 路由
 ```
 
-> 双引擎实现位于 `electron/services/agent-runtime.ts` 与 `opencode-*.ts`；pi 的工具以 customTools 直接注入，opencode 的工具待 MCP 化。历次改动见 [docs/更新日志.md](docs/更新日志.md)。
+> pi 引擎实现位于 `electron/services/pi-agent.ts`；工具以 customTools 直接注入，后续统一 MCP 化。历次改动见 [docs/更新日志.md](docs/更新日志.md)。
 
 ## 参与贡献
 

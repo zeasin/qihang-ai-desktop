@@ -101,16 +101,10 @@
         <div v-if="task.followupDone" class="followup-reply markdown-body" v-html="renderMarkdown(task.followupReply)"></div>
         <div v-if="task.followupRunning" class="followup-reply markdown-body" v-html="renderMarkdown(task.followupReply)"></div>
         <div class="followup-toolbar">
-          <select class="model-selector" v-model="runtime" :disabled="task.followupRunning" title="AI 引擎" @change="onRuntimeChange">
-            <option value="pi">pi 引擎</option>
-            <option value="opencode">opencode</option>
-          </select>
           <select class="model-selector" v-model="selectedModel" :disabled="task.followupRunning" title="选择模型">
             <option value="">默认模型</option>
             <option v-for="m in followupModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
           </select>
-          <span v-if="runtime === 'opencode'" class="followup-engine-hint">opencode 引擎暂无本地工具，追问为纯对话</span>
-          <span v-if="runtimeError" class="followup-engine-error">⚠️ {{ runtimeError }}</span>
         </div>
         <div class="followup-input-row">
           <textarea
@@ -405,63 +399,18 @@ async function confirmDelete() {
 }
 
 // ========== 追问 ==========
-// 引擎与模型选择（与对话页一致：引擎为全局运行时，切换同步后端）
-const runtime = ref<'pi' | 'opencode'>('pi');
-const appliedRuntime = ref<'pi' | 'opencode'>('pi');
-const runtimeError = ref('');
 const followupModels = ref<any[]>([]);
 const selectedModel = ref('');
 
-async function loadRuntime() {
-  try {
-    const s = await API.agent.runtimeGet();
-    const r = s?.runtime === 'opencode' ? 'opencode' : 'pi';
-    runtime.value = r;
-    appliedRuntime.value = r;
-  } catch { /* 保持默认 pi */ }
-}
-
 async function loadFollowupModels() {
-  const want = runtime.value;
   try {
     const res = await API.pi.models();
-    if (want !== runtime.value) return;
-    if (res?.runtime && res.runtime !== want) {
-      runtimeError.value = `主进程仍在使用 ${res.runtime} 引擎，请重启应用后再切换`;
-      followupModels.value = [];
-      return;
-    }
     followupModels.value = (res?.models || []).filter((m: any) => m.pattern);
     if (!selectedModel.value && followupModels.value.some((m: any) => m.configured)) {
       const first = followupModels.value.find((m: any) => m.configured);
       if (first) selectedModel.value = first.pattern;
     }
   } catch { followupModels.value = []; }
-}
-
-async function onRuntimeChange() {
-  const target = runtime.value;
-  runtimeError.value = '';
-  try {
-    const s = await API.agent.runtimeSet(target);
-    const actual = s?.runtime === 'opencode' ? 'opencode' : s?.runtime === 'pi' ? 'pi' : null;
-    if (!actual) throw new Error('主进程未返回引擎状态');
-    appliedRuntime.value = actual;
-    if (actual !== target) {
-      runtime.value = actual;
-      runtimeError.value = `引擎切换未生效（当前为 ${actual}），请重启应用后再试`;
-      await loadFollowupModels();
-      return;
-    }
-  } catch {
-    runtime.value = appliedRuntime.value;
-    runtimeError.value = '引擎切换失败，请重启应用后再试';
-    await loadFollowupModels();
-    return;
-  }
-  selectedModel.value = '';
-  followupModels.value = [];
-  await loadFollowupModels();
 }
 
 async function sendFollowup() {
@@ -473,7 +422,7 @@ async function sendFollowup() {
   task.value.followupDone = false;
   task.value.followupReply = '> ' + q + '\n\n';
   try {
-    const ok = await API.task.followup(task.value.id, q, runtime.value, selectedModel.value || undefined);
+    const ok = await API.task.followup(task.value.id, q, selectedModel.value || undefined);
     if (!ok) {
       task.value.followupRunning = false;
       task.value.followupReply += '\n❌ 追问失败：任务不存在或正在执行中';
@@ -525,7 +474,6 @@ async function onGateReady() {
 }
 
 onMounted(async () => {
-  await loadRuntime();
   await Promise.all([loadTask(), loadProjects(), loadExecutions(), loadFollowupModels()]);
   notesLoaded.value = true;
   await loadMessages();
@@ -764,16 +712,6 @@ onBeforeUnmount(() => {
   outline: none;
   cursor: pointer;
   transition: all 0.2s;
-}
-
-.followup-engine-hint {
-  font-size: 11px;
-  color: var(--text-muted, #94a3b8);
-}
-
-.followup-engine-error {
-  font-size: 11px;
-  color: #ef4444;
 }
 
 .followup-input-row {

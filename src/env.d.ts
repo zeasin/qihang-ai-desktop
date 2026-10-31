@@ -90,18 +90,14 @@ interface ElectronAPI {
   };
   agent: {
     status: () => Promise<{ pi: any; langchain?: any }>;
-    runtimeGet: () => Promise<{ runtime: string; oc?: any }>;
-    runtimeSet: (runtime: string) => Promise<{ runtime: string; oc?: any }>;
     versions: () => Promise<{
       pi: { sdk: string | null; installed: string | null };
-      opencode: { sdk: string | null; installed: string | null; available: boolean; bin: string };
     }>;
   };
   pi: {
     models: () => Promise<{
       models: { provider: string; providerLabel: string; id: string; name: string; pattern: string; configured: boolean }[];
       error?: string;
-      runtime?: string;
     }>;
     configGet: () => Promise<{ providers: { name: string; displayName: string; baseUrl: string; apiKey: string; models: { id: string; name?: string }[] }[] }>;
     configSet: (providers: { name: string; displayName?: string; baseUrl: string; apiKey: string; modelNames: string[] }[]) => Promise<{ ok: boolean; error?: string }>;
@@ -148,7 +144,7 @@ interface ElectronAPI {
     update: (id: number, data: any) => Promise<void>;
     remove: (id: number) => Promise<void>;
     execute: (id: number) => Promise<boolean>;
-    followup: (taskId: number, question: string, runtime?: string, model?: string) => Promise<boolean>;
+    followup: (taskId: number, question: string, model?: string) => Promise<boolean>;
     executions: (taskId: number) => Promise<any[]>;
     executionList: (page: number, pageSize: number) => Promise<{ total: number; rows: any[] }>;
     executionGet: (id: number) => Promise<any>;

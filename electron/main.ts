@@ -36,11 +36,7 @@ import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
-import { runOc, disposeOc, abortOcSession } from './services/opencode-agent';
-import { currentRuntime, setAgentRuntime, listAgentModels, agentStatus } from './services/agent-runtime';
 import { agentVersions } from './services/agent-versions';
-import { restartOcServer } from './services/opencode-process';
-import { writeOpencodeConfig } from './services/opencode-config';
 import { buildNoteToolDefs, buildDataToolDefs, appendTodoNote } from './services/tools';
 import { recordFeishuTask, followUpTask } from './services/task-runner';
 import * as pending from './services/pending';
@@ -224,8 +220,6 @@ function stopAllServices() {
   feishu.stop();
   scheduler.stop();
   indexer.stop();
-  // 停掉托管的 opencode serve，避免退出后留下孤儿进程
-  disposeOc();
 }
 
 function getServicesStatus() {
@@ -1082,7 +1076,7 @@ async function runChatTurn(
       return;
     }
 
-    // ===== AI 引擎：按运行时开关分流（opencode 为可选引擎，pi 为默认/回退） =====
+    // ===== AI 引擎 =====
     emit('chat:status', { sessionId: sid, text: 'AI 正在分析问题...' });
     let reply = '';
     let thinking = '';
@@ -1101,35 +1095,7 @@ async function runChatTurn(
       emit('chat:delta', { sessionId: sid, text: reply });
     };
 
-    // 引擎选择：移动端明确指定的 pi/opencode 优先于桌面全局开关；claude-code/codex 本机未接入，回退全局
-    const turnEngine = agent === 'opencode' || agent === 'pi' ? agent : currentRuntime();
-    if (turnEngine === 'opencode') {
-      // opencode 引擎：工具经 MCP 注入（尚未接入），customTools 忽略
-      await runOc({
-        prompt: question,
-        sessionId: sid,
-        cwd: projectDir || undefined,
-        modelPattern: piModelPattern(modelName),
-        images,
-        onDelta: (delta) => {
-          reply += delta;
-          emit('chat:delta', { sessionId: sid, text: delta });
-        },
-        onThinking: (t) => {
-          thinking += t;
-          emit('chat:thinking', { sessionId: sid, text: t });
-        },
-        onTool: (toolEvent) => emit('chat:tool', { sessionId: sid, ...toolEvent }),
-        onDone: () => {
-          settleReply();
-          emit('chat:done', { sessionId: sid, durationMs: Date.now() - turnStart });
-        },
-        onError: (err) => emit('chat:error', { sessionId: sid, text: err }),
-      });
-      return;
-    }
-
-    // pi agent 引擎（与工作台一致）
+    // pi agent 引擎
     // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），项目笔记读写（按会话所选项目，去重）
     const toolDefs: any[] = [];
     const noteIds = new Set<number>();
@@ -1310,15 +1276,12 @@ function registerRelayRpc(): void {
   });
 
   relayClient.registerHandler('chat.list-models', async () => {
-    const res = await listAgentModels();
+    const res = await listPiModels();
     return res.models || [];
   });
 
   relayClient.registerHandler('chat.stop', async (p: any) => {
     const sid = String(p?.sessionId || '');
-    // 移动端选的 agent 决定这轮跑在哪个引擎，别按桌面全局开关猜；
-    // 两边都喊一遍，引擎不own这个会话时本来就是空操作
-    await abortOcSession(sid);
     await abortSession(sid);
     return { ok: true };
   });
@@ -1397,15 +1360,10 @@ function piModelPattern(modelName) {
   return undefined;
 }
 
-// --- AI 引擎模型列表（按运行时分流：pi / opencode） ---
-ipcMain.handle('pi:models', async () => listAgentModels());
+// --- AI 引擎模型列表 ---
+ipcMain.handle('pi:models', async () => listPiModels());
 
-// --- AI 运行时切换（对话页选择 pi / opencode） ---
-ipcMain.handle('agent:runtime:get', () => agentStatus());
-ipcMain.handle('agent:runtime:set', async (_, { runtime }) => {
-  await setAgentRuntime(String(runtime || 'pi'));
-  return agentStatus();
-});
+// --- AI 引擎版本检测 ---
 ipcMain.handle('agent:versions', () => agentVersions());
 
 // 对话模型配置（应用内配置，读写 ~/.pi/agent/models.json，支持多条 provider）
@@ -1417,15 +1375,6 @@ ipcMain.handle('pi:config:set', async (_, { providers }) => {
     return { ok: false, error: '参数错误' };
   }
   await saveBuiltinModelConfigs(providers);
-  // opencode 运行时：模型配置同步进 opencode.json 并重启 serve 生效
-  if (currentRuntime() === 'opencode') {
-    try {
-      writeOpencodeConfig();
-      await restartOcServer();
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? String(e) };
-    }
-  }
   return { ok: true };
 });
 ipcMain.handle('pi:config:test', async (_, { baseUrl, apiKey, modelName }) => {
@@ -1568,7 +1517,7 @@ ipcMain.handle('task:remove', (_, id) => {
   return true;
 });
 ipcMain.handle('task:execute', (_, id) => scheduler.executeTaskNow(id));
-ipcMain.handle('task:followup', (_, { taskId, question, runtime, model }) => followUpTask(taskId, question, db, { runtime, model }));
+ipcMain.handle('task:followup', (_, { taskId, question, model }) => followUpTask(taskId, question, db, { model }));
 ipcMain.handle('task:executions', (_, taskId) => db.taskExecution.listByTask(taskId));
 ipcMain.handle('task:execution:list', (_, page, pageSize) => db.taskExecution.list(page, pageSize));
 ipcMain.handle('task:execution:get', (_, id) => db.taskExecution.get(id));

@@ -197,10 +197,6 @@
                   <option v-for="p in workProjects" :key="p.id" :value="p.id">📁 {{ p.name }}</option>
                   <option :value="NEW_PROJECT">＋ 新建项目…</option>
                 </select>
-                <select class="model-selector runtime-selector" v-model="runtime" :disabled="isStreaming" title="AI 引擎（对比测试）" @change="onRuntimeChange">
-                  <option value="pi">pi 引擎</option>
-                  <option value="opencode">opencode</option>
-                </select>
                 <select class="model-selector" v-model="selectedModel" :disabled="isStreaming || modelsLoading" title="选择模型">
                   <option value="">默认模型</option>
                   <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
@@ -225,7 +221,6 @@
               </div>
             </div>
           </div>
-          <div v-if="runtimeError" class="runtime-error">⚠️ {{ runtimeError }}</div>
         </div>
       </template>
     </div>
@@ -361,48 +356,7 @@ async function copyMsg(idx: number, content: string) {
 }
 
 const CHAT_STATE_KEY = 'chat_home_state';
-
-// AI 引擎运行时（pi 默认 / opencode 对比测试）
-const runtime = ref<'pi' | 'opencode'>('pi');
-const appliedRuntime = ref<'pi' | 'opencode'>('pi');
-const runtimeError = ref('');
-function chatModelKey(): string {
-  return `chat_home_model_${runtime.value}`;
-}
-
-async function loadRuntime() {
-  try {
-    const s = await API.agent.runtimeGet();
-    const r = s?.runtime === 'opencode' ? 'opencode' : 'pi';
-    runtime.value = r;
-    appliedRuntime.value = r;
-  } catch { /* 保持默认 pi */ }
-}
-
-async function onRuntimeChange() {
-  const target = runtime.value;
-  runtimeError.value = '';
-  try {
-    const s = await API.agent.runtimeSet(target);
-    const actual = s?.runtime === 'opencode' ? 'opencode' : s?.runtime === 'pi' ? 'pi' : null;
-    if (!actual) throw new Error('主进程未返回引擎状态');
-    appliedRuntime.value = actual;
-    if (actual !== target) {
-      runtime.value = actual;
-      runtimeError.value = `引擎切换未生效（当前为 ${actual}），请重启应用后再试`;
-      await loadPiModels();
-      return;
-    }
-  } catch {
-    runtime.value = appliedRuntime.value;
-    runtimeError.value = '引擎切换失败，请重启应用后再试';
-    await loadPiModels();
-    return;
-  }
-  selectedModel.value = '';
-  piModels.value = [];
-  await loadPiModels();
-}
+const CHAT_MODEL_KEY = 'chat_home_model_pi';
 
 // ========== 加载数据 ==========
 // ===== 项目：会话通过 project_id 归属，项目目录即 AI 的工作目录 =====
@@ -479,19 +433,11 @@ async function loadKbLibraries() {
 }
 
 async function loadPiModels() {
-  const want = runtime.value;
   modelsLoading.value = true;
   try {
     const res = await API.pi.models();
-    if (want !== runtime.value) return;
-    if (res?.runtime && res.runtime !== want) {
-      runtimeError.value = `主进程仍在使用 ${res.runtime} 引擎，请重启应用后再切换`;
-      piModels.value = [];
-      return;
-    }
     piModels.value = (res?.models || []).filter((m) => m.pattern);
-    const key = chatModelKey();
-    const saved = localStorage.getItem(key);
+    const saved = localStorage.getItem(CHAT_MODEL_KEY);
     if (saved && piModels.value.some((m) => m.pattern === saved)) {
       selectedModel.value = saved;
     } else if (!selectedModel.value && piModels.value.some((m) => m.configured)) {
@@ -500,12 +446,11 @@ async function loadPiModels() {
       if (first) selectedModel.value = first.pattern;
     }
   } catch { piModels.value = []; }
-  finally { if (want === runtime.value) modelsLoading.value = false; }
+  finally { modelsLoading.value = false; }
   modelsLoaded.value = true;
 }
 
 async function onGateReady() {
-  await loadRuntime();
   await Promise.all([loadKbLibraries(), loadWorkProjects(), loadSessions(), loadPiModels()]);
 }
 
@@ -753,8 +698,8 @@ async function doSend(text: string) {
 
   try {
     await API.chat.send(text, sid, projectDir, kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
-    if (selectedModel.value) localStorage.setItem(chatModelKey(), selectedModel.value);
-    else localStorage.removeItem(chatModelKey());
+    if (selectedModel.value) localStorage.setItem(CHAT_MODEL_KEY, selectedModel.value);
+    else localStorage.removeItem(CHAT_MODEL_KEY);
   } catch (err: any) {
     stream.running = false;
     stream.thinking = '';
@@ -897,8 +842,6 @@ const autoResizeTextarea = () => {
 
 // ========== 生命周期 ==========
 onMounted(async () => {
-  // 先同步引擎运行时（后端每次启动按环境检测默认引擎），再加载模型列表（模型记忆按引擎分开）
-  await loadRuntime();
   await Promise.all([loadKbLibraries(), loadWorkProjects(), loadSessions(), loadPiModels()]);
   
   // 尝试恢复上次的会话状态
@@ -1741,12 +1684,6 @@ onBeforeUnmount(() => {
   transition: all 0.2s;
 }
 
-.runtime-selector {
-  max-width: 105px;
-  color: #6366f1;
-  font-weight: 500;
-}
-
 .model-selector:hover {
   border-color: var(--primary);
   background: white;
@@ -1755,12 +1692,6 @@ onBeforeUnmount(() => {
 .input-hint {
   font-size: 12px;
   color: var(--text-muted);
-}
-
-.runtime-error {
-  font-size: 12px;
-  color: #ef4444;
-  padding: 4px 12px 0;
 }
 
 .send-btn {

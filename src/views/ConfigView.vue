@@ -121,7 +121,7 @@
       <!-- AI 引擎版本 -->
       <div class="card">
         <h2>🧩 AI 引擎版本</h2>
-        <div class="text-muted mb-2">pi 引擎运行在应用主进程内（使用应用内置 SDK，无需本机 CLI）；opencode 引擎需要本机安装 opencode CLI。下列版本用于排查「引擎选了但模型/对话异常」这类版本不匹配问题。</div>
+        <div class="text-muted mb-2">pi 引擎运行在应用主进程内（使用应用内置 SDK，无需本机 CLI）。下列版本用于排查「模型/对话异常」这类版本不匹配问题。</div>
         <div class="engine-version-table">
           <div class="engine-version-row engine-version-head">
             <span>引擎</span>
@@ -135,19 +135,10 @@
             <span>{{ agentVersions?.pi?.installed || (versionsLoading ? '检测中…' : '未安装（不影响使用）') }}</span>
             <span><span class="badge badge-success">应用内置运行</span></span>
           </div>
-          <div class="engine-version-row">
-            <span class="engine-version-name">opencode</span>
-            <span>{{ agentVersions?.opencode?.sdk || (versionsLoading ? '检测中…' : '—') }}</span>
-            <span :title="agentVersions?.opencode?.bin || ''">{{ agentVersions?.opencode?.installed || (versionsLoading ? '检测中…' : '未安装') }}</span>
-            <span v-if="agentVersions?.opencode?.available" class="badge badge-success">可用</span>
-            <span v-else class="badge badge-gray">未安装 CLI</span>
-          </div>
         </div>
         <div class="flex" style="gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-secondary" @click="loadAgentVersions" :disabled="versionsLoading">{{ versionsLoading ? '检测中…' : '重新检测' }}</button>
           <span v-if="versionsError" class="text-muted" style="font-size:12px;color:#ef4444;">{{ versionsError }}</span>
-          <span v-else-if="agentVersions && !agentVersions.opencode.sdk" class="text-muted" style="font-size:12px;color:#ef4444;">未读到内置 opencode SDK，请检查依赖安装</span>
-          <span v-else-if="opencodeVersionMismatch" class="text-muted" style="font-size:12px;color:#f59e0b;">本机 opencode 与应用内置 SDK 的主次版本不一致，如对话异常请升级 opencode</span>
         </div>
       </div>
 
@@ -531,7 +522,6 @@ const notesDirStatus = ref('');
 // AI 引擎版本（应用内置 SDK vs 本机安装 CLI）
 const agentVersions = ref<{
   pi: { sdk: string | null; installed: string | null };
-  opencode: { sdk: string | null; installed: string | null; available: boolean; bin: string };
 } | null>(null);
 const versionsLoading = ref(false);
 const versionsError = ref('');
@@ -546,14 +536,6 @@ async function loadAgentVersions() {
   }
   finally { versionsLoading.value = false; }
 }
-
-const opencodeVersionMismatch = computed(() => {
-  const sdk = agentVersions.value?.opencode?.sdk;
-  const installed = agentVersions.value?.opencode?.installed;
-  if (!sdk || !installed) return false;
-  const mm = (v: string) => v.replace(/^v/i, '').split('.').slice(0, 2).join('.');
-  return mm(sdk) !== mm(installed);
-});
 
 // Provider modal state
 const providerModalOpen = ref(false);
