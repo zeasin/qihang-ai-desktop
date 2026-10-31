@@ -12,7 +12,7 @@
     "electron:build": "vite build && npm run compile:electron && npx electron-builder"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.2",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@opencode-ai/sdk": "1.19.3",
     "better-sqlite3": "^12.11.1",
