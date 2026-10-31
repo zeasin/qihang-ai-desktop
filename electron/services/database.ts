@@ -226,6 +226,8 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
   // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
   try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
+  // 飞书来源会话的锚点（chat_id）：供「继续」按群/私聊定位最近对话，也为回推飞书留映射
+  try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN origin_chat_id TEXT DEFAULT ''"); } catch (e) {}
   // 索引路线已整体下线：向量索引表（kb_documents / kb_chunks）连同 rag.ts、indexer.ts 一并删除。
   // 项目库的检索与读写改由 pi agent 用原生 read/bash/write 直接做；概览看板改为实时扫盘统计。
   try { getDb().exec('DROP TABLE IF EXISTS kb_chunks'); } catch (e) {}
@@ -439,14 +441,14 @@ const chat = {
       return q(`SELECT s.*, (SELECT COUNT(*) FROM prj_messages WHERE session_id = s.session_id) as msg_count, (SELECT content FROM prj_messages WHERE session_id = s.session_id ORDER BY id DESC LIMIT 1) as last_message FROM prj_sessions s WHERE s.source = ? ORDER BY updated_at DESC`, source);
     } catch { return []; }
   },
-  createSession: (id, projectId, title, mode, agent, source) => {
+  createSession: (id, projectId, title, mode, agent, source, originChatId?) => {
     // project_id 可能传入 'notesdir' 等字符串哨兵值（飞书场景），INT 列只存合法数字
     const n = (projectId === null || projectId === undefined) ? NaN : Number(projectId);
     const pid = Number.isFinite(n) ? Math.trunc(n) : null;
     const existing = qOne('SELECT * FROM prj_sessions WHERE session_id = ?', id);
     if (existing) return existing;
-    run("INSERT INTO prj_sessions (session_id, source, title, mode, project_id, active_agent) VALUES (?, ?, ?, ?, ?, ?)",
-      id, source || 'ui', title || '新对话', mode || 'general', pid, agent || 'pi');
+    run("INSERT INTO prj_sessions (session_id, source, title, mode, project_id, active_agent, origin_chat_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      id, source || 'ui', title || '新对话', mode || 'general', pid, agent || 'pi', originChatId || '');
     return qOne('SELECT * FROM prj_sessions WHERE session_id = ?', id);
   },
   getSession: (id) => qOne('SELECT * FROM prj_sessions WHERE session_id = ?', id),
@@ -467,6 +469,22 @@ const chat = {
   },
   updateSessionModel: (id, modelId) => {
     run("UPDATE prj_sessions SET model_id = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", modelId || '', id);
+  },
+  /** 某来源的最近一条会话；带 originChatId 时本会话（群/私聊）优先、无锚点的旧会话全局兜底 */
+  latestBySource: (source, originChatId?) => {
+    try {
+      const chatId = String(originChatId || '');
+      if (chatId) {
+        return qOne(
+          `SELECT * FROM prj_sessions
+           WHERE source = ? AND (IFNULL(origin_chat_id, '') = '' OR origin_chat_id = ?)
+           ORDER BY (CASE WHEN IFNULL(origin_chat_id, '') = ? THEN 0 ELSE 1 END), updated_at DESC
+           LIMIT 1`,
+          source, chatId, chatId
+        );
+      }
+      return qOne('SELECT * FROM prj_sessions WHERE source = ? ORDER BY updated_at DESC LIMIT 1', source);
+    } catch { return null; }
   },
   messages: (sessionId) => {
     const rows = q("SELECT * FROM prj_messages WHERE session_id = ? ORDER BY id", sessionId);

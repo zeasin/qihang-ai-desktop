@@ -9,7 +9,7 @@
         <span v-if="task" :class="['status-badge', 'status-' + task.status]">{{ statusText(task.status) }}</span>
         <span v-if="task && task.last_status === 'FAILED'" class="status-badge status-FAILED">执行失败</span>
         <button v-if="task && task.trigger_type !== 'now'" class="btn btn-primary btn-sm" :disabled="task.status === 'in_progress' || task.followupRunning" @click="runTask">▶ 立即执行</button>
-        <button v-if="task && task.trigger_type !== 'now'" class="btn btn-secondary btn-sm" :disabled="isFeishuTask || hasBeenExecuted" @click="editTask">编辑</button>
+        <button v-if="task && task.trigger_type !== 'now'" class="btn btn-secondary btn-sm" :disabled="hasBeenExecuted" @click="editTask">编辑</button>
         <button class="btn btn-danger btn-sm" @click="openDeleteModal">删除</button>
       </div>
     </div>
@@ -266,7 +266,7 @@ const projectName = computed(() => {
   return p ? p.name : '';
 });
 
-const isFeishuTask = computed(() => task.value?.source === 'feishu');
+// 飞书一次性消息已会话化（2026-10-31），任务页不会再出现 source='feishu' 的记录
 const hasBeenExecuted = computed(() => !!task.value?.last_run_at);
 
 const renderMarkdown = (content: string) => {

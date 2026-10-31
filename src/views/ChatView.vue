@@ -39,7 +39,9 @@
             >
               <span class="conv-icon">{{ runningSessionIds.has(session.session_id || String(session.id)) ? '⏳' : '🗨️' }}</span>
               <div class="conv-info">
-                <div class="conv-title">{{ session.title || '新对话' }}</div>
+                <div class="conv-title">
+                  <span v-if="session.source === 'feishu'" class="conv-badge" title="来自飞书">飞书</span>{{ session.title || '新对话' }}
+                </div>
                 <div class="conv-preview">{{ session.last_message || '' }}</div>
               </div>
               <span class="conv-delete" @click.stop="deleteSession(session.session_id || session.id)" title="删除">×</span>
@@ -110,6 +112,11 @@
         <div class="chat-header">
           <div class="chat-header-left">
             <h3 class="chat-title">{{ currentSession?.title || '对话' }}</h3>
+            <span
+              v-if="currentSession?.source === 'feishu'"
+              class="chat-source-badge"
+              title="来自飞书 · 在软件内回复不会推送到飞书"
+            >飞书</span>
             <span v-if="currentProject" class="chat-project-badge" :title="currentProject.dir || ''">📁 {{ currentProject.name }}</span>
           </div>
           <div class="chat-header-right">
@@ -456,8 +463,14 @@ async function onGateReady() {
 
 async function loadSessions() {
   try {
-    const all = await API.chat.getSessionsBySource('ui');
-    sessions.value = (all || []).filter((s: any) => s.mode === 'general' || !s.project_id);
+    // 统一收件箱：UI 发起 + 飞书发起的会话合并展示（飞书会话带「飞书」徽标）。
+    // ui 来源的 kb 模式会话（后台任务会话）仍按原规则排除。
+    const [ui, feishu] = await Promise.all([
+      API.chat.getSessionsBySource('ui'),
+      API.chat.getSessionsBySource('feishu'),
+    ]);
+    const all = [...(ui || []), ...(feishu || [])];
+    sessions.value = all.filter((s: any) => s.source === 'feishu' || s.mode === 'general' || !s.project_id);
   } catch { sessions.value = []; }
 }
 
@@ -1072,6 +1085,28 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 飞书来源会话的来源徽标（列表条目 + 聊天区头部共用飞书品牌蓝） */
+.conv-badge,
+.chat-source-badge {
+  display: inline-block;
+  vertical-align: 1px;
+  padding: 0 5px;
+  margin-right: 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+  background: rgba(51, 112, 255, 0.12);
+  color: #3370ff;
+}
+
+.chat-source-badge {
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 17px;
 }
 
 .conv-preview {

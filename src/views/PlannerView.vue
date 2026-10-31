@@ -66,7 +66,7 @@
               <button
                 v-if="selectedTask.trigger_type !== 'now'"
                 class="btn btn-secondary btn-sm"
-                :disabled="selectedTask.source === 'feishu' || !!selectedTask.last_run_at"
+                :disabled="!!selectedTask.last_run_at"
                 @click="editTask(selectedTask)"
               >编辑</button>
               <router-link :to="'/task/' + selectedTask.id" class="btn btn-secondary btn-sm">全屏</router-link>
@@ -320,6 +320,9 @@ const visibleNoteTasks = computed(() => {
   const noteIds = new Set(projectOptions.value.map(p => p.id));
   return tasks.value
     .filter(t => noteIds.has(Number(t.project_id)))
+    // 飞书一次性消息不是任务（2026-10-31 会话化，启动时已迁移为纯会话），
+    // 这里兜底过滤，防旧库迁移失败或外部写入把问答混进任务列表
+    .filter(t => !(t.source === 'feishu' && t.trigger_type === 'now'))
     .filter(t => noteTaskFilter.value === null || Number(t.project_id) === Number(noteTaskFilter.value))
     .sort((a, b) => {
       const ta = a.created_at || '';

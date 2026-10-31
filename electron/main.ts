@@ -38,7 +38,7 @@ import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
 import { agentVersions } from './services/agent-versions';
 import { buildDataToolDefs, appendTodoNote } from './services/tools';
-import { recordFeishuTask, followUpTask } from './services/task-runner';
+import { followUpTask, followUpFeishuSession, buildKbPrompt } from './services/task-runner';
 import * as aitool from './services/ai-tools';
 import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './services/builtin-datasets';
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
@@ -289,6 +289,10 @@ function detectWorkOrderEnd(text: string): string {
 // 供回调时构造伪消息走既有派活流程（/项目 N）。
 const feishuChatTypes = new Map<string, string>();
 
+// 飞书侧正在执行的会话（内存防重入）：飞书消息会话化后（2026-10-31）没有任务行可挂
+// status，改用进程内集合——「继续」命中执行中的会话时直接婉拒。
+const feishuRunningSessions = new Set<string>();
+
 // 卡片按钮点击 → 复用既有派活流程：把点击转成一条「/项目 N」的伪消息，
 // 由 feishuMessageHandler 统一处理（挂起正文取回、绑定会话、执行任务都在那一处）。
 // ⚠️ 飞书要求卡片回调 3 秒内响应，超时客户端弹「目标回调服务超时未响应」：
@@ -358,16 +362,11 @@ const feishuMessageHandler = async (msg) => {
     mainWindow.webContents.send('feishu:message', msg);
   }
 
-  const fTs = () => { const d = new Date(Date.now() + 8 * 3600 * 1000); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`; };
-  const fNotifyUI = () => { try { for (const w of BrowserWindow.getAllWindows()) w.webContents.send('task:changed'); } catch {} };
-
-  let feishuTaskId: any = null;
-  let feishuExecId: any = null;
-
   // ===== 工作流指令：继续追问 =====
   const cmd = String(msg.text || '').trim();
 
-  // 「继续 <内容>」：对最近的飞书任务追问
+  // 「继续 <内容>」：对最近的飞书对话追问（会话化后不再查任务表，
+  // 按 source='feishu' 的最近会话定位；本飞书会话（群/私聊）优先、旧会话全局兜底）
   const cont = cmd.match(/^继续\s*[:：]?\s*([\s\S]*)$/);
   if (cont) {
     const question = (cont[1] || '').trim();
@@ -375,21 +374,41 @@ const feishuMessageHandler = async (msg) => {
       feishu.replyCard(msg, '请在「继续」后写上你的要求，例如：继续 把刚才的报告补充一段风险说明', '💡 用法');
       return;
     }
-    const lastTask: any = db.qOne("SELECT * FROM plan_tasks WHERE source = 'feishu' AND IFNULL(task_type, '') != 'coding' ORDER BY id DESC LIMIT 1");
-    if (!lastTask) {
-      feishu.replyCard(msg, '还没有可继续的飞书任务，请先派一个任务。', '⚠️ 无任务');
+    const lastSession: any = db.chat.latestBySource('feishu', msg.chatId);
+    if (!lastSession) {
+      feishu.replyCard(msg, '还没有可继续的飞书对话，请先发一条消息。', '⚠️ 无对话');
+      return;
+    }
+    const sid = String(lastSession.session_id || '');
+    if (feishuRunningSessions.has(sid)) {
+      feishu.replyCard(msg, '该对话正在执行中，请稍候再试。', '⚠️ 执行中');
       return;
     }
     try {
-    const ok = await followUpTask(lastTask.id, question, db, {
-      onDone: (text, meta) => {
-        // 中止时发出的部分输出必须明确标注，不能看起来像最终回答
-        const prefix = meta?.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
-        feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), meta?.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI');
-      },
-        onError: (err) => feishu.replyCard(msg, `处理出错: ${err}`, '❌ 错误'),
+      // 先入集合再发起：后台 IIFE 在微任务里启动，onDone/onError 都会移除；
+      // 若会话不存在（返回 false）则立刻移除，保证集合状态与真实执行一致
+      feishuRunningSessions.add(sid);
+      const ok = await followUpFeishuSession(sid, question, db, {
+        onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: sid, text: delta }),
+        onDone: (text, meta) => {
+          feishuRunningSessions.delete(sid);
+          emitChatEvent('chat:done', { sessionId: sid });
+          // 中止时发出的部分输出必须明确标注，不能看起来像最终回答
+          const prefix = meta?.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
+          feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), meta?.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI');
+        },
+        onError: (err) => {
+          feishuRunningSessions.delete(sid);
+          emitChatEvent('chat:error', { sessionId: sid, text: String(err) });
+          feishu.replyCard(msg, `处理出错: ${err}`, '❌ 错误');
+        },
       });
-      feishu.replyCard(msg, ok ? '已接单，执行中…' : '该任务正在执行中，请稍后再试。', ok ? '🤖 启航AI' : '⚠️ 任务执行中');
+      if (ok) {
+        feishu.replyCard(msg, '已接单，执行中…', '🤖 启航AI');
+      } else {
+        feishuRunningSessions.delete(sid);
+        feishu.replyCard(msg, '找不到可继续的对话，请重新发一条消息。', '⚠️ 无对话');
+      }
     } catch (e) {
       logger.error('[Feishu] Continue command error: %s', e.message);
       feishu.replyCard(msg, `处理出错: ${e.message}`, '❌ 错误');
@@ -432,18 +451,11 @@ const feishuMessageHandler = async (msg) => {
         const noteProj = woTarget.project
           || db.project.list().find(p => p.dir === (appConfig.getConfig('notesDir') || ''))
           || db.project.list()[0] || null;
-        const r2 = recordFeishuTask(db, noteProj, msg.text, '', 'note');
-        feishuTaskId = r2.taskId;
-        feishuExecId = r2.execId;
-        const sessionId = 'task_' + (r2.taskId ?? '');
-        if (r2.taskId != null) db.task.update(r2.taskId, { session_id: sessionId });
-        try { db.chat.createSession(sessionId, noteProj ? noteProj.id : null, msg.text.slice(0, 30), 'feishu', 'pi', 'feishu'); } catch {}
+        // 会话化（2026-10-31）：工单记录也是纯会话，不落 plan_tasks
+        const sessionId = 'feishu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        try { db.chat.createSession(sessionId, noteProj ? noteProj.id : null, msg.text.slice(0, 30), 'kb', 'pi', 'feishu', msg.chatId || ''); } catch {}
         db.chat.addMessage(sessionId, 'user', msg.text, 'general');
         db.chat.addMessage(sessionId, 'assistant', summary, 'general');
-        const end = fTs();
-        if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'SUCCESS', end_time: end, result_text: summary });
-        if (feishuTaskId != null) db.task.update(feishuTaskId, { last_result: summary, last_status: 'SUCCESS', last_run_at: end, status: 'done' });
-        fNotifyUI();
         feishu.replyCard(msg, convertMarkdownForFeishu(summary), '📋 工单已记录');
         return;
       }
@@ -452,6 +464,9 @@ const feishuMessageHandler = async (msg) => {
     logger.error('[Feishu] Work order record error: %s', e.message);
     feishu.replyCard(msg, `❌ 工单记录失败：${e.message}`, '❌ 执行失败');
   }
+
+  // 派活流程里已创建的会话 id：catch 里据它判断是否要把失败同步给对话页
+  let activeSessionId: string | null = null;
 
   try {
     // ===== 项目路由：统一走 feishu-router；多项目且无线索时先问，绝不静默落默认项目 =====
@@ -517,41 +532,28 @@ const feishuMessageHandler = async (msg) => {
 
     feishu.replyMessage(msg, `已接单（项目：${feishuProject.name}），执行中…`);
 
-    // 先落任务记录，再按任务 id 创建独立 session
-    const r = recordFeishuTask(db, feishuProject, bodyText, '', 'note');
-    feishuTaskId = r.taskId;
-    feishuExecId = r.execId;
-
-    const sessionId = 'task_' + feishuTaskId;
-    if (feishuTaskId != null) db.task.update(feishuTaskId, { session_id: sessionId });
-    db.chat.createSession(sessionId, feishuProjectId, bodyText.slice(0, 30), 'feishu', 'pi', 'feishu');
+    // 会话化（2026-10-31）：飞书消息不再落 plan_tasks，直接落纯会话（source='feishu'），
+    // 对话页合并展示并带「飞书」徽标；任务页从此只保留后台调度任务。
+    const sessionId = 'feishu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    db.chat.createSession(sessionId, feishuProjectId, bodyText.slice(0, 30), 'kb', 'pi', 'feishu', msg.chatId || '');
     db.chat.addMessage(sessionId, 'user', bodyText, 'general');
+    feishuRunningSessions.add(sessionId);
+    activeSessionId = sessionId;
     logger.info(' SessionId: %s | project: %s (%s)', sessionId, feishuProject.name, feishuProjectId);
-
-    const setMode = (mode) => { try { db.run("UPDATE prj_sessions SET mode = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", mode,sessionId); } catch {} };
-    const updateTaskFailed = (err: string) => {
-      if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'FAILED', end_time: fTs(), error_message: err });
-      if (feishuTaskId != null) db.task.update(feishuTaskId, { last_status: 'FAILED', last_run_at: fTs(), status: 'pending' });
-    };
 
     const recordHint = /(记录|登记|新建).{0,16}(工单|需求|BUG)/.test(bodyText)
       ? '\n\n【记录要求】用户要求"记录/登记/新建 工单/需求/BUG"时，必须调用 insert_dataset_record 工具写入"项目工单"数据集（字段：项目、端、详细、优先级；一条工单一条记录），不要只写入笔记文件。'
       : '';
-    // 检索由 agent 自己跑：用 bash（rg/find/grep）搜、用 read 读，直接对着项目目录操作，
-    // 不依赖工作台自带的检索工具；同时点明 AGENTS.md 已被会话加载，其规则必须遵守。
-    const prompt = `以下是项目「${feishuProject.name}」的项目库目录，请直接检索该目录下的文件后回答：
-项目路径：${projectDir}
-
-检索方式：用 bash 在该目录下自行搜索定位文件（如 rg --glob "*.md" "关键词"），再用 read 读取完整内容；需要目录结构时用 ls 或 find。
-该项目根目录的 AGENTS.md 已随会话一并加载，其中的规则（只以 .md 为内容源、目录结构、记忆契约与启动协议等）必须遵守；若 AGENTS.md 要求先读取用户记忆或项目进度，请先调用相应工具再作答。
-需要往项目库写内容时，直接用 write / edit 工具写进项目目录。
-
-用户问题：${bodyText}` + recordHint;
-    setMode('kb');
+    // 检索由 agent 自己跑：用 bash（rg/find/grep）搜、用 read 读，直接对着项目目录操作。
+    // 提示词骨架与「继续」/后台任务追问共用一份口径（task-runner.buildKbPrompt）。
+    const prompt = buildKbPrompt(feishuProject.name, projectDir, bodyText) + recordHint;
     const toolDefs: any[] = [];
     // 数据集工具按目标项目目录绑定、cwd 也用目标项目目录，两者必须与落库的 project_id 同源，
     // 否则会出现「会话记在项目 B、AI 却读写项目 A 目录」的跨项目错位。
     toolDefs.push(...(await buildDataToolDefs(projectDir)));
+    // 同步广播 chat:* 事件：对话页按 sessionId 消费这组事件，
+    // 飞书轮次在软件内实时流式可见（列表 ⏳、气泡滚动），无需任何 UI 专项代码。
+    emitChatEvent('chat:status', { sessionId, text: `已接单（项目：${feishuProject.name}）` });
     await runPi({
       prompt,
       sessionId,
@@ -559,9 +561,12 @@ const feishuMessageHandler = async (msg) => {
       customTools: toolDefs,
       // 不设超时（2026-10-31 用户决策）：300 秒硬超时会掐断活跃的长任务——
       // 曾把「查 4 个数据集 + 读笔记」任务干到一半的旁白当结果发出（[PiAgent] timeout 300000ms）。
-      // 代价：模型限流(429)无限退避时会一直挂着，飞书端等不到回应；可在任务页查看执行状态。
+      // 代价：模型限流(429)无限退避时会一直挂着，飞书端等不到回应；对话页列表会一直显示 ⏳。
+      onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId, text: delta }),
+      onTool: (toolEvent: any) => emitChatEvent('chat:tool', { sessionId, ...toolEvent }),
       onDone: (text, meta) => {
         logger.info('[Feishu] Sending card reply: "%s"', (text || '').slice(0, 200));
+        feishuRunningSessions.delete(sessionId);
         if (text) {
           db.chat.addMessage(sessionId, 'assistant', text || '', 'general');
           // 中断时发出的部分输出必须明确标注，不能看起来像最终回答
@@ -573,24 +578,23 @@ const feishuMessageHandler = async (msg) => {
             buttons: buildProjectButtons(allProjects, { rerun: true, excludeId: feishuProjectId }),
           });
         }
-        const end = fTs();
-        if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'SUCCESS', end_time: end, result_text: text || '' });
-        if (feishuTaskId != null) db.task.update(feishuTaskId, { last_result: (text || '').slice(0, 3000), last_status: 'SUCCESS', last_run_at: end, status: 'done' });
-        fNotifyUI();
+        emitChatEvent('chat:done', { sessionId });
       },
       onError: (e) => {
         logger.error('[Feishu] Chat error: %s', e);
+        feishuRunningSessions.delete(sessionId);
         feishu.replyCard(msg, `处理出错: ${e}`, '❌ 错误');
-        updateTaskFailed(String(e));
-        fNotifyUI();
+        emitChatEvent('chat:error', { sessionId, text: String(e) });
       },
     });
   } catch (e) {
     logger.error('[Feishu] Handler exception: %s', e.message);
     feishu.replyCard(msg, `处理出错: ${e.message}`, '❌ 错误');
-    if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'FAILED', end_time: fTs(), error_message: e.message });
-    if (feishuTaskId != null) db.task.update(feishuTaskId, { last_status: 'FAILED', last_run_at: fTs(), status: 'pending' });
-    fNotifyUI();
+    // 会话创建之后才可能走到执行异常：把失败同步给对话页，别让气泡一直转
+    if (activeSessionId) {
+      feishuRunningSessions.delete(activeSessionId);
+      emitChatEvent('chat:error', { sessionId: activeSessionId, text: String(e?.message || e) });
+    }
   }
 };
 
@@ -947,6 +951,8 @@ async function runChatTurn(
   const activeAgent = agent || 'general';
   try {
     db.chat.createSession(sid, null, null, 'general', activeAgent, 'ui');
+    // 已存在会话幂等返回，这里补读一次拿到真实 mode / project（飞书会话为 kb）
+    const sessionRow = db.chat.getSession(sid);
 
     const existing = db.chat.messages(sid);
     if (existing.length === 0) {
@@ -1008,9 +1014,17 @@ async function runChatTurn(
       toolDefs.push(...(await buildDataToolDefs(projectDir)));
     }
 
+    // 项目库会话（mode='kb'，飞书来源）在软件内续聊时，与飞书侧同一份提示词骨架：
+    // pi 会话文件每轮只带本轮 prompt，上一轮的项目路径/AGENTS.md 约束不会自动延续
+    let turnPrompt = question;
+    if (sessionRow && sessionRow.mode === 'kb' && projectDir) {
+      const proj = Number.isFinite(Number(sessionRow.project_id)) ? db.project.get(Number(sessionRow.project_id)) : null;
+      turnPrompt = buildKbPrompt((proj && proj.name) || '', projectDir, question);
+    }
+
     const modelPattern = piModelPattern(modelName);
     await runPi({
-      prompt: question,
+      prompt: turnPrompt,
       sessionId: sid,
       cwd: projectDir || undefined,
       modelPattern,
@@ -1958,6 +1972,21 @@ app.whenReady().then(async () => {
     ensureNotesLibraryMigration();
   } catch (e) {
     logger.error('ensureNotesLibraryMigration error: %s', e);
+  }
+
+  // 飞书一次性消息不再算任务（2026-10-31 会话化）：任务页只保留后台调度任务，
+  // 存量 source='feishu' 且 trigger_type='now' 的任务行转为纯会话——
+  // 只删任务/执行记录，会话与消息保留（source='feishu' 的会话会在对话页合并展示）。
+  // ⚠️ 不能走 db.task.remove()，它会连会话一起删。
+  try {
+    const feishuOneShotIds: number[] = db.q("SELECT id FROM plan_tasks WHERE source = 'feishu' AND trigger_type = 'now'").map((r: any) => Number(r.id));
+    if (feishuOneShotIds.length) {
+      for (const id of feishuOneShotIds) db.run('DELETE FROM task_executions WHERE task_id = ?', id);
+      db.run("DELETE FROM plan_tasks WHERE source = 'feishu' AND trigger_type = 'now'");
+      logger.info('[Migrate] 已将 %d 条飞书一次性任务转为纯会话（任务行已删，会话保留）', feishuOneShotIds.length);
+    }
+  } catch (e) {
+    logger.error('migrate feishu one-shot tasks error: %s', e);
   }
 
   // 注：嵌入模型配置（embeddingModel / embeddingBaseUrl / embeddingApiKey）原先只服务于向量索引，
