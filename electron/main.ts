@@ -1467,6 +1467,8 @@ ipcMain.handle('task:update', (_, id, data) => {
   return true;
 });
 ipcMain.handle('task:remove', (_, id) => {
+  const t = db.task.get(id);
+  if (t && t.task_type === 'daily_report') throw new Error('内置的「生成综合日报」任务不可删除，可在任务页暂停它');
   db.task.remove(id);
   scheduler.removeTask(id);
   return true;
@@ -1477,6 +1479,36 @@ ipcMain.handle('task:executions', (_, taskId) => db.taskExecution.listByTask(tas
 ipcMain.handle('task:execution:list', (_, page, pageSize) => db.taskExecution.list(page, pageSize));
 ipcMain.handle('task:execution:get', (_, id) => db.taskExecution.get(id));
 ipcMain.handle('reminder:test', (_, id) => scheduler.triggerReminderNow(id));
+
+// --- 内置日报任务 ---
+/**
+ * 确保存在内置的「生成综合日报」任务（task_type='daily_report'，source='system'）。
+ * 初始为 paused 且未绑定笔记库（用户绑定笔记库并开启后才参与调度）；
+ * 老用户此前在设置页保存的日报提示词（daily_report_prompt）在此一次性迁入任务 prompt。
+ */
+function ensureDailyReportTask() {
+  try {
+    const existing = db.qOne("SELECT id FROM plan_tasks WHERE task_type = 'daily_report' LIMIT 1");
+    if (existing) return;
+    const migratedPrompt = appConfig.getConfig('daily_report_prompt') || '';
+    db.task.add({
+      title: '生成综合日报',
+      prompt: migratedPrompt,
+      description: '内置任务：每天定时聚合所有笔记库与数据集生成综合日报，展示在「今天」页，可推送飞书。绑定笔记库并开启后生效。',
+      task_type: 'daily_report',
+      source: 'system',
+      status: 'paused',
+      project_id: null,
+      trigger_type: 'cycle',
+      cycle_type: 'daily',
+      cycle_time: '22:00',
+      notify_feishu: 1,
+    });
+    logger.info('[Startup] Seeded built-in daily report task (paused, unbound)');
+  } catch (e: any) {
+    logger.error('[Startup] ensureDailyReportTask failed: ' + (e.message || e));
+  }
+}
 
 // --- Archive ---
 
@@ -2047,6 +2079,7 @@ app.whenReady().then(async () => {
     startFeishu({ app_id: savedAppId, app_secret: savedAppSecret });
   }
 
+  ensureDailyReportTask();
   scheduler.start();
   backup.startAutoBackup();
   startRelay();
@@ -2056,53 +2089,31 @@ app.whenReady().then(async () => {
 
   backgroundReady = true;
 
-  // 启动时检测今日日报是否已生成，未生成则异步生成
+  // 内置日报任务错过补跑：任务已开启（pending 且已绑定笔记库）且当天已过计划时间但尚未生成时，启动即补跑一次；
+  // 未开启或未到计划时间则交给任务调度器，不再无条件启动生成
   (async () => {
-    const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);
-    if (existing) return;
-    if (!db.project.list().length) {
-      logger.warn('[Startup] Skip daily report: 尚未添加任何项目');
-      return;
-    }
-    const modelResult = await listPiModels();
-    if (!modelResult.models?.some((m) => m.configured)) {
-      logger.warn('[Startup] Skip daily report: 未配置可用模型，请在「设置 → 对话模型配置」中配置后重试');
-      return;
-    }
-    logger.info('[Startup] No daily report for today, generating via pi agent...');
     try {
-       const userPart = appConfig.getConfig('daily_report_prompt') || '请按以下格式生成日报：\n\n## 日报格式要求\n使用简化的 Markdown 格式（适配飞书），**不要使用表格**（用 `- key: value` 列表代替）：**\n\n### 1️⃣ 今日概览\n- ✅ 完成任务：数量、📋 待办：数量、💬 对话：次数、📝 笔记：更新数、🗂️ 新增：数量\n\n### 2️⃣ 今日完成\n- 列出今日完成的任务，高优先级的用 ⭐ 标记\n\n### 3️⃣ 待办事项\n- 逾期的用 🔴 标记并注明逾期天数\n- 进行中的用 🔄 标记\n- 高优先级的用 🔴 标记\n\n### 4️⃣ 对话与沟通\n- 今日对话次数和简要摘要\n\n### 5️⃣ 笔记与记录\n- 更新的文档和新增的记录\n\n### 6️⃣ 今日提醒\n- 已启用的提醒（如有）\n\n### 7️⃣ 综合评估\n- 根据完成任务、待办处理、知识沉淀等维度给出今日效率评分（0-100分）\n- 给出具体的改进行动建议\n\n## 格式注意事项\n- **不使用表格**：用 `- 维度 | 说明` 这样的列表代替\n- 数据为空的部分可以略过，不要编造数据\n- 评分要合理，基于实际数据给出\n- 建议要具体、可执行\n- 语言简洁专业，使用中文\n- 只输出日报正文，不要包含任何说明性文字（如"数据来源"、"让我先"、"思考过程"等）';
-      const r = await piGenerateDailyReport('startup_' + today, userPart);
-      db.run("INSERT INTO ai_analysis (project_id, type, content, report_date, created_at, updated_at) VALUES (NULL, 'daily_report', ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))",
-        r, today);
-      const retentionDays = parseInt(appConfig.getConfig('daily_report_retention_days') || '30', 10);
-      db.run("DELETE FROM ai_analysis WHERE type = 'daily_report' AND report_date < ?", (() => { const d = new Date(Date.now() + 8 * 3600 * 1000 - retentionDays * 86400 * 1000); return d.toISOString().slice(0, 10); })());
-      logger.info('[Startup] Daily report generated on startup');
+      const t = db.qOne("SELECT * FROM plan_tasks WHERE task_type = 'daily_report' LIMIT 1");
+      if (!t || t.status !== 'pending' || !t.project_id) return;
+      if (!db.project.list().length) return;
+      const now = new Date(Date.now() + 8 * 3600 * 1000);
+      const today = now.toISOString().slice(0, 10);
+      const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);
+      if (existing) return;
+      const parts = String(t.cycle_time || '22:00').split(':');
+      const planMin = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+      const nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+      if (nowMin < planMin) return; // 未到计划时间，等调度器触发
+      const modelResult = await listPiModels();
+      if (!modelResult.models?.some((m) => m.configured)) {
+        logger.warn('[Startup] Skip daily report catch-up: 未配置可用模型，请在「设置 → 对话模型配置」中配置后重试');
+        return;
+      }
+      logger.info('[Startup] Daily report task enabled but past schedule, catch-up run...');
+      await scheduler.runDailyReportTask(t, 'scheduled');
       if (mainWindow) mainWindow.webContents.send('report:generated');
-       const feishuWebhook = appConfig.getConfig('feishuWebhookUrl') || '';
-       if (feishuWebhook) {
-         const feishuText = convertMarkdownForFeishu(r.slice(0, 1800));
-          const feishuCard = {
-            config: { wide_screen_mode: true },
-            elements: [{ tag: 'markdown', content: '📊 AI 综合日报 **' + today + '**\n\n' + feishuText }],
-            header: { template: 'blue', title: { tag: 'plain_text', content: '📊 综合日报 ' + today } },
-          };
-          try {
-            await fetch(feishuWebhook, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                msg_type: 'interactive',
-                card: feishuCard,
-              })
-            });
-         } catch (e) {
-           logger.warn('[Startup] Feishu notification failed: %s', e.message);
-         }
-       }
-    } catch (e) {
-      logger.error('[Startup] Failed to generate daily report: ' + (e.message || e));
+    } catch (e: any) {
+      logger.error('[Startup] daily report catch-up failed: ' + (e.message || e));
     }
   })();
 });

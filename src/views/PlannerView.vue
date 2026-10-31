@@ -26,7 +26,7 @@
           >
             <div class="list-item-head">
               <span class="list-item-title">{{ t.title }}</span>
-              <span :class="['status-badge', 'status-' + t.status]">{{ statusText(t.status) }}</span>
+              <span :class="['status-badge', 'status-' + t.status]">{{ taskBadgeText(t) }}</span>
               <span v-if="t.status === 'in_progress'" class="running-dot"></span>
             </div>
             <div class="list-item-meta">
@@ -141,26 +141,33 @@
             <div class="detail-title-wrap">
               <h2 class="detail-title">{{ selectedTask.title }}</h2>
               <div class="detail-badges">
-                <span :class="['status-badge', 'status-' + selectedTask.status]">{{ statusText(selectedTask.status) }}</span>
+                <span :class="['status-badge', 'status-' + selectedTask.status]">{{ taskBadgeText(selectedTask) }}</span>
                 <span v-if="selectedTask.last_status === 'FAILED'" class="status-badge status-FAILED">执行失败</span>
                 <span v-if="selectedTask.status === 'in_progress'" class="running-dot"></span>
               </div>
             </div>
             <div class="detail-actions">
               <button
+                v-if="selectedTask.trigger_type === 'cycle'"
+                class="btn btn-sm"
+                :class="isTaskOn(selectedTask) ? 'btn-secondary' : 'btn-primary'"
+                :disabled="selectedTask.status === 'in_progress' || selectedTask.followupRunning"
+                @click="toggleTask(selectedTask)"
+              >{{ isTaskOn(selectedTask) ? '⏸ 暂停调度' : '▶ 开启' }}</button>
+              <button
                 v-if="selectedTask.trigger_type !== 'now'"
-                class="btn btn-primary btn-sm"
+                class="btn btn-secondary btn-sm"
                 :disabled="selectedTask.status === 'in_progress' || selectedTask.followupRunning"
                 @click="runTask(selectedTask)"
               >{{ selectedTask.status === 'in_progress' ? '执行中…' : '▶ 立即执行' }}</button>
               <button
                 v-if="selectedTask.trigger_type !== 'now'"
                 class="btn btn-secondary btn-sm"
-                :disabled="!!selectedTask.last_run_at"
+                :disabled="!!selectedTask.last_run_at && selectedTask.task_type !== 'daily_report'"
                 @click="editTask(selectedTask)"
               >编辑</button>
               <router-link :to="'/task/' + selectedTask.id" class="btn btn-secondary btn-sm">全屏</router-link>
-              <button class="btn btn-danger btn-sm" @click="openDeleteModal(selectedTask)">删除</button>
+              <button v-if="selectedTask.task_type !== 'daily_report'" class="btn btn-danger btn-sm" @click="openDeleteModal(selectedTask)">删除</button>
             </div>
           </div>
 
@@ -281,11 +288,11 @@
             </div>
             <div class="form-group">
               <label>任务标题 *</label>
-              <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 整理本周笔记">
+              <input type="text" class="form-control" v-model="editing.title" :readonly="isSystemTask(editing)" placeholder="例如：每日数据总结 / 整理本周笔记">
             </div>
             <div class="form-group">
-              <label>任务诉求（AI 将据此执行）</label>
-              <textarea class="form-control" v-model="editing.prompt" rows="4" placeholder="描述要让 AI 做什么"></textarea>
+              <label>{{ isSystemTask(editing) ? '日报提示词（留空使用内置默认格式）' : '任务诉求（AI 将据此执行）' }}</label>
+              <textarea class="form-control" v-model="editing.prompt" rows="4" :placeholder="isSystemTask(editing) ? '可自定义日报板块、评分规则等；留空则使用内置日报格式' : '描述要让 AI 做什么'"></textarea>
             </div>
             <div class="form-group">
               <label>执行方式</label>
@@ -336,7 +343,7 @@
               </div>
             </template>
             <div class="form-row">
-              <div class="form-group">
+              <div class="form-group" v-if="!isSystemTask(editing)">
                 <label>结果保存位置（相对项目目录，留空自动保存）</label>
                 <input type="text" class="form-control" v-model="editing.output_target" placeholder="如 任务输出/日报.md">
               </div>
@@ -351,7 +358,7 @@
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="showTaskModal = false">取消</button>
-            <button class="btn btn-danger" v-if="isEditing" @click="openDeleteModal(editing)">🗑️ 删除</button>
+            <button class="btn btn-danger" v-if="isEditing && !isSystemTask(editing)" @click="openDeleteModal(editing)">🗑️ 删除</button>
             <button class="btn btn-primary" @click="saveTask">保存</button>
           </div>
         </div>
@@ -410,7 +417,8 @@ const noteTaskFilter = ref<number | null>(null);
 const visibleNoteTasks = computed(() => {
   const noteIds = new Set(projectOptions.value.map(p => p.id));
   return tasks.value
-    .filter(t => noteIds.has(Number(t.project_id)))
+    // 内置日报任务未绑定笔记库时也显示（未开启状态，等用户选库开启）
+    .filter(t => noteIds.has(Number(t.project_id)) || t.task_type === 'daily_report')
     // 飞书一次性消息不是任务（2026-10-31 会话化，启动时已迁移为纯会话），
     // 这里兜底过滤，防旧库迁移失败或外部写入把问答混进任务列表
     .filter(t => !(t.source === 'feishu' && t.trigger_type === 'now'))
@@ -512,11 +520,15 @@ const isEditing = ref(false);
 const editing = ref<AiTask>(emptyTask());
 const editingWeekDays = ref<number[]>([]);
 const editingMonthDays = ref<number | string>(1);
+// 内置日报任务从「未开启」点开启时走编辑弹窗选库，保存成功后置为待执行
+const enableAfterSave = ref(false);
+watch(showTaskModal, (v) => { if (!v) enableAfterSave.value = false; });
 
 // 内联新建页的可保存判断（与弹窗保存校验一致）
 const canSaveTask = computed(() => {
   const t = editing.value;
-  if (!t.project_id || !t.title.trim() || !t.prompt.trim()) return false;
+  if (!t.project_id || !t.title.trim()) return false;
+  if (!isSystemTask(t) && !t.prompt.trim()) return false;
   if (t.trigger_type === 'once' && !t.scheduled_start) return false;
   if (t.trigger_type === 'cycle') {
     if (t.cycle_type === 'weekly' && !editingWeekDays.value.length) return false;
@@ -618,9 +630,9 @@ async function saveTask() {
   let cycleValue = t.cycle_value || '';
   if (t.cycle_type === 'weekly') cycleValue = editingWeekDays.value.join(',');
   if (t.cycle_type === 'monthly') cycleValue = String(editingMonthDays.value || 1);
-  const data = {
+  const data: any = {
     title: t.title, prompt: t.prompt,
-    task_type: 'note',
+    task_type: isSystemTask(t) ? 'daily_report' : 'note',
     project_id: t.project_id,
     trigger_type: t.trigger_type,
     scheduled_start: t.trigger_type === 'once' ? t.scheduled_start : '',
@@ -629,8 +641,9 @@ async function saveTask() {
     cycle_time: t.trigger_type === 'cycle' ? t.cycle_time : '',
     output_target: t.output_target,
     notify_feishu: t.notify_feishu ? 1 : 0,
-    status: 'pending',
   };
+  // 内置日报任务保存不改状态（保持未开启/已暂停）；仅当本次编辑来自「开启」动作时置为待执行
+  if (!isSystemTask(t) || enableAfterSave.value) data.status = 'pending';
   try {
     let createdId: number | null = null;
     if (isEditing.value) {
@@ -722,13 +735,41 @@ const renderMarkdown = (content: string) => {
 const escHtml = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const formatUserMessage = (s: string) => escHtml(s).replace(/\n/g, '<br>');
 
+const isSystemTask = (t: AiTask) => t.task_type === 'daily_report';
+const isTaskOn = (t: AiTask) => t.status === 'pending' || t.status === 'in_progress';
+
+function taskBadgeText(t: AiTask): string {
+  if (isSystemTask(t) && !t.project_id) return '未开启';
+  return statusText(t.status);
+}
+
 function statusText(status: string): string {
   switch (status) {
     case 'pending': return '待执行';
     case 'in_progress': return '执行中';
+    case 'paused': return '已暂停';
     case 'done': return '已完成';
     default: return status;
   }
+}
+
+/**
+ * 开启/暂停循环任务。内置日报任务未绑定笔记库时不允许直接开启，
+ * 转入编辑弹窗选库，保存（enableAfterSave）后自动纳入调度。
+ */
+async function toggleTask(t: AiTask) {
+  try {
+    if (isTaskOn(t)) {
+      await API.task.update(t.id, { status: 'paused' });
+    } else if (isSystemTask(t) && !t.project_id) {
+      enableAfterSave.value = true;
+      editTask(t);
+      return;
+    } else {
+      await API.task.update(t.id, { status: 'pending' });
+    }
+  } catch (e: any) { alert('操作失败: ' + (e.message || e)); return; }
+  await loadTasks();
 }
 
 function getTriggerText(task: AiTask): string {
@@ -1190,6 +1231,7 @@ onBeforeUnmount(() => {
 .status-pending { background: rgba(251, 146, 60, 0.1); color: var(--warning); }
 .status-in_progress { background: rgba(59, 130, 246, 0.1); color: var(--primary); }
 .status-done { background: rgba(34, 197, 94, 0.1); color: var(--success); }
+.status-paused { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
 .status-SUCCESS { background: rgba(34, 197, 94, 0.1); color: var(--success); }
 .status-FAILED { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
 .status-RUNNING { background: rgba(59, 130, 246, 0.1); color: var(--primary); }

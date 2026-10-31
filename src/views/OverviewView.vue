@@ -181,7 +181,7 @@ const reportScheduleText = computed(() => {
   return '';
 });
 
-const reportPushText = '，可推送飞书';
+const reportPushText = ref('，可推送飞书');
 
 const todos = ref<any[]>([]);
 const reminders = ref<any[]>([]);
@@ -431,6 +431,19 @@ async function loadOverviewData() {
   try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 8); } catch {}
   try { reminders.value = await API.reminder.list(); } catch {}
   try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
+  // 日报调度时间来自内置的「生成综合日报」任务（未开启则不显示该行）
+  try {
+    const tsk = (await API.task.list()) || [];
+    const dr: any = tsk.find((t: any) => t.task_type === 'daily_report' && t.status === 'pending' && t.cycle_time);
+    if (dr) {
+      const parts = String(dr.cycle_time).split(':');
+      reportCron.value = `${parseInt(parts[1] || '0', 10)} ${parseInt(parts[0] || '0', 10)} * * *`;
+      reportPushText.value = dr.notify_feishu ? '，并推送飞书' : '';
+    } else {
+      reportCron.value = '';
+      reportPushText.value = '';
+    }
+  } catch { reportCron.value = ''; }
 }
 
 async function loadKbCount() {

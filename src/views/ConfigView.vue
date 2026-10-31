@@ -376,55 +376,6 @@
         </div>
       </div>
 
-      <!-- Report Settings -->
-      <div class="card">
-        <h2>📊 综合日报设置</h2>
-        <div class="text-muted mb-2">管理综合日报的生成和保存策略。</div>
-        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-          <div class="form-group" style="flex:0 0 160px;">
-            <label style="font-size:12px;">保留天数</label>
-            <input v-model="reportRetentionDays" type="number" class="form-control" min="1" max="365" style="width:100px;">
-          </div>
-          <button class="btn btn-primary" @click="saveReportSettings">保存</button>
-        </div>
-        <span v-if="reportSettingsStatus" class="text-muted" :style="{ color: reportSettingsStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="margin-top:8px;display:block;">{{ reportSettingsStatus }}</span>
-      </div>
-
-      <!-- Report Template Editor -->
-      <div class="card">
-        <h2>🤖 日报 AI 提示词</h2>
-        <div class="text-muted mb-2">
-          编辑下方提示词（Prompt），AI 会据此生成日报的格式和内容。
-        </div>
-        <div class="info-box" style="background:var(--surface-2);border:1px solid #b3d4f7;border-radius:6px;padding:12px;margin-bottom:12px;font-size:13px;line-height:1.6;">
-          <strong>💡 提示词分两级：</strong><br>
-          <strong>系统级</strong>（不可修改）：工具定义、执行步骤 — AI 会自动调用工具查询待办、对话、笔记等数据<br>
-          <strong>用户级</strong>（下方编辑）：日报格式要求、展示方式、注意事项 — 按你的偏好定制
-        </div>
-        <div class="template-help" @click="showTemplateHelp = !showTemplateHelp">
-          <span>{{ showTemplateHelp ? '▼' : '▶' }}</span>
-          📖 查看系统级工具说明（供参考）
-        </div>
-        <div v-if="showTemplateHelp" class="template-help-content">
-          <table class="vars-table">
-            <thead><tr><th>工具</th><th>说明</th></tr></thead>
-            <tbody>
-              <tr><td><code>get_today_info()</code></td><td>获取今天的日期、项目信息，以及笔记的实时统计（总数 / 今日更新数 / 分项目文件数）</td></tr>
-              <tr><td><code>query_todos(status, date_from)</code></td><td>查询待办事项，可按状态( done/in_progress/pending )和日期范围过滤</td></tr>
-              <tr><td><code>query_messages(date_from, role)</code></td><td>查询对话记录，可按日期和角色( user/assistant )过滤</td></tr>
-              <tr><td><code>query_data_records(dataset_name, date_from)</code></td><td>查询数据中心记录，可按数据集名称过滤</td></tr>
-              <tr><td><code>query_reminders()</code></td><td>查询所有已启用的提醒</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <textarea v-model="reportPrompt" class="code-editor" rows="20" spellcheck="false" placeholder="例如：&#10;请按以下格式生成日报：&#10;&#10;## 日报格式要求&#10;使用 Markdown 格式，包含今日概览、完成事项、待办事项、对话沟通、综合评估等板块。&#10;&#10;## 注意事项&#10;- 数据为空的部分略过&#10;- 给出效率评分和建议&#10;- 语言简洁专业"></textarea>
-        <div class="flex" style="gap:8px;margin-top:8px;">
-          <button class="btn btn-primary" @click="saveReportTemplate">保存提示词</button>
-          <button class="btn btn-secondary" @click="resetReportTemplate">恢复默认</button>
-          <span v-if="templateStatus" class="text-muted" :style="{ color: templateStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="margin-left:8px;">{{ templateStatus }}</span>
-        </div>
-      </div>
-
       </div>
   </div>
 </template>
@@ -445,13 +396,6 @@ const feishuRunning = ref(false);
 const feishuStatus = ref('');
 
 const schedulerRunning = ref(false);
-
-// Report settings
-const reportRetentionDays = ref('30');
-const reportPrompt = ref('');
-const reportSettingsStatus = ref('');
-const showTemplateHelp = ref(false);
-const templateStatus = ref('');
 
 // 网络搜索
 const searchProvider = ref('auto');
@@ -1018,8 +962,6 @@ async function loadConfig() {
     webhookUrl.value = cfg.feishuWebhookUrl || '';
     feishuAppId.value = cfg.feishuAppId || '';
     feishuAppSecret.value = cfg.feishuAppSecret || '';
-    reportRetentionDays.value = cfg.dailyReportRetentionDays || '30';
-    reportPrompt.value = cfg.dailyReportPrompt || '';
   } catch { console.warn('加载配置失败'); }
 }
 
@@ -1163,32 +1105,6 @@ async function testLlmProvider(idx: number) {
   setTimeout(() => { prov.status = ''; }, 8000);
 }
 
-async function saveReportSettings() {
-  try {
-    await API.config.set({
-      daily_report_retention_days: reportRetentionDays.value,
-    });
-    reportSettingsStatus.value = '✅ 已保存';
-    setTimeout(() => reportSettingsStatus.value = '', 3000);
-  } catch (e: any) {
-    reportSettingsStatus.value = '❌ ' + (e.message || '保存失败');
-  }
-}
-
-async function saveReportTemplate() {
-  try {
-    await API.config.set({ daily_report_prompt: reportPrompt.value });
-    templateStatus.value = '✅ 已保存';
-    setTimeout(() => templateStatus.value = '', 3000);
-  } catch (e: any) {
-    templateStatus.value = '❌ ' + (e.message || '保存失败');
-  }
-}
-
-async function resetReportTemplate() {
-  reportPrompt.value = '';
-  await saveReportTemplate();
-}
 // ===== 移动端远程连接（中继服务） =====
 const relayUrl = ref('');
 const relayPassword = ref('');

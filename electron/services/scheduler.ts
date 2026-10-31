@@ -641,57 +641,61 @@ function getCronFromReminder(r) {
   }
 }
 
-const executors = {
-  'ping': async (task) => {
-    logger.info(`[Scheduler] ping: ${task.name}`);
-  },
-  'auto_index': async (task) => {
-    // 索引路线已整体下线（kb_documents / kb_chunks / indexer.ts 一并删除），概览看板改为实时扫盘，
-    // 不再需要后台索引任务。这里只记一条日志，避免老任务每次触发都报错。
-    logger.warn('[Scheduler] auto_index 任务「%s」已失效：索引路线已下线，可在任务列表里删除它', task.name);
-  },
-'daily_report': async (task) => {
-    logger.info(`[Scheduler] daily report: ${task.name}`);
+/** 内置日报任务默认提示词（任务的 prompt 为空时使用） */
+const DEFAULT_DAILY_REPORT_PROMPT = '请按以下格式生成日报：\n\n## 日报格式要求\n使用简化的 Markdown 格式（适配飞书），**不要使用表格**（用 `- key: value` 列表代替）：**\n\n### 1️⃣ 今日概览\n- ✅ 完成任务：数量、📋 待办：数量、💬 对话：次数、📝 笔记：更新数、🗂️ 新增：数量\n\n### 2️⃣ 今日完成\n- 列出今日完成的任务，高优先级的用 ⭐ 标记\n\n### 3️⃣ 待办事项\n- 逾期的用 🔴 标记并注明逾期天数\n- 进行中的用 🔄 标记\n- 高优先级的用 🔴 标记\n\n### 4️⃣ 对话与沟通\n- 今日对话次数和简要摘要\n\n### 5️⃣ 笔记与记录\n- 更新的文档和新增的记录\n\n### 6️⃣ 今日提醒\n- 已启用的提醒（如有）\n\n### 7️⃣ 综合评估\n- 根据完成任务、待办处理、知识沉淀等维度给出今日效率评分（0-100分）\n- 给出具体的改进行动建议\n\n## 格式注意事项\n- **不使用表格**：用 `- 维度 | 说明` 这样的列表代替\n- 数据为空的部分可以略过，不要编造数据\n- 评分要合理，基于实际数据给出\n- 建议要具体、可执行\n- 语言简洁专业，使用中文\n- 只输出日报正文，不要包含任何说明性文字（如"数据来源"、"让我先"、"思考过程"等）';
+
+/**
+ * 内置日报任务执行链路：数据源 = 所有项目 + 数据集（report 工具集天然跨项目查询），
+ * 结果写 ai_analysis（type='daily_report'）供「今天」页读取。
+ */
+async function runDailyReportTask(task: any, triggerType: string) {
+  const start = nowString();
+  const execId = db.taskExecution.add({
+    task_id: task.id, task_title: task.title, status: 'RUNNING',
+    trigger_type: triggerType, start_time: start,
+  }) as number | null;
+  db.task.update(task.id, { status: 'in_progress', last_run_at: start, last_status: 'RUNNING' });
+  notifyUI();
+  try {
+    // 仅在一个项目都没有时拦截；绑定的笔记库只是开启门槛，数据口径仍为全局综合
+    if (!db.project.list().length) throw new Error('尚未添加任何项目，无法生成日报');
     const today = getChinaDate();
-    try {
-      // 综合日报数据源 = 所有项目 + 数据集（report 工具集天然跨项目查询），仅在一个项目都没有时拦截
-      if (!db.project.list().length) { logger.warn('[Scheduler] daily_report: 尚未添加任何项目，跳过'); return; }
-      const userPart = appConfig.getConfig('daily_report_prompt') || '请按以下格式生成日报：\n\n## 日报格式要求\n使用简化的 Markdown 格式（适配飞书），**不要使用表格**（用 `- key: value` 列表代替）：**\n\n### 1️⃣ 今日概览\n- ✅ 完成任务：数量、📋 待办：数量、💬 对话：次数、📝 笔记：更新数、🗂️ 新增：数量\n\n### 2️⃣ 今日完成\n- 列出今日完成的任务，高优先级的用 ⭐ 标记\n\n### 3️⃣ 待办事项\n- 逾期的用 🔴 标记并注明逾期天数\n- 进行中的用 🔄 标记\n- 高优先级的用 🔴 标记\n\n### 4️⃣ 对话与沟通\n- 今日对话次数和简要摘要\n\n### 5️⃣ 笔记与记录\n- 更新的文档和新增的记录\n\n### 6️⃣ 今日提醒\n- 已启用的提醒（如有）\n\n### 7️⃣ 综合评估\n- 根据完成任务、待办处理、知识沉淀等维度给出今日效率评分（0-100分）\n- 给出具体的改进行动建议\n\n## 格式注意事项\n- **不使用表格**：用 `- 维度 | 说明` 这样的列表代替\n- 数据为空的部分可以略过，不要编造数据\n- 评分要合理，基于实际数据给出\n- 建议要具体、可执行\n- 语言简洁专业，使用中文\n- 只输出日报正文，不要包含任何说明性文字（如"数据来源"、"让我先"、"思考过程"等）';
-      const piAgent = require('./pi-agent');
-      logger.info('[Scheduler] Calling pi agent to generate daily report...');
-      const r = (await piAgent.generateDailyReport('scheduler_' + today, userPart)).trim();
-      logger.info(`[Scheduler] AI report generated, length: ${r.length}`);
+    const userPart = task.prompt || DEFAULT_DAILY_REPORT_PROMPT;
+    const piAgent = require('./pi-agent');
+    logger.info('[Scheduler] Calling pi agent to generate daily report...');
+    const r = (await piAgent.generateDailyReport('task_' + task.id, userPart)).trim();
+    logger.info(`[Scheduler] AI report generated, length: ${r.length}`);
 
-      db.run("INSERT INTO ai_analysis (project_id, type, content, report_date, created_at, updated_at) VALUES (NULL, 'daily_report', ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))",
-        r, today);
+    db.run("INSERT INTO ai_analysis (project_id, type, content, report_date, created_at, updated_at) VALUES (NULL, 'daily_report', ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))",
+      r, today);
 
-      const retentionDays = parseInt(appConfig.getConfig('daily_report_retention_days') || '30', 10);
-      db.run("DELETE FROM ai_analysis WHERE type = 'daily_report' AND report_date < ?", getChinaDate(-retentionDays));
+    const retentionDays = parseInt(appConfig.getConfig('daily_report_retention_days') || '30', 10);
+    db.run("DELETE FROM ai_analysis WHERE type = 'daily_report' AND report_date < ?", getChinaDate(-retentionDays));
 
-      sendNotification('每日报告', '✅ AI 综合日报已生成 - ' + today);
-       if (task.notify_feishu) {
-        const feishuText = convertMarkdownForFeishu(r.slice(0, 1800));
-        const cardContent = '📊 AI 综合日报 **' + today + '**\n\n' + feishuText;
-        await sendFeishu({
-          header: { template: 'blue', title: { tag: 'plain_text', content: '📊 综合日报 ' + today } },
-          elements: [{ tag: 'markdown', content: feishuText }]
-        });
-       }
-    } catch (e) {
-      logger.error(`[Scheduler] daily_report error: ${e.message}`);
+    const end = nowString();
+    const nextStatus = task.trigger_type === 'cycle' ? 'pending' : 'done';
+    if (execId != null) db.taskExecution.update(execId, { status: 'SUCCESS', end_time: end, result_text: r });
+    db.task.update(task.id, { last_result: r.slice(0, 3000), last_status: 'SUCCESS', last_run_at: end, status: nextStatus });
+
+    sendNotification('每日报告', '✅ AI 综合日报已生成 - ' + today);
+    if (task.notify_feishu) {
+      const feishuText = convertMarkdownForFeishu(r.slice(0, 1800));
+      await sendFeishu({
+        config: { wide_screen_mode: true },
+        header: { template: 'blue', title: { tag: 'plain_text', content: '📊 综合日报 ' + today } },
+        elements: [{ tag: 'markdown', content: feishuText }],
+      });
     }
-  },
-  'reminder': async (task) => {
-    logger.info(`[Scheduler] reminder: ${task.name}`);
-    try {
-      const msg = task.name + (task.message ? '\n' + task.message : '');
-      sendNotification('⏰ 提醒', msg);
-      if (task.notify_feishu) await sendFeishu(`⏰ ${msg}`);
-    } catch (e) {
-      logger.error(`[Scheduler] reminder error: ${e.message}`);
-    }
-  },
-};
+    notifyUI();
+  } catch (e: any) {
+    const end = nowString();
+    const msg = (e && e.message) || String(e);
+    if (execId != null) db.taskExecution.update(execId, { status: 'FAILED', end_time: end, error_message: msg });
+    db.task.update(task.id, { last_status: 'FAILED', last_run_at: end, status: 'pending' });
+    sendNotification('❌ 综合日报生成失败', task.title + '：' + msg);
+    notifyUI();
+  }
+}
 
 function start() {
   if (running) return;
@@ -889,6 +893,8 @@ function triggerTypeLabel(task: any): string {
 }
 
 async function runTask(task: any, triggerType: string) {
+  // 内置日报任务走专用链路：写 ai_analysis 供「今天」页读取，不套用通用任务的 prompt 包装
+  if (task.task_type === 'daily_report') return runDailyReportTask(task, triggerType);
   const start = nowString();
   const project: any = task.project_id ? db.project.get(task.project_id) : null;
   // 项目口径：任务所属项目优先，无项目任务回落默认项目
@@ -1001,4 +1007,4 @@ function reload() {
 
 function isRunning() { return running; }
 
-export { start, stop, reload, isRunning, addReminder, removeReminder, reloadTasks, removeTask, executeTaskNow, triggerReminderNow, DEFAULT_REPORT_TEMPLATE };
+export { start, stop, reload, isRunning, addReminder, removeReminder, reloadTasks, removeTask, executeTaskNow, triggerReminderNow, runDailyReportTask, DEFAULT_DAILY_REPORT_PROMPT, DEFAULT_REPORT_TEMPLATE };

@@ -33,7 +33,7 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
     },
     task: (() => {
       const tasks: any[] = [
-        { id: 1, title: '生成综合日报', status: 'done', priority: 'mid', trigger_type: 'cycle', cycle_type: 'daily', cycle_time: '22:00', cycle_value: '', project_id: 1, source: 'ui', last_run_at: iso(1), last_status: 'SUCCESS', created_at: iso(3), notify_feishu: 1, output_target: '', scheduled_start: '', description: '', prompt: '汇总今天的订单、售后与竞品动态，生成日报并写入笔记。', session_id: 's1', task_type: 'note' },
+        { id: 1, title: '生成综合日报', status: 'pending', priority: 'mid', trigger_type: 'cycle', cycle_type: 'daily', cycle_time: '22:00', cycle_value: '', project_id: 1, source: 'system', last_run_at: iso(1), last_status: 'SUCCESS', created_at: iso(3), notify_feishu: 1, output_target: '', scheduled_start: '', description: '内置任务：每天定时聚合所有笔记库与数据集生成综合日报。', prompt: '', session_id: 's1', task_type: 'daily_report' },
         { id: 2, title: '竞品价格巡检', status: 'pending', priority: 'mid', trigger_type: 'cycle', cycle_type: 'daily', cycle_time: '08:00', cycle_value: '', project_id: 1, source: 'ui', last_run_at: iso(1), last_status: 'SUCCESS', created_at: iso(5), notify_feishu: 0, output_target: '', scheduled_start: '', description: '', prompt: '抓取三个竞品的价格页，更新「竞品价格」数据集。', session_id: '', task_type: 'note' },
       ];
       return {
