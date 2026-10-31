@@ -141,7 +141,6 @@ interface ElectronAPI {
     update: (id: number, data: any) => Promise<void>;
     remove: (id: number) => Promise<void>;
     execute: (id: number) => Promise<boolean>;
-    followup: (taskId: number, question: string, model?: string) => Promise<boolean>;
     executions: (taskId: number) => Promise<any[]>;
     executionList: (page: number, pageSize: number) => Promise<{ total: number; rows: any[] }>;
     executionGet: (id: number) => Promise<any>;

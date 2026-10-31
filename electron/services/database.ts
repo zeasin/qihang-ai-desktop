@@ -647,10 +647,13 @@ const reminder = {
 
 // ========== AI 任务（挂在笔记库下） ==========
 const task = {
+  // 任务列表：排除 coding 遗留类型与 trigger_type='manual' 的待办行（待办与任务同表但互不混杂）
   list: (status?: string) => {
-    if (status) return q("SELECT * FROM plan_tasks WHERE status = ? AND IFNULL(task_type, '') != 'coding' ORDER BY created_at DESC", status);
-    return q("SELECT * FROM plan_tasks WHERE IFNULL(task_type, '') != 'coding' ORDER BY created_at DESC");
+    if (status) return q("SELECT * FROM plan_tasks WHERE status = ? AND IFNULL(task_type, '') != 'coding' AND IFNULL(trigger_type, '') != 'manual' ORDER BY created_at DESC", status);
+    return q("SELECT * FROM plan_tasks WHERE IFNULL(task_type, '') != 'coding' AND IFNULL(trigger_type, '') != 'manual' ORDER BY created_at DESC");
   },
+  // 待办列表：只取 manual 行（todo:add 写入），不包含定时/循环任务
+  listTodos: () => q("SELECT * FROM plan_tasks WHERE trigger_type = 'manual' AND IFNULL(task_type, '') != 'coding' ORDER BY created_at DESC"),
   get: (id: number) => qOne('SELECT * FROM plan_tasks WHERE id = ?', id),
   add: (data: any) => {
     const pid = (data.project_id !== null && data.project_id !== undefined && data.project_id !== '') ? (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null) : null;

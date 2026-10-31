@@ -38,7 +38,7 @@ import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
 import { agentVersions } from './services/agent-versions';
 import { buildDataToolDefs, appendTodoNote } from './services/tools';
-import { followUpTask, followUpFeishuSession, buildKbPrompt } from './services/task-runner';
+import { followUpFeishuSession, buildKbPrompt } from './services/task-runner';
 import * as aitool from './services/ai-tools';
 import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './services/builtin-datasets';
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
@@ -1429,7 +1429,7 @@ ipcMain.handle('reminder:setEnabled', (_, id, enabled) => {
   scheduler.reload();
   return true;
 });
-ipcMain.handle('todo:list', () => db.task.list());
+ipcMain.handle('todo:list', () => db.task.listTodos());
 ipcMain.handle('todo:add', (_, data) => {
   const r = db.task.add({ ...data, trigger_type: 'manual', source: 'ui' });
   const note = appendTodoNote(data?.project_id ?? null, data?.title || '');
@@ -1454,8 +1454,6 @@ ipcMain.handle('noteDigest:syncDone', () => {
 ipcMain.handle('task:list', () => db.task.list());
 ipcMain.handle('task:add', (_, data) => {
   const r = db.task.add({ ...data, source: data.source || 'ui' });
-  const note = appendTodoNote(data?.project_id ?? null, data?.title || '');
-  if (!note.ok) logger.warn('[task:add] 待办落笔记失败: ' + note.error);
   scheduler.reloadTasks();
   relayClient.syncTask(r.id);
   return r;
@@ -1474,7 +1472,6 @@ ipcMain.handle('task:remove', (_, id) => {
   return true;
 });
 ipcMain.handle('task:execute', (_, id) => scheduler.executeTaskNow(id));
-ipcMain.handle('task:followup', (_, { taskId, question, model }) => followUpTask(taskId, question, db, { model }));
 ipcMain.handle('task:executions', (_, taskId) => db.taskExecution.listByTask(taskId));
 ipcMain.handle('task:execution:list', (_, page, pageSize) => db.taskExecution.list(page, pageSize));
 ipcMain.handle('task:execution:get', (_, id) => db.taskExecution.get(id));

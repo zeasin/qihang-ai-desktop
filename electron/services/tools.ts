@@ -337,14 +337,11 @@ async function createTaskTool({ title, prompt, project_name, trigger_type, sched
     if (scheduler.reloadTasks) scheduler.reloadTasks();
     if ((trigger_type || 'now') === 'now' && scheduler.executeTaskNow) scheduler.executeTaskNow(r.id);
   } catch (e) { logger.warn('[Tools] create_task reload failed: ' + e.message); }
-  const note = appendTodoNote(proj.id, String(title).trim());
-  if (!note.ok) logger.warn('[Tools] create_task 待办落笔记失败: ' + note.error);
   logger.info('[Tools] create_task: %s → id %s', title, r.id);
   const where = proj.id ? `项目「${proj.name}」` : '（未指定项目，仅记录）';
-  const sync = note.ok ? `已同步到笔记 ${note.rel}` : `笔记同步失败（${note.error}），可手动补记`;
   const trigger = (trigger_type || 'now') === 'now' ? '已开始执行。' : '到点将自动执行。';
   return '已创建任务 "' + title + '" (id: ' + r.id + ', 归属: ' + where + ', 触发: ' + (trigger_type || 'now')
-    + (scheduled_start ? ' @ ' + scheduled_start : '') + ')。' + trigger + ' ' + sync + '。';
+    + (scheduled_start ? ' @ ' + scheduled_start : '') + ')。' + trigger;
 }
 
 async function updateTaskTool({ id, title, prompt, status, trigger_type, scheduled_start, cycle_type, cycle_value, cycle_time }) {

@@ -656,14 +656,22 @@ async function runDailyReportTask(task: any, triggerType: string) {
   }) as number | null;
   db.task.update(task.id, { status: 'in_progress', last_run_at: start, last_status: 'RUNNING' });
   notifyUI();
+  const sessionId = 'task_' + task.id;
   try {
     // 仅在一个项目都没有时拦截；绑定的笔记库只是开启门槛，数据口径仍为全局综合
     if (!db.project.list().length) throw new Error('尚未添加任何项目，无法生成日报');
+    if (!task.session_id) {
+      try {
+        db.chat.createSession(sessionId, task.project_id && Number.isFinite(Number(task.project_id)) ? Number(task.project_id) : null, (task.title || '').slice(0, 30), 'kb', 'pi', 'ui');
+        db.task.update(task.id, { session_id: sessionId });
+      } catch {}
+    }
+    try { db.chat.addMessage(sessionId, 'user', task.prompt || '生成今日综合日报', 'general'); } catch {}
     const today = getChinaDate();
     const userPart = task.prompt || DEFAULT_DAILY_REPORT_PROMPT;
     const piAgent = require('./pi-agent');
     logger.info('[Scheduler] Calling pi agent to generate daily report...');
-    const r = (await piAgent.generateDailyReport('task_' + task.id, userPart)).trim();
+    const r = (await piAgent.generateDailyReport(sessionId, userPart)).trim();
     logger.info(`[Scheduler] AI report generated, length: ${r.length}`);
 
     db.run("INSERT INTO ai_analysis (project_id, type, content, report_date, created_at, updated_at) VALUES (NULL, 'daily_report', ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))",
@@ -676,6 +684,7 @@ async function runDailyReportTask(task: any, triggerType: string) {
     const nextStatus = task.trigger_type === 'cycle' ? 'pending' : 'done';
     if (execId != null) db.taskExecution.update(execId, { status: 'SUCCESS', end_time: end, result_text: r });
     db.task.update(task.id, { last_result: r.slice(0, 3000), last_status: 'SUCCESS', last_run_at: end, status: nextStatus });
+    try { db.chat.addMessage(sessionId, 'assistant', r, 'general'); } catch {}
 
     sendNotification('每日报告', '✅ AI 综合日报已生成 - ' + today);
     if (task.notify_feishu) {
@@ -692,6 +701,7 @@ async function runDailyReportTask(task: any, triggerType: string) {
     const msg = (e && e.message) || String(e);
     if (execId != null) db.taskExecution.update(execId, { status: 'FAILED', end_time: end, error_message: msg });
     db.task.update(task.id, { last_status: 'FAILED', last_run_at: end, status: 'pending' });
+    try { db.chat.addMessage(sessionId, 'assistant', '❌ ' + msg, 'general'); } catch {}
     sendNotification('❌ 综合日报生成失败', task.title + '：' + msg);
     notifyUI();
   }
@@ -923,6 +933,7 @@ async function runTask(task: any, triggerType: string) {
   }) as number | null;
   db.task.update(task.id, { status: 'in_progress', last_run_at: start, last_status: 'RUNNING' });
   notifyUI();
+  const sessionId = 'task_' + task.id;
   try {
     const { buildReportToolDefs, buildDataToolDefs } = require('./tools');
     const customTools: any[] = [];
@@ -932,13 +943,14 @@ async function runTask(task: any, triggerType: string) {
     customTools.push(...(await buildDataToolDefs(notesDir)));
 
     const piAgent = require('./pi-agent');
-    const sessionId = 'task_' + task.id;
     if (!task.session_id) {
       try {
         db.chat.createSession(sessionId, task.project_id && Number.isFinite(Number(task.project_id)) ? Number(task.project_id) : null, task.title.slice(0, 30), 'kb', 'pi', 'ui');
         db.task.update(task.id, { session_id: sessionId });
       } catch {}
     }
+    // 对话记录落库：任务诉求作为 user 消息，结果/错误作为 assistant 消息，任务详情可见
+    try { db.chat.addMessage(sessionId, 'user', task.prompt || task.title, 'general'); } catch {}
     const contextLine = noteProj ? `\n所属项目：${noteProj.name}（${noteProj.dir}）` : '';
     const prompt = `你正在执行一个 AI 任务「${task.title}」。${contextLine}\n\n${task.prompt || '请根据任务标题自主完成并直接输出结果。'}\n\n执行要求：\n1. 先用可用工具查询所需数据（任务、对话记录、文档、数据集、笔记、外网资料等），再完成任务\n2. 若任务涉及修改文件，直接在目标目录中完成\n3. 直接输出最终成果（Markdown 格式），不要输出过程说明、思考过程或"数据来源"等前缀`;
     const result = (await piAgent.generateDailyReport(sessionId, prompt)).trim();
@@ -948,6 +960,7 @@ async function runTask(task: any, triggerType: string) {
     const nextStatus = task.trigger_type === 'cycle' ? 'pending' : 'done';
     if (execId != null) db.taskExecution.update(execId, { status: 'SUCCESS', end_time: end, result_text: result, log_text: savedNote ? `已保存笔记：${savedNote}` : '' });
     db.task.update(task.id, { last_result: result.slice(0, 3000), last_status: 'SUCCESS', last_run_at: end, status: nextStatus });
+    try { db.chat.addMessage(sessionId, 'assistant', result, 'general'); } catch {}
 
     sendNotification('✅ AI 任务完成', task.title);
     if (task.notify_feishu) {
@@ -965,6 +978,7 @@ async function runTask(task: any, triggerType: string) {
     const end = nowString();
     if (execId != null) db.taskExecution.update(execId, { status: 'FAILED', end_time: end, error_message: (e && e.message) || String(e) });
     db.task.update(task.id, { last_status: 'FAILED', last_run_at: end, status: 'pending' });
+    try { db.chat.addMessage(sessionId, 'assistant', '❌ ' + ((e && e.message) || String(e)), 'general'); } catch {}
     sendNotification('❌ AI 任务失败', task.title + '：' + ((e && e.message) || String(e)));
     if (task.notify_feishu) await sendFeishu(`❌ AI 任务「${task.title}」执行失败：${(e && e.message) || String(e)}`);
     notifyUI();

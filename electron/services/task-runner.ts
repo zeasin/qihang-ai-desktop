@@ -1,38 +1,22 @@
 /**
- * 对话/任务 执行核心：一轮追问的公共逻辑 + 两个入口。
+ * 对话/任务 执行核心：一轮追问的公共逻辑 + 入口。
  *
  * 2026-10-31 起：飞书消息不再落 plan_tasks（任务页只保留后台调度任务），
  * 直接落 prj_sessions（source='feishu'）为纯会话，对话页合并展示并带「飞书」徽标。
  * 本模块因此收敛为：
  *
  *   - buildKbPrompt        项目库会话的提示词骨架（飞书首条 / 飞书「继续」 /
- *                          后台任务追问 / 软件内续聊 kb 会话，共用一份口径）
+ *                          软件内续聊 kb 会话，共用一份口径）
  *   - runFollowupTurn      一轮追问的公共执行核心（加消息 → runPi → 回复落库）
- *   - followUpTask         后台任务的追问入口（保留任务簿记，TaskDetailView/PlannerView 用）
  *   - followUpFeishuSession 飞书「继续」的追问入口（纯会话，无任务簿记）
  *
- * 两个入口的事件回调都由调用方（main.ts）接入：任务追问走 task:followup:*，
- * 飞书追问同时走 chat:*（桌面对话页实时可见）。
+ * 事件回调由调用方（main.ts）接入：飞书追问同时走 chat:*（桌面对话页实时可见）。
+ * 任务不再支持追问（2026-10-31 用户决策）：followUpTask 已随 task:followup IPC 一并移除。
  */
 import { runPi } from './pi-agent';
 import logger from './logger';
 import * as appConfig from './app-config';
 import { projectDirOf } from './feishu-router';
-
-function nowString(): string {
-  const d = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-}
-
-function notifyTaskChanged() {
-  try {
-    const { BrowserWindow } = require('electron') as typeof import('electron');
-    for (const w of BrowserWindow.getAllWindows()) {
-      w.webContents.send('task:changed');
-    }
-  } catch {}
-}
 
 // ========== 提示词骨架 ==========
 
@@ -115,84 +99,6 @@ export async function runFollowupTurn(db: any, sessionId: string, question: stri
     // 代价：模型限流(429)无限退避时会一直挂着，需用户在界面主动停止。
     onDelta, onTool, onDone, onError,
   });
-}
-
-// ========== 任务追问（后台调度任务，保留任务簿记） ==========
-
-function emitFollowup(type: string, payload: any) {
-  try {
-    const { BrowserWindow } = require('electron') as typeof import('electron');
-    for (const w of BrowserWindow.getAllWindows()) {
-      w.webContents.send('task:followup:' + type, payload);
-    }
-  } catch {}
-}
-
-/**
- * 任务追问：复用任务的原始会话继续对话（plan_tasks 记录仍在，任务页可见）。
- * opts.model：显式模型 pattern。
- * 结果以 task:followup:delta / done / error 事件流式回传。
- */
-export async function followUpTask(
-  taskId: number, question: string, db: any,
-  opts: { model?: string; onDone?: (text: string, meta?: { incomplete?: boolean }) => void; onError?: (err: string) => void } = {},
-): Promise<boolean> {
-  const task = db.task.get(taskId);
-  if (!task) return false;
-  if (task.status === 'in_progress') return false;
-  const project: any = task.project_id && Number.isFinite(Number(task.project_id)) ? db.project.get(Number(task.project_id)) : null;
-
-  let sessionId = task.session_id || '';
-  if (!sessionId) {
-    sessionId = 'task_' + taskId;
-    db.chat.createSession(sessionId, project ? project.id : null, (task.title || '').slice(0, 30), 'kb', 'pi', 'ui');
-    db.task.update(taskId, { session_id: sessionId });
-  }
-  db.task.update(taskId, { status: 'in_progress' });
-  const execId = db.taskExecution.add({
-    task_id: taskId, task_title: task.title, status: 'RUNNING',
-    trigger_type: 'followup', start_time: nowString(),
-  });
-  notifyTaskChanged();
-
-  const finish = (status: string, extra: { error?: string; result?: string } = {}) => {
-    const end = nowString();
-    if (execId != null) db.taskExecution.update(execId, { status, end_time: end, ...(extra.error ? { error_message: extra.error } : {}), ...(extra.result ? { result_text: extra.result } : {}) });
-    db.task.update(taskId, {
-      last_status: status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-      last_run_at: end,
-      status: status === 'SUCCESS' ? 'done' : 'pending',
-      ...(extra.result ? { last_result: extra.result.slice(0, 3000) } : {}),
-    });
-    notifyTaskChanged();
-  };
-
-  (async () => {
-    try {
-      await runFollowupTurn(db, sessionId, question, {
-        originLabel: task.prompt || task.title || '',
-        model: opts.model || undefined,
-        onDelta: (delta) => emitFollowup('delta', { taskId, delta }),
-        onDone: (text, meta) => {
-          finish('SUCCESS', { result: text });
-          emitFollowup('done', { taskId, text, incomplete: !!meta?.incomplete });
-          try { opts.onDone && opts.onDone(text, meta); } catch (e: any) { logger.warn('[Followup] onDone callback failed: %s', e?.message); }
-        },
-        onError: (err) => {
-          finish('FAILED', { error: String(err) });
-          emitFollowup('error', { taskId, error: String(err) });
-          try { opts.onError && opts.onError(String(err)); } catch (e: any) { logger.warn('[Followup] onError callback failed: %s', e?.message); }
-        },
-      });
-    } catch (e: any) {
-      logger.error('[Followup] execution failed: %s', e?.message);
-      finish('FAILED', { error: (e && e.message) || String(e) });
-      emitFollowup('error', { taskId, error: (e && e.message) || String(e) });
-      try { opts.onError && opts.onError((e && e.message) || String(e)); } catch (e2: any) { logger.warn('[Followup] onError callback failed: %s', e2?.message); }
-    }
-  })();
-
-  return true;
 }
 
 // ========== 飞书「继续」（纯会话，无任务簿记） ==========

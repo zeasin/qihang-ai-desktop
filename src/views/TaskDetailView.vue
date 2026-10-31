@@ -8,7 +8,7 @@
       <div class="header-actions">
         <span v-if="task" :class="['status-badge', 'status-' + task.status]">{{ statusText(task.status) }}</span>
         <span v-if="task && task.last_status === 'FAILED'" class="status-badge status-FAILED">执行失败</span>
-        <button v-if="task && task.trigger_type !== 'now'" class="btn btn-primary btn-sm" :disabled="task.status === 'in_progress' || task.followupRunning" @click="runTask">▶ 立即执行</button>
+        <button v-if="task && task.trigger_type !== 'now'" class="btn btn-primary btn-sm" :disabled="task.status === 'in_progress'" @click="runTask">▶ 立即执行</button>
         <button v-if="task && task.trigger_type !== 'now'" class="btn btn-secondary btn-sm" :disabled="hasBeenExecuted" @click="editTask">编辑</button>
         <button class="btn btn-danger btn-sm" @click="openDeleteModal">删除</button>
       </div>
@@ -92,29 +92,6 @@
           </div>
           <div v-if="ex.error_message" class="exec-error">❌ {{ ex.error_message }}</div>
           <div v-if="ex.result_text" class="exec-result markdown-body" v-html="renderMarkdown(ex.result_text)"></div>
-        </div>
-      </div>
-
-      <!-- 追问 -->
-      <div class="detail-section">
-        <h3 class="section-title">追问</h3>
-        <div v-if="task.followupDone" class="followup-reply markdown-body" v-html="renderMarkdown(task.followupReply)"></div>
-        <div v-if="task.followupRunning" class="followup-reply markdown-body" v-html="renderMarkdown(task.followupReply)"></div>
-        <div class="followup-toolbar">
-          <select class="model-selector" v-model="selectedModel" :disabled="task.followupRunning" title="选择模型">
-            <option value="">默认模型</option>
-            <option v-for="m in followupModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
-          </select>
-        </div>
-        <div class="followup-input-row">
-          <textarea
-            v-model="task.followupText"
-            class="followup-input"
-            rows="2"
-            placeholder="输入追问内容，将沿用该任务的原对话上下文继续执行…"
-            @keydown.enter.exact.prevent="sendFollowup"
-          ></textarea>
-          <button class="btn btn-primary btn-sm" :disabled="!(task.followupText || '').trim() || task.followupRunning" @click="sendFollowup">{{ task.followupRunning ? '执行中…' : '发送' }}</button>
         </div>
       </div>
     </div>
@@ -284,10 +261,6 @@ async function loadTask() {
     task.value = all.find((t: any) => t.id === id);
     if (task.value) {
       task.value.notify_feishu = !!task.value.notify_feishu;
-      task.value.followupText = '';
-      task.value.followupReply = '';
-      task.value.followupRunning = false;
-      task.value.followupDone = false;
     }
   } catch {}
 }
@@ -398,67 +371,6 @@ async function confirmDelete() {
   showDeleteModal.value = false;
 }
 
-// ========== 追问 ==========
-const followupModels = ref<any[]>([]);
-const selectedModel = ref('');
-
-async function loadFollowupModels() {
-  try {
-    const res = await API.pi.models();
-    followupModels.value = (res?.models || []).filter((m: any) => m.pattern);
-    if (!selectedModel.value && followupModels.value.some((m: any) => m.configured)) {
-      const first = followupModels.value.find((m: any) => m.configured);
-      if (first) selectedModel.value = first.pattern;
-    }
-  } catch { followupModels.value = []; }
-}
-
-async function sendFollowup() {
-  if (!task.value) return;
-  const q = (task.value.followupText || '').trim();
-  if (!q || task.value.followupRunning) return;
-  task.value.followupText = '';
-  task.value.followupRunning = true;
-  task.value.followupDone = false;
-  task.value.followupReply = '> ' + q + '\n\n';
-  try {
-    const ok = await API.task.followup(task.value.id, q, selectedModel.value || undefined);
-    if (!ok) {
-      task.value.followupRunning = false;
-      task.value.followupReply += '\n❌ 追问失败：任务不存在或正在执行中';
-    }
-  } catch (e: any) {
-    task.value.followupRunning = false;
-    task.value.followupDone = true;
-    task.value.followupReply += '\n❌ 追问失败：' + (e.message || e);
-  }
-}
-
-// ========== 事件处理 ==========
-function handleFollowupDelta(payload: any) {
-  if (task.value && payload.taskId === task.value.id && task.value.followupRunning) {
-    task.value.followupReply += payload.delta;
-  }
-}
-
-function handleFollowupDone(payload: any) {
-  if (task.value && payload.taskId === task.value.id) {
-    task.value.followupRunning = false;
-    task.value.followupDone = true;
-    task.value.followupReply = payload.text || task.value.followupReply;
-  }
-  refresh();
-}
-
-function handleFollowupError(payload: any) {
-  if (task.value && payload.taskId === task.value.id) {
-    task.value.followupRunning = false;
-    task.value.followupDone = true;
-    task.value.followupReply += '\n\n❌ ' + (payload.error || '执行出错');
-  }
-  refresh();
-}
-
 function onTaskChanged() {
   refresh();
 }
@@ -474,20 +386,14 @@ async function onGateReady() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadTask(), loadProjects(), loadExecutions(), loadFollowupModels()]);
+  await Promise.all([loadTask(), loadProjects(), loadExecutions()]);
   notesLoaded.value = true;
   await loadMessages();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
-  window.electronAPI?.on?.('task:followup:delta', handleFollowupDelta);
-  window.electronAPI?.on?.('task:followup:done', handleFollowupDone);
-  window.electronAPI?.on?.('task:followup:error', handleFollowupError);
 });
 
 onBeforeUnmount(() => {
   window.electronAPI?.removeAllListeners?.('task:changed');
-  window.electronAPI?.removeAllListeners?.('task:followup:delta');
-  window.electronAPI?.removeAllListeners?.('task:followup:done');
-  window.electronAPI?.removeAllListeners?.('task:followup:error');
 });
 </script>
 
@@ -668,71 +574,6 @@ onBeforeUnmount(() => {
   max-height: 400px;
   overflow-y: auto;
   line-height: 1.6;
-}
-
-/* ========== 追问 ========== */
-.followup-reply {
-  font-size: 13px;
-  color: var(--text-secondary);
-  background: var(--bg-main);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.followup-streaming::after {
-  content: '▋';
-  color: var(--primary);
-  animation: blink 1s infinite;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
-}
-
-.followup-toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-
-.followup-toolbar .model-selector {
-  font-size: 12px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-main);
-  color: var(--text-primary);
-  max-width: 180px;
-  outline: none;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.followup-input-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-.followup-input {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  outline: none;
-  resize: vertical;
-  font-family: inherit;
-}
-
-.followup-input:focus {
-  border-color: var(--primary);
 }
 
 /* ========== 通用 ========== */

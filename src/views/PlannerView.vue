@@ -4,140 +4,91 @@
     <NotesGate v-if="notesLoaded && !projectOptions.length" @ready="onGateReady" />
 
     <!-- ========== 笔记任务视图 ========== -->
-    <div v-if="!notesLoaded || projectOptions.length" class="planner-body">
-      <!-- 左：任务列表 -->
-      <div class="task-list-pane as-flyout" :class="{ open: taskListOpen }" @click.stop>
-        <div class="list-pane-header">
-          <span class="list-pane-title">任务列表</span>
-          <div class="list-pane-actions">
-            <button class="btn btn-primary btn-xs" @click="createTask">+ 新建任务</button>
-          </div>
-        </div>
-        <div class="list-scroll">
-          <div v-if="visibleNoteTasks.length === 0" class="list-empty">
-            暂无任务，点击「新建任务」创建
-          </div>
-          <div
-            v-for="t in visibleNoteTasks"
-            :key="t.id"
-            class="list-item"
-            :class="{ active: selectedTaskId === t.id, running: t.status === 'in_progress' }"
-            @click="selectTask(t)"
-          >
-            <div class="list-item-head">
-              <span class="list-item-title">{{ t.title }}</span>
-              <span :class="['status-badge', 'status-' + t.status]">{{ taskBadgeText(t) }}</span>
-              <span v-if="t.status === 'in_progress'" class="running-dot"></span>
-            </div>
-            <div class="list-item-meta">
-              <span class="list-item-project">📚 {{ projectNameById(t.project_id) || '未关联' }}</span>
-              <span class="list-item-trigger">{{ getTriggerText(t) }}</span>
-            </div>
-            <div v-if="t.last_run_at" class="list-item-meta list-item-last">
-              最近执行：{{ t.last_run_at }}（{{ t.last_status === 'SUCCESS' ? '成功' : t.last_status === 'FAILED' ? '失败' : t.last_status || '未执行' }}）
-            </div>
-          </div>
-        </div>
-      </div>
+    <div v-if="!notesLoaded || projectOptions.length" class="planner-body planner-col">
 
-      <!-- 右：任务详情 -->
-      <div class="task-detail-pane">
-        <!-- 无任务：直接给新建任务页（保存后自动纳入调度） -->
-        <div v-if="!selectedTask" class="task-create-page">
-          <div class="tcp-top">
-            <button class="flyout-toggle" title="任务列表" @click.stop="toggleTaskList()">
-              <AppIcon name="list-checks" :size="14" />
-              <span>任务</span>
-              <AppIcon name="chevron-down" :size="12" />
-            </button>
+      <!-- ========== 综合页 ========== -->
+      <template v-if="viewMode === 'overview'">
+        <div class="ov-scroll">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">任务中心</h1>
+              <p class="page-sub">AI 任务的计划、执行与运行记录，每次运行都会留档。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn btn-primary btn-sm" @click="createTask">+ 新建任务</button>
+            </div>
           </div>
-          <div class="tcp-inner">
-            <div class="tcp-head">
-              <AppIcon name="workflow" :size="20" />
-              <h1 class="tcp-title">新建任务</h1>
+
+          <div class="statline">
+            <span>任务 <b class="acc">{{ taskCount }}</b></span>
+            <span>已开启循环 <b>{{ activeCycleCount }}</b></span>
+            <span>累计执行 <b>{{ execTotal }}</b> 次</span>
+            <span class="warm">近期失败 <b>{{ recentFailedCount }}</b></span>
+          </div>
+
+          <div class="sec-label"><AppIcon name="clock" :size="13" />最近运行<em>每次执行都有记录</em></div>
+          <div class="panel list-panel">
+            <div v-for="ex in recentRuns" :key="ex.id" class="file-row" @click="openTaskById(ex.task_id)">
+              <span :class="['status-badge', 'status-' + ex.status]">{{ execStatusText(ex.status) }}</span>
+              <span class="plan-tx">
+                <b>{{ ex.task_title }}</b>
+                <small>{{ ex.start_time }} · {{ triggerLabel(ex.trigger_type) }}{{ briefText(ex.error_message || ex.result_text) ? ' · ' + briefText(ex.error_message || ex.result_text) : '' }}</small>
+              </span>
             </div>
-            <p class="tcp-sub">描述要让 AI 执行的事：立即跑一次，或按周期自动执行，结果写入项目笔记。</p>
-            <div class="tcp-form">
-              <div class="form-group">
-                <label>所属项目 *</label>
-                <select class="form-control" v-model="editing.project_id">
-                  <option :value="null" disabled>请选择项目</option>
-                  <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}{{ p.is_default ? '（默认）' : '' }}</option>
-                </select>
+            <div v-if="!recentRuns.length" class="empty-row">还没有执行记录：点任务卡片的「立即执行」，或等定时任务到点自动跑</div>
+          </div>
+
+          <div class="sec-label"><AppIcon name="workflow" :size="13" />任务卡片<em>{{ visibleNoteTasks.length }}</em></div>
+          <div class="task-grid">
+            <div
+              v-for="t in visibleNoteTasks"
+              :key="t.id"
+              class="task-card"
+              :class="{ running: t.status === 'in_progress' }"
+              @click="openTask(t)"
+            >
+              <div class="tc-head">
+                <span class="tc-title">{{ t.title }}</span>
+                <span :class="['status-badge', 'status-' + t.status]">{{ taskBadgeText(t) }}</span>
+                <span v-if="t.status === 'in_progress'" class="running-dot"></span>
               </div>
-              <div class="form-group">
-                <label>任务标题 *</label>
-                <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 竞品价格巡检">
+              <div class="tc-meta">
+                <span>📚 {{ projectNameById(t.project_id) || '未关联' }}</span>
+                <span>⏱ {{ getTriggerText(t) }}</span>
               </div>
-              <div class="form-group">
-                <label>任务诉求（AI 将据此执行）</label>
-                <textarea class="form-control tcp-prompt" v-model="editing.prompt" rows="4" placeholder="描述要让 AI 做什么，越具体越好…"></textarea>
+              <div v-if="t.last_run_at" class="tc-last">
+                最近：{{ t.last_run_at }}（{{ t.last_status === 'SUCCESS' ? '成功' : t.last_status === 'FAILED' ? '失败' : t.last_status || '未执行' }}）
               </div>
-              <div class="form-row">
-                <div class="form-group">
-                  <label>执行方式</label>
-                  <select class="form-control" v-model="editing.trigger_type">
-                    <option value="now">立即执行一次</option>
-                    <option value="once">指定时间执行一次</option>
-                    <option value="cycle">定时循环执行</option>
-                  </select>
-                </div>
-                <div class="form-group" v-if="editing.trigger_type === 'once'">
-                  <label>执行时间 *</label>
-                  <input type="datetime-local" class="form-control" v-model="editing.scheduled_start">
-                </div>
-              </div>
-              <template v-if="editing.trigger_type === 'cycle'">
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>循环类型</label>
-                    <select class="form-control" v-model="editing.cycle_type">
-                      <option value="daily">每天</option>
-                      <option value="weekly">每周</option>
-                      <option value="monthly">每月</option>
-                      <option value="cron">Cron 表达式</option>
-                    </select>
-                  </div>
-                  <div class="form-group" v-if="editing.cycle_type !== 'cron'">
-                    <label>执行时间</label>
-                    <input type="time" class="form-control" v-model="editing.cycle_time">
-                  </div>
-                </div>
-                <div class="form-group" v-if="editing.cycle_type === 'weekly'">
-                  <label>星期几（可多选）</label>
-                  <div class="week-select">
-                    <label v-for="d in weekDays" :key="d.value" class="week-chip">
-                      <input type="checkbox" :value="d.value" v-model="editingWeekDays">
-                      {{ d.label }}
-                    </label>
-                  </div>
-                </div>
-                <div class="form-group" v-if="editing.cycle_type === 'monthly'">
-                  <label>每月几号</label>
-                  <input type="number" class="form-control" v-model.number="editingMonthDays" min="1" max="31" placeholder="如 1 或 1,15">
-                </div>
-                <div class="form-group" v-if="editing.cycle_type === 'cron'">
-                  <label>Cron 表达式</label>
-                  <input type="text" class="form-control" v-model="editing.cycle_value" placeholder="如 0 9 * * *（每天早上 9 点）">
-                </div>
-              </template>
-              <label class="check-item">
-                <input type="checkbox" v-model="editing.notify_feishu">
-                完成后推送飞书
-              </label>
-              <div class="tcp-actions">
-                <button class="btn btn-primary" :disabled="!canSaveTask" @click="saveTask">{{ editing.trigger_type === 'now' ? '保存并立即执行' : '保存任务' }}</button>
+              <div class="tc-actions">
+                <button
+                  v-if="t.trigger_type === 'cycle'"
+                  class="btn btn-xs"
+                  :class="isTaskOn(t) ? 'btn-secondary' : 'btn-primary'"
+                  :disabled="t.status === 'in_progress'"
+                  @click.stop="toggleTask(t)"
+                >{{ isTaskOn(t) ? '⏸ 暂停' : '▶ 开启' }}</button>
+                <button
+                  v-if="canRun(t)"
+                  class="btn btn-secondary btn-xs"
+                  :disabled="t.status === 'in_progress'"
+                  @click.stop="runTask(t)"
+                >{{ t.status === 'in_progress' ? '执行中…' : '▶ 立即执行' }}</button>
+                <button
+                  class="btn btn-secondary btn-xs"
+                  :disabled="!!t.last_run_at && t.task_type !== 'daily_report'"
+                  @click.stop="editTask(t)"
+                >编辑</button>
               </div>
             </div>
+            <div v-if="!visibleNoteTasks.length" class="empty-row">暂无任务，点击右上角「+ 新建任务」创建</div>
           </div>
         </div>
-        <template v-else>
+      </template>
+
+      <!-- ========== 任务详情 ========== -->
+      <div v-else-if="selectedTask" class="task-detail-pane">
           <div class="detail-header">
-            <button class="flyout-toggle" title="任务列表" @click.stop="toggleTaskList()">
-              <AppIcon name="list-checks" :size="14" />
-              <span>任务</span>
-              <AppIcon name="chevron-down" :size="12" />
-            </button>
+            <button class="btn btn-secondary btn-sm" @click="backToOverview">← 返回任务中心</button>
             <div class="detail-title-wrap">
               <h2 class="detail-title">{{ selectedTask.title }}</h2>
               <div class="detail-badges">
@@ -151,13 +102,13 @@
                 v-if="selectedTask.trigger_type === 'cycle'"
                 class="btn btn-sm"
                 :class="isTaskOn(selectedTask) ? 'btn-secondary' : 'btn-primary'"
-                :disabled="selectedTask.status === 'in_progress' || selectedTask.followupRunning"
+                :disabled="selectedTask.status === 'in_progress'"
                 @click="toggleTask(selectedTask)"
               >{{ isTaskOn(selectedTask) ? '⏸ 暂停调度' : '▶ 开启' }}</button>
               <button
-                v-if="selectedTask.trigger_type !== 'now'"
+                v-if="canRun(selectedTask)"
                 class="btn btn-secondary btn-sm"
-                :disabled="selectedTask.status === 'in_progress' || selectedTask.followupRunning"
+                :disabled="selectedTask.status === 'in_progress'"
                 @click="runTask(selectedTask)"
               >{{ selectedTask.status === 'in_progress' ? '执行中…' : '▶ 立即执行' }}</button>
               <button
@@ -172,35 +123,17 @@
           </div>
 
           <div class="detail-scroll">
-            <div class="detail-info">
-              <span class="di-item">📦 {{ projectNameById(selectedTask.project_id) || '未关联' }}</span>
-              <span class="di-item">⏱ {{ getTriggerText(selectedTask) }}</span>
-              <span class="di-item">🕐 {{ selectedTask.created_at || '-' }}</span>
-              <span v-if="selectedTask.output_target" class="di-item">📄 {{ selectedTask.output_target }}</span>
-            </div>
-
-            <div v-if="selectedTask.prompt" class="detail-section">
-              <div class="section-title">任务诉求</div>
-              <div class="prompt-text">{{ selectedTask.prompt }}</div>
-            </div>
-
             <div class="detail-section">
-              <div class="section-title">对话记录</div>
-              <div v-if="selectedMessages.length === 0" class="empty-sub">暂无对话记录</div>
-              <div v-for="(msg, idx) in selectedMessages" :key="idx" class="message" :class="msg.role">
-                <div class="message-avatar">
-                  <span v-if="msg.role === 'user'">👤</span>
-                  <span v-else-if="msg.role === 'assistant'">🤖</span>
-                  <span v-else>🔧</span>
-                </div>
-                <div class="message-body">
-                  <div class="message-header">
-                    <span class="message-role">{{ msg.role === 'user' ? '我' : msg.role === 'assistant' ? 'AI 助理' : msg.role === 'tool' ? '工具' : '系统' }}</span>
-                  </div>
-                  <div class="message-content" :class="{ 'markdown-body': msg.role === 'assistant' }">
-                    <div v-html="msg.role === 'user' ? formatUserMessage(msg.content) : renderMarkdown(msg.content)"></div>
-                  </div>
-                </div>
+              <div class="section-title">执行计划</div>
+              <div class="plan-grid">
+                <div class="plan-item"><span class="plan-k">所属项目</span><span class="plan-v">{{ projectNameById(selectedTask.project_id) || '未关联' }}</span></div>
+                <div class="plan-item"><span class="plan-k">执行方式</span><span class="plan-v">{{ triggerWayText(selectedTask) }}</span></div>
+                <div v-if="selectedTask.trigger_type === 'cycle'" class="plan-item"><span class="plan-k">重复规则</span><span class="plan-v">{{ cycleRuleText(selectedTask) }}</span></div>
+                <div v-if="selectedTask.cycle_end" class="plan-item"><span class="plan-k">循环结束</span><span class="plan-v">{{ selectedTask.cycle_end }}</span></div>
+                <div v-if="selectedTask.last_cycle_run" class="plan-item"><span class="plan-k">上次循环触发</span><span class="plan-v">{{ selectedTask.last_cycle_run }}</span></div>
+                <div class="plan-item"><span class="plan-k">创建时间</span><span class="plan-v">{{ selectedTask.created_at || '-' }}</span></div>
+                <div v-if="selectedTask.output_target" class="plan-item"><span class="plan-k">输出位置</span><span class="plan-v">{{ selectedTask.output_target }}</span></div>
+                <div class="plan-item"><span class="plan-k">飞书推送</span><span class="plan-v">{{ selectedTask.notify_feishu ? '开启' : '关闭' }}</span></div>
               </div>
             </div>
 
@@ -208,40 +141,19 @@
               <div class="section-title">执行记录</div>
               <div v-if="selectedExecutions.length === 0" class="empty-sub">暂无执行记录</div>
               <div v-for="ex in selectedExecutions" :key="ex.id" class="execution-card">
-                <div class="exec-header">
-                  <span :class="['status-badge', 'status-' + ex.status]">{{ ex.status }}</span>
+                <div class="exec-header" @click="toggleExecOpen(ex)">
+                  <span :class="['status-badge', 'status-' + ex.status]">{{ execStatusText(ex.status) }}</span>
                   <span class="exec-trigger">{{ triggerLabel(ex.trigger_type) }}</span>
                   <span class="exec-time">{{ ex.start_time }}</span>
                   <span v-if="ex.end_time" class="exec-time">→ {{ ex.end_time }}</span>
+                  <span v-if="ex.result_text || ex.error_message" class="exec-expand">{{ ex._open ? '▲ 收起' : '▼ 运行结果' }}</span>
                 </div>
                 <div v-if="ex.error_message" class="exec-error">❌ {{ ex.error_message }}</div>
-                <div v-if="ex.result_text" class="exec-result markdown-body" v-html="renderMarkdown(ex.result_text)"></div>
-              </div>
-            </div>
-
-            <div class="detail-section">
-              <div class="section-title">追问</div>
-              <div v-if="selectedTask.followupDone" class="followup-reply markdown-body" v-html="renderMarkdown(selectedTask.followupReply)"></div>
-              <div v-if="selectedTask.followupRunning" class="followup-reply markdown-body followup-streaming" v-html="renderMarkdown(selectedTask.followupReply)"></div>
-              <div class="followup-toolbar">
-                <select class="model-selector" v-model="selectedModel" :disabled="selectedTask.followupRunning" title="选择模型">
-                  <option value="">默认模型</option>
-                  <option v-for="m in followupModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
-                </select>
-              </div>
-              <div class="followup-input-row">
-                <textarea
-                  v-model="selectedTask.followupText"
-                  class="followup-input"
-                  rows="2"
-                  placeholder="输入追问内容，将沿用该任务的原对话上下文继续执行…"
-                  @keydown.enter.exact.prevent="sendFollowup(selectedTask)"
-                ></textarea>
-                <button class="btn btn-primary btn-sm" :disabled="!(selectedTask.followupText || '').trim() || selectedTask.followupRunning" @click="sendFollowup(selectedTask)">{{ selectedTask.followupRunning ? '执行中…' : '发送' }}</button>
+                <div v-if="ex._open && ex.result_text" class="exec-result markdown-body" v-html="renderMarkdown(ex.result_text)"></div>
+                <div v-else-if="!ex._open && ex.result_text" class="exec-brief">{{ briefText(ex.result_text) }}</div>
               </div>
             </div>
           </div>
-        </template>
       </div>
 
       <!-- 新建项目模态框 -->
@@ -396,11 +308,10 @@ interface AiTask {
   id: number; title: string; prompt: string; description: string; priority: string;
   status: string; task_type: string; project_id: number | null; source: string;
   trigger_type: string; scheduled_start: string; cycle_type: string; cycle_value: string;
-  cycle_time: string; output_target: string; notify_feishu: boolean;
+  cycle_time: string; cycle_end?: string; output_target: string; notify_feishu: boolean;
   last_result: string; last_run_at: string; last_status: string; session_id: string;
+  last_cycle_run?: string;
   created_at?: string;
-  executions?: any[]; showHistory?: boolean; showFollowup?: boolean;
-  followupText?: string; followupReply?: string; followupRunning?: boolean; followupDone?: boolean;
 }
 
 interface Project { id: number; name: string; type: string; dir: string; is_default?: number; }
@@ -437,9 +348,39 @@ function projectNameById(pid: number | null): string {
   return p ? p.name : '';
 }
 
-// ========== 右栏：任务详情 ==========
+// ========== 综合页 ==========
+const viewMode = ref<'overview' | 'detail'>('overview');
+const recentRuns = ref<any[]>([]);
+const execTotal = ref(0);
+
+async function loadRecentRuns() {
+  try {
+    const r = await API.task.executionList(1, 8);
+    recentRuns.value = (r?.rows || []).map((x: any) => ({ ...x, _open: false }));
+    execTotal.value = r?.total || 0;
+  } catch { recentRuns.value = []; }
+}
+
+const taskCount = computed(() => visibleNoteTasks.value.length);
+const activeCycleCount = computed(() => visibleNoteTasks.value.filter(t => t.trigger_type === 'cycle' && isTaskOn(t)).length);
+const recentFailedCount = computed(() => recentRuns.value.filter((x: any) => x.status === 'FAILED').length);
+
+function execStatusText(s: string): string {
+  if (s === 'SUCCESS') return '成功';
+  if (s === 'FAILED') return '失败';
+  if (s === 'RUNNING') return '运行中';
+  return s || '排队';
+}
+
+/** 文本摘要（最近运行行 / 执行记录折叠态共用） */
+function briefText(s: any): string {
+  return String(s || '').replace(/\s+/g, ' ').slice(0, 80);
+}
+
+function toggleExecOpen(ex: any) { ex._open = !ex._open; }
+
+// ========== 任务详情 ==========
 const selectedTaskId = ref<number | null>(null);
-const selectedMessages = ref<any[]>([]);
 const selectedExecutions = ref<any[]>([]);
 
 const selectedTask = computed(() => {
@@ -447,72 +388,33 @@ const selectedTask = computed(() => {
   return tasks.value.find(t => t.id === selectedTaskId.value) || null;
 });
 
-// 任务列表浮层（不再常驻第三栏）：记忆开合状态，点击外部 / Esc 关闭
-const taskListOpen = ref(localStorage.getItem('qihang-planner-list') === '1');
-function toggleTaskList() {
-  taskListOpen.value = !taskListOpen.value;
-  localStorage.setItem('qihang-planner-list', taskListOpen.value ? '1' : '0');
-}
-function onGlobalClickTaskList() { taskListOpen.value = false; }
-function onEscTaskList(e: KeyboardEvent) { if (e.key === 'Escape') taskListOpen.value = false; }
-onMounted(() => {
-  document.addEventListener('click', onGlobalClickTaskList);
-  document.addEventListener('keydown', onEscTaskList);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener('click', onGlobalClickTaskList);
-  document.removeEventListener('keydown', onEscTaskList);
-});
-
-function selectTask(t: AiTask) {
-  taskListOpen.value = false;
+/** 从综合页进入任务详情 */
+function openTask(t: AiTask) {
   selectedTaskId.value = t.id;
-  if (t.followupText === undefined) t.followupText = '';
-  if (t.followupReply === undefined) t.followupReply = '';
-  if (t.followupRunning === undefined) t.followupRunning = false;
-  if (t.followupDone === undefined) t.followupDone = false;
+  viewMode.value = 'detail';
   loadSelectedDetail();
+}
+
+function openTaskById(id: number) {
+  const t = tasks.value.find(x => x.id === Number(id));
+  if (t) openTask(t);
+}
+
+function backToOverview() {
+  viewMode.value = 'overview';
+  selectedTaskId.value = null;
+  selectedExecutions.value = [];
 }
 
 async function loadSelectedDetail() {
   const t = selectedTask.value;
-  if (!t) { selectedMessages.value = []; selectedExecutions.value = []; return; }
-  if (t.session_id) {
-    try { selectedMessages.value = await API.chat.getMessages(t.session_id); } catch { selectedMessages.value = []; }
-  } else {
-    selectedMessages.value = [];
-  }
+  if (!t) { selectedExecutions.value = []; return; }
   if (t.trigger_type !== 'now') {
-    try { selectedExecutions.value = await API.task.executions(t.id); } catch { selectedExecutions.value = []; }
+    try { selectedExecutions.value = (await API.task.executions(t.id)).map((x: any) => ({ ...x, _open: false })); } catch { selectedExecutions.value = []; }
   } else {
     selectedExecutions.value = [];
   }
 }
-
-function ensureSelectedTask() {
-  const list = visibleNoteTasks.value;
-  if (list.length === 0) {
-    selectedTaskId.value = null;
-    selectedMessages.value = [];
-    selectedExecutions.value = [];
-    return;
-  }
-  if (selectedTaskId.value === null || !list.some(t => t.id === selectedTaskId.value)) {
-    selectedTaskId.value = list[0].id;
-  }
-  loadSelectedDetail();
-}
-
-watch(noteTaskFilter, () => { ensureSelectedTask(); });
-
-// 任务清空时，把内联新建表单重置为默认状态
-watch(() => visibleNoteTasks.value.length, (n) => {
-  if (n === 0) {
-    const def = projectOptions.value.find((p) => p.is_default) || projectOptions.value[0];
-    editing.value = emptyTask();
-    editing.value.project_id = def ? def.id : null;
-  }
-});
 
 // ========== 模态框状态 ==========
 const showTaskModal = ref(false);
@@ -524,18 +426,6 @@ const editingMonthDays = ref<number | string>(1);
 const enableAfterSave = ref(false);
 watch(showTaskModal, (v) => { if (!v) enableAfterSave.value = false; });
 
-// 内联新建页的可保存判断（与弹窗保存校验一致）
-const canSaveTask = computed(() => {
-  const t = editing.value;
-  if (!t.project_id || !t.title.trim()) return false;
-  if (!isSystemTask(t) && !t.prompt.trim()) return false;
-  if (t.trigger_type === 'once' && !t.scheduled_start) return false;
-  if (t.trigger_type === 'cycle') {
-    if (t.cycle_type === 'weekly' && !editingWeekDays.value.length) return false;
-    if (t.cycle_type === 'cron' && !(t.cycle_value || '').trim()) return false;
-  }
-  return true;
-});
 const showDeleteModal = ref(false);
 const deletingTask = ref<AiTask | null>(null);
 const deletingProject = ref<Project | null>(null);
@@ -560,19 +450,12 @@ function emptyTask(): AiTask {
 // ========== 数据加载 ==========
 async function loadTasks() {
   try {
-    tasks.value = (await API.task.list()).map((t: any) => ({ ...t, notify_feishu: !!t.notify_feishu, showHistory: false }));
+    tasks.value = (await API.task.list()).map((t: any) => ({ ...t, notify_feishu: !!t.notify_feishu }));
   } catch { tasks.value = []; }
-  ensureSelectedTask();
 }
 
 async function loadProjects() {
   try { projects.value = (await API.project.list()) || []; } catch { projects.value = []; }
-  // 内联新建页的默认归属：默认项目（或第一个）
-  if (editing.value.project_id == null) {
-    const def = projects.value.find((p) => p.is_default) || projects.value[0];
-    if (def) editing.value.project_id = def.id;
-  }
-  ensureSelectedTask();
 }
 
 // ========== 项目 CRUD ==========
@@ -655,8 +538,8 @@ async function saveTask() {
     }
     showTaskModal.value = false;
     await loadTasks();
+    await loadRecentRuns();
     if (createdId !== null) selectedTaskId.value = createdId;
-    ensureSelectedTask();
   } catch (e: any) { alert('操作失败: ' + (e.message || e)); }
 }
 
@@ -664,6 +547,7 @@ async function runTask(task: AiTask) {
   try {
     await API.task.execute(task.id);
     await loadTasks();
+    await loadRecentRuns();
     await loadSelectedDetail();
   } catch (e: any) { alert('执行失败: ' + (e.message || e)); }
 }
@@ -676,54 +560,12 @@ function openDeleteModal(task: AiTask) {
 
 async function confirmDelete() {
   if (deletingTask.value) {
-    try { await API.task.remove(deletingTask.value.id); await loadTasks(); } catch {}
+    if (selectedTaskId.value === deletingTask.value.id) backToOverview();
+    try { await API.task.remove(deletingTask.value.id); await loadTasks(); await loadRecentRuns(); } catch {}
   } else if (deletingProject.value) {
     try { await API.project.delete(deletingProject.value.id); await loadProjects(); await loadTasks(); } catch {}
   }
   showDeleteModal.value = false;
-}
-
-// ========== 追问 ==========
-const followupModels = ref<any[]>([]);
-const selectedModel = ref('');
-
-async function loadFollowupModels() {
-  try {
-    const res = await API.pi.models();
-    followupModels.value = (res?.models || []).filter((m: any) => m.pattern);
-    if (!selectedModel.value && followupModels.value.some((m: any) => m.configured)) {
-      const first = followupModels.value.find((m: any) => m.configured);
-      if (first) selectedModel.value = first.pattern;
-    }
-  } catch { followupModels.value = []; }
-}
-
-async function sendFollowup(task: AiTask) {
-  const q = (task.followupText || '').trim();
-  if (!q || task.followupRunning) return;
-  task.followupText = ''; task.followupRunning = true; task.followupDone = false;
-  task.followupReply = '> ' + q + '\n\n';
-  try {
-    const ok = await API.task.followup(task.id, q, selectedModel.value || undefined);
-    if (!ok) { task.followupRunning = false; task.followupReply += '\n❌ 追问失败：任务不存在或正在执行中'; }
-  } catch (e: any) { task.followupRunning = false; task.followupDone = true; task.followupReply += '\n❌ ' + (e.message || e); }
-}
-
-function handleFollowupDelta(payload: any) {
-  const t = tasks.value.find((x: any) => x.id === payload.taskId);
-  if (t && t.followupRunning) t.followupReply += payload.delta;
-}
-
-function handleFollowupDone(payload: any) {
-  const t = tasks.value.find((x: any) => x.id === payload.taskId);
-  if (t) { t.followupRunning = false; t.followupDone = true; t.followupReply = payload.text || t.followupReply; }
-  loadTasks();
-}
-
-function handleFollowupError(payload: any) {
-  const t = tasks.value.find((x: any) => x.id === payload.taskId);
-  if (t) { t.followupRunning = false; t.followupDone = true; t.followupReply += '\n\n❌ ' + (payload.error || '执行出错'); }
-  loadTasks();
 }
 
 // ========== 渲染工具 ==========
@@ -732,11 +574,10 @@ const renderMarkdown = (content: string) => {
   return marked(content, { async: false }) as string;
 };
 
-const escHtml = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const formatUserMessage = (s: string) => escHtml(s).replace(/\n/g, '<br>');
-
 const isSystemTask = (t: AiTask) => t.task_type === 'daily_report';
 const isTaskOn = (t: AiTask) => t.status === 'pending' || t.status === 'in_progress';
+/** 立即执行入口：循环/定时任务随时可手动跑；now 型任务最近一次失败后可重跑 */
+const canRun = (t: AiTask) => t.trigger_type !== 'now' || t.last_status === 'FAILED';
 
 function taskBadgeText(t: AiTask): string {
   if (isSystemTask(t) && !t.project_id) return '未开启';
@@ -790,31 +631,47 @@ function triggerLabel(type: string): string {
   switch (type) {
     case 'manual': return '立即';
     case 'scheduled': return '定时';
+    case 'followup': return '追问';
     default: return type;
   }
 }
 
-function onTaskChanged() { loadTasks(); }
+/** 详情「执行计划」：执行方式 */
+function triggerWayText(t: AiTask): string {
+  if (t.trigger_type === 'once') return '指定时间执行一次';
+  if (t.trigger_type === 'cycle') return '定时循环执行';
+  return '立即执行';
+}
+
+/** 详情「执行计划」：循环规则（每周几 / 每月几号 / Cron / 每天） */
+function cycleRuleText(t: AiTask): string {
+  const time = t.cycle_time ? ' ' + t.cycle_time : '';
+  if (t.cycle_type === 'weekly') return '每周' + weekDaysText(t.cycle_value) + time;
+  if (t.cycle_type === 'monthly') return '每月 ' + (t.cycle_value || '') + ' 号' + time;
+  if (t.cycle_type === 'cron') return 'Cron：' + (t.cycle_value || '');
+  return '每天' + time;
+}
+
+function weekDaysText(v: any): string {
+  const names: Record<string, string> = { '1': '一', '2': '二', '3': '三', '4': '四', '5': '五', '6': '六', '0': '日' };
+  return String(v || '').split(',').filter(Boolean).map((d: string) => names[d] || d).join('、');
+}
+
+function onTaskChanged() { loadTasks(); loadRecentRuns(); }
 
 async function onGateReady() {
   await loadProjects();
 }
 
 onMounted(async () => {
-  await Promise.all([loadProjects(), loadTasks(), loadFollowupModels()]);
+  await Promise.all([loadProjects(), loadTasks()]);
   notesLoaded.value = true;
-  ensureSelectedTask();
+  loadRecentRuns();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
-  window.electronAPI?.on?.('task:followup:delta', handleFollowupDelta);
-  window.electronAPI?.on?.('task:followup:done', handleFollowupDone);
-  window.electronAPI?.on?.('task:followup:error', handleFollowupError);
 });
 
 onBeforeUnmount(() => {
   window.electronAPI?.removeAllListeners?.('task:changed');
-  window.electronAPI?.removeAllListeners?.('task:followup:delta');
-  window.electronAPI?.removeAllListeners?.('task:followup:done');
-  window.electronAPI?.removeAllListeners?.('task:followup:error');
 });
 </script>
 
@@ -825,188 +682,76 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   display: flex;
-  overflow: hidden;
-  position: relative;
-}
-
-/* ========== 左：任务列表（浮层模式，不再常驻第三栏） ========== */
-.task-list-pane.as-flyout {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  bottom: 12px;
-  width: 344px;
-  min-width: 0;
-  z-index: 60;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
-  display: none;
   flex-direction: column;
   overflow: hidden;
-}
-
-.task-list-pane.as-flyout.open { display: flex; }
-
-.flyout-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
-}
-.flyout-toggle:hover {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
-.empty-open-btn { margin-top: 6px; }
-
-/* ========== 无任务：内联新建任务页 ========== */
-.task-create-page {
   position: relative;
+}
+
+/* ========== 综合页 ========== */
+.ov-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding: 18px 22px;
+}
+.ov-scroll .sec-label { margin: 18px 0 8px; }
+.statline {
   display: flex;
-  justify-content: center;
-  background: var(--bg-main);
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
-.tcp-top {
-  position: absolute;
-  top: 14px;
-  left: 16px;
-  z-index: 5;
-}
-.tcp-inner {
-  width: 100%;
-  max-width: 640px;
-  padding: 7vh 24px 40px;
-}
-.tcp-head {
+.statline b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.statline b.acc { color: var(--primary); }
+.statline .warm b { color: var(--warning); }
+
+.list-panel { display: flex; flex-direction: column; }
+.file-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  justify-content: center;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  cursor: pointer;
 }
-.tcp-head svg { color: var(--primary); }
-.tcp-title { font-size: 24px; font-weight: 700; color: var(--text-primary); }
-.tcp-sub {
-  margin-top: 10px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-muted);
+.file-row:first-child { border-top: none; }
+.file-row > svg { color: var(--primary); flex-shrink: 0; }
+.file-row > .status-badge { flex-shrink: 0; }
+.file-row:hover { background: var(--primary-soft); }
+.plan-tx { flex: 1; min-width: 0; }
+.plan-tx b { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-tx small { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty-row { font-size: 12px; color: var(--text-muted); padding: 14px; text-align: center; }
+
+/* 任务卡片网格 */
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
 }
-.tcp-form {
-  margin-top: 24px;
+.task-grid .empty-row { grid-column: 1 / -1; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius-md); }
+.task-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 20px 22px;
-  box-shadow: var(--shadow-sm);
-}
-.tcp-prompt { resize: vertical; min-height: 96px; }
-.tcp-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
-
-.list-pane-header {
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.list-pane-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.list-pane-actions { display: flex; gap: 6px; align-items: center; }
-
-.list-pane-filter {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.filter-select {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  outline: none;
-  background: var(--surface);
+  padding: 12px 14px;
   cursor: pointer;
-  color: var(--text-secondary);
-}
-
-.list-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.list-empty {
-  padding: 32px 16px;
-  font-size: 12px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.list-item {
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  margin-bottom: 2px;
-  transition: background 0.15s;
-  border: 1px solid transparent;
-}
-
-.list-item:hover { background: rgba(var(--primary-rgb),0.05); }
-.list-item.active { background: rgba(var(--primary-rgb),0.1); border-color: rgba(var(--primary-rgb),0.25); }
-.list-item.running { border-color: var(--primary); }
-
-.list-item-head {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.list-item-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.list-item-meta {
-  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  font-size: 11px;
-  color: var(--text-muted);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
+.task-card:hover { border-color: rgba(var(--primary-rgb), 0.4); box-shadow: var(--shadow-sm); }
+.task-card.running { border-color: var(--primary); }
+.tc-head { display: flex; align-items: center; gap: 8px; }
+.tc-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-meta { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--text-muted); }
+.tc-last { font-size: 11px; color: var(--text-muted); border-top: 1px dashed var(--border); padding-top: 6px; }
+.tc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.list-item-project { color: var(--text-secondary); }
 
 /* ========== 右：任务详情 ========== */
 .task-detail-pane {
@@ -1015,16 +760,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: var(--bg-main);
-}
-
-.detail-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--text-muted);
+  overflow: hidden;
 }
 
 .detail-header {
@@ -1070,14 +806,15 @@ onBeforeUnmount(() => {
   padding: 20px 24px;
 }
 
-.detail-info {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-  font-size: 13px;
-  color: var(--text-secondary);
+/* 执行计划（循环信息）网格 */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
 }
+.plan-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plan-k { font-size: 11px; color: var(--text-muted); }
+.plan-v { font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .detail-section {
   background: var(--surface);
@@ -1095,56 +832,7 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
 }
 
-.prompt-text {
-  font-size: 13px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--bg-main);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  line-height: 1.6;
-}
-
 .empty-sub { font-size: 13px; color: var(--text-muted); }
-
-/* ========== 对话气泡 ========== */
-.message {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.message-avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--hover);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  flex-shrink: 0;
-}
-
-.message.user .message-avatar { background: rgba(var(--primary-rgb), 0.1); }
-.message.assistant .message-avatar { background: rgba(34, 197, 94, 0.1); }
-
-.message-body { flex: 1; min-width: 0; }
-.message-header { margin-bottom: 4px; }
-.message-role { font-size: 12px; font-weight: 500; color: var(--text-muted); }
-
-.message-content {
-  font-size: 14px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  padding: 10px 14px;
-  background: var(--bg-main);
-  border-radius: var(--radius-sm);
-  word-break: break-word;
-}
-
-.message.assistant .message-content { background: var(--success-soft); }
 
 /* ========== 执行记录 ========== */
 .execution-card {
@@ -1160,6 +848,18 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.exec-expand { margin-left: auto; font-size: 11px; color: var(--primary); flex-shrink: 0; }
+
+.exec-brief {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .exec-trigger, .exec-time { font-size: 12px; color: var(--text-muted); }
@@ -1182,32 +882,6 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   line-height: 1.6;
 }
-
-/* ========== 追问 ========== */
-.followup-reply {
-  font-size: 13px;
-  color: var(--text-secondary);
-  background: var(--bg-main);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.followup-streaming::after {
-  content: '▋';
-  color: var(--primary);
-  animation: blink 1s infinite;
-}
-
-@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
-
-.followup-input-row { display: flex; gap: 8px; align-items: flex-end; }
-.followup-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; resize: vertical; font-family: inherit; }
-.followup-input:focus { border-color: var(--primary); }
-.followup-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-.followup-toolbar .model-selector { font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-main); color: var(--text-primary); max-width: 180px; outline: none; cursor: pointer; transition: all 0.2s; }
 
 /* ========== 通用 ========== */
 .btn-xs { padding: 4px 10px; font-size: 12px; }

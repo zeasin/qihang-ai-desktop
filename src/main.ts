@@ -56,7 +56,8 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
           if (t) { t.status = 'done'; t.last_run_at = iso(0); t.last_status = 'SUCCESS'; }
           return true;
         },
-        followup: async () => true, executions: async () => [],
+        followup: async () => { throw new Error('任务不支持追问'); }, executions: async () => [],
+        executionList: async () => ({ total: 0, rows: [] }),
       };
     })(),
     chat: (() => {

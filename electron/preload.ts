@@ -5,7 +5,6 @@ const VALID_CHANNELS = [
   'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
   'report:generated', 'aitool:delta', 'task:changed',
-  'task:followup:delta', 'task:followup:done', 'task:followup:error',
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -193,7 +192,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: number, data: unknown) => ipcRenderer.invoke('task:update', id, data),
     remove: (id: number) => ipcRenderer.invoke('task:remove', id),
     execute: (id: number) => ipcRenderer.invoke('task:execute', id),
-    followup: (taskId: number, question: string, model?: string) => ipcRenderer.invoke('task:followup', { taskId, question, model }),
     executions: (taskId: number) => ipcRenderer.invoke('task:executions', taskId),
     executionList: (page: number, pageSize: number) => ipcRenderer.invoke('task:execution:list', page, pageSize),
     executionGet: (id: number) => ipcRenderer.invoke('task:execution:get', id),

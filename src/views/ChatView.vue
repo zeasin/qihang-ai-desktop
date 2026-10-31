@@ -72,10 +72,6 @@
           </button>
         </div>
         <div class="draft-inner">
-          <div class="draft-tabs">
-            <button class="draft-tab on" type="button"><AppIcon name="message-square" :size="13" />对话</button>
-            <button class="draft-tab" type="button" @click="router.push('/planner')"><AppIcon name="workflow" :size="13" />任务</button>
-          </div>
           <h1 class="draft-title">新建对话</h1>
           <p class="draft-sub">
             在
@@ -1073,39 +1069,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-}
-.draft-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 22px;
-}
-.draft-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 16px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.draft-tab.on {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-  font-weight: 600;
-}
-.draft-tab:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.draft-tab:not(.on):not(:disabled):hover {
-  color: var(--primary);
-  border-color: var(--primary);
 }
 .draft-title {
   font-size: 26px;
