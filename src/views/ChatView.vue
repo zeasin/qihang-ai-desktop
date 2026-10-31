@@ -2,134 +2,15 @@
   <div class="chat-home">
     <!-- ========== 对话视图 ========== -->
     <div class="chat-body">
-    <!-- ========== 左栏：对话列表 ========== -->
-    <div v-show="sessionsOpen" class="chat-sidebar session-flyout" @click.stop>
-      <div class="sidebar-header">
-        <h3 class="sidebar-title">会话记录</h3>
-        <button class="btn btn-sm btn-primary" @click="newSession()">+ 新对话</button>
-      </div>
-
-      <div class="conversation-groups" v-if="sessions.length || workProjects.length" ref="conversationListRef">
-        <div v-for="group in convGroups" :key="group.key" class="conv-group">
-          <div
-            class="conv-group-header"
-            :class="{ current: groupIsCurrent(group) }"
-            :title="group.key === 'recent' ? '最近 72 小时内活跃的对话 · 点击折叠/展开' : (group.project ? (group.project.dir || group.project.name) + ' · 点击折叠/展开' : '未绑定项目的对话')"
-            @click="toggleGroup(group.key)"
-          >
-            <span class="group-arrow" :class="{ collapsed: isGroupCollapsed(group.key) }">▾</span>
-            <span class="group-icon">{{ group.key === 'recent' ? '🕘' : (group.project ? '📁' : '💬') }}</span>
-            <span class="group-name">{{ group.key === 'recent' ? '最近' : (group.project ? group.project.name : '未分组') }}</span>
-            <span class="group-count">{{ group.sessions.length }}</span>
-            <button
-              v-if="group.project"
-              class="group-add"
-              title="在此项目下新建对话"
-              @click.stop="newSession(group.project.id)"
-            >＋</button>
-          </div>
-
-          <div v-show="!isGroupCollapsed(group.key)" class="conversation-list">
-            <div
-              v-for="session in group.sessions"
-              :key="session.session_id || session.id"
-              class="conversation-item"
-              :class="{ active: currentSessionId === (session.session_id || String(session.id)) }"
-              @click="selectSession(session)"
-            >
-              <span class="conv-icon">{{ runningSessionIds.has(session.session_id || String(session.id)) ? '⏳' : '🗨️' }}</span>
-              <div class="conv-info">
-                <div class="conv-title">
-                  <span v-if="session.source === 'feishu'" class="conv-badge" title="来自飞书">飞书</span>{{ session.title || '新对话' }}
-                </div>
-                <div class="conv-preview">{{ session.last_message || '' }}</div>
-              </div>
-              <span class="conv-time">{{ fmtSessionTime(session) }}</span>
-              <span class="conv-delete" @click.stop="deleteSession(session.session_id || session.id)" title="删除">×</span>
-            </div>
-            <div v-if="!group.sessions.length" class="group-empty">暂无对话</div>
-          </div>
-        </div>
-      </div>
-      <div v-else class="sidebar-empty">
-        <div class="empty-icon">💬</div>
-        <div class="empty-text">还没有对话，开始第一个吧</div>
-      </div>
-    </div>
-
-    <!-- ========== 右栏：对话区 ========== -->
+    <!-- ========== 对话区 ========== -->
     <div class="chat-main">
       <!-- 未添加项目：AI 功能门禁 -->
       <NotesGate v-if="kbLoaded && !kbLibraries.length" @ready="onGateReady" />
 
-      <!-- 新建对话页（懒创建：真正发送后才创建会话） -->
-      <div v-else-if="kbLoaded && (draftMode || !currentSessionId)" class="draft-page">
-        <div class="draft-top">
-          <button class="sessions-toggle" title="会话记录" @click.stop="sessionsOpen = !sessionsOpen">
-            <AppIcon name="list-checks" :size="14" />
-            <span>会话</span>
-            <AppIcon name="chevron-down" :size="12" />
-          </button>
-        </div>
-        <div class="draft-inner">
-          <h1 class="draft-title">新建对话</h1>
-          <p class="draft-sub">
-            在
-            <select class="draft-project" v-model="selectedProjectId" :disabled="isStreaming" @change="onProjectChange">
-              <option :value="null">不绑定项目</option>
-              <option v-for="p in workProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
-              <option :value="NEW_PROJECT">＋ 新建项目…</option>
-            </select>
-            里把要做的事说清楚，回车即开始
-          </p>
-          <div class="draft-composer">
-            <div v-if="pendingImages.length" class="draft-images">
-              <div v-for="(img, i) in pendingImages" :key="i" class="draft-img">
-                <img :src="'data:' + img.mimeType + ';base64,' + img.data" alt="" />
-                <button class="draft-img-del" @click="removeImage(i)">×</button>
-              </div>
-            </div>
-            <textarea
-              ref="draftInputRef"
-              v-model="inputText"
-              class="draft-input"
-              rows="3"
-              placeholder="描述这次对话要做的事，Enter 发送…"
-              @keydown.enter.exact.prevent="sendMessage()"
-            ></textarea>
-            <div class="draft-toolbar">
-              <input ref="fileInputRef" type="file" accept="image/*" multiple style="display:none" @change="handleImageUpload" />
-              <button class="draft-tool" title="添加图片" @click="pickImage()"><AppIcon name="paperclip" :size="14" /></button>
-              <select class="draft-select" v-model="selectedModel" :disabled="isStreaming || modelsLoading" title="选择模型">
-                <option value="">默认模型</option>
-                <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
-                <option v-for="m in piModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
-              </select>
-              <span class="draft-hint">Enter 发送 · Shift+Enter 换行</span>
-              <button class="draft-send" :disabled="(!inputText.trim() && !pendingImages.length) || isStreaming" title="发送" @click="sendMessage()">
-                <AppIcon name="send" :size="15" />
-              </button>
-            </div>
-          </div>
-          <div class="draft-meta">
-            <template v-if="draftProject">
-              <span>📁 {{ draftProject.name }}</span>
-              <span class="draft-meta-dim">{{ draftProject.dir }}</span>
-            </template>
-            <span v-else>未绑定项目 · 发送后可随时切换</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 有对话时 -->
-      <template v-else>
+      <!-- 有会话：对话详情 -->
+      <template v-else-if="currentSessionId">
         <div class="chat-header">
           <div class="chat-header-left">
-            <button class="sessions-toggle" title="会话记录" @click.stop="sessionsOpen = !sessionsOpen">
-              <AppIcon name="list-checks" :size="14" />
-              <span>会话</span>
-              <AppIcon name="chevron-down" :size="12" />
-            </button>
             <h3 class="chat-title">{{ currentSession?.title || '对话' }}</h3>
             <span
               v-if="currentSession?.source === 'feishu'"
@@ -139,7 +20,6 @@
             <span v-if="currentProject" class="chat-project-badge" :title="currentProject.dir || ''">📁 {{ currentProject.name }}</span>
           </div>
           <div class="chat-header-right">
-            <button class="btn btn-primary btn-sm" @click="newSession()" title="新建对话"><AppIcon name="plus" :size="13" />新对话</button>
             <span class="agent-status-dot" :class="isStreaming ? 'busy' : 'ready'"></span>
             <span class="agent-state">{{ isStreaming ? '生成中' : '空闲' }}</span>
           </div>
@@ -213,17 +93,6 @@
                   </svg>
                 </button>
                 <input ref="fileInputRef" type="file" accept="image/*" multiple style="display:none" @change="handleImageUpload" />
-                <select
-                  class="model-selector project-selector"
-                  v-model="selectedProjectId"
-                  :disabled="isStreaming"
-                  title="对话所属项目（决定 AI 的工作目录，发送后仍可切换）"
-                  @change="onProjectChange"
-                >
-                  <option :value="null">📁 不绑定项目</option>
-                  <option v-for="p in workProjects" :key="p.id" :value="p.id">📁 {{ p.name }}</option>
-                  <option :value="NEW_PROJECT">＋ 新建项目…</option>
-                </select>
                 <select class="model-selector" v-model="selectedModel" :disabled="isStreaming || modelsLoading" title="选择模型">
                   <option value="">默认模型</option>
                   <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
@@ -250,6 +119,13 @@
           </div>
         </div>
       </template>
+
+      <!-- 无会话：兜底空态（正常会被重定向到 /new） -->
+      <div v-else class="chat-empty">
+        <div class="empty-icon">💬</div>
+        <div class="empty-desc">选择左侧对话，或开始一个新对话</div>
+        <button class="btn btn-primary" @click="router.push('/new')">新建对话</button>
+      </div>
     </div>
   </div>
   </div>
@@ -274,117 +150,50 @@ const router = useRouter();
 
 // ========== 状态 ==========
 const sessions = ref<any[]>([]);
-const sessionsOpen = ref(false);
 const currentSessionId = ref('');
 const currentSession = ref<any>(null);
 
-// 会话浮层：点击外部 / Esc 关闭
-function onGlobalClickCloseSessions() { sessionsOpen.value = false; }
-function onEscCloseSessions(e: KeyboardEvent) { if (e.key === 'Escape') sessionsOpen.value = false; }
-onMounted(() => {
-  document.addEventListener('click', onGlobalClickCloseSessions);
-  document.addEventListener('keydown', onEscCloseSessions);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener('click', onGlobalClickCloseSessions);
-  document.removeEventListener('keydown', onEscCloseSessions);
-});
-// 侧栏「新对话」：同路由下点击也能触发草稿页
-watch(() => route.query.new, (v) => {
-  if (v === '1') {
-    newSession();
-    router.replace({ path: '/chat' });
+// 侧栏对话树：?session= 直达指定会话（已在会话中则忽略）
+async function openFromQuery(sid: string) {
+  if (!sid || currentSessionId.value === sid) return;
+  let target = sessions.value.find((x: any) => (x.session_id || String(x.id)) === sid);
+  if (!target) {
+    await loadSessions();
+    target = sessions.value.find((x: any) => (x.session_id || String(x.id)) === sid);
   }
+  if (target) await selectSession(target);
+}
+watch(() => route.query.session, (v) => {
+  if (typeof v === 'string' && v) void openFromQuery(v);
 });
 const messages = ref<any[]>([]);
 const inputText = ref('');
 const composing = ref(false);
 const kbLibraries = ref<any[]>([]);
 const kbLoaded = ref(false);
-// ===== 项目（本地目录；笔记库也是项目，统一管理） =====
+// ===== 项目（本地目录；笔记库也是项目，统一管理；详情页只读） =====
 const workProjects = ref<any[]>([]);
-const NEW_PROJECT = '__new__';
-const PROJECT_PICK_KEY = 'chat_home_project';
-const GROUP_COLLAPSE_KEY = 'chat_home_collapsed_groups';
-const selectedProjectId = ref<number | null | typeof NEW_PROJECT>(null);
-const collapsedGroups = ref<string[]>(loadCollapsedGroups());
+const selectedProjectId = ref<number | null>(null);
 const currentProject = computed(() => {
   const id = Number(selectedProjectId.value);
   return Number.isFinite(id) ? workProjects.value.find((p: any) => p.id === id) || null : null;
 });
 const defaultKb = computed(() => kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null);
-// 会话活跃时间：列表排序与「最近」分组的依据（updated_at 为最后一条消息落库时间）
+// 会话活跃时间：进入对话页默认展示最近活跃一条的排序依据（updated_at 为最后一条消息落库时间）
 function sessionTime(s: any): number {
   const raw = String(s.updated_at || s.created_at || '').replace(' ', 'T');
   const t = raw ? new Date(raw).getTime() : 0;
   return Number.isFinite(t) ? t : 0;
 }
 
-function fmtSessionTime(s: any): string {
-  const t = sessionTime(s);
-  if (!t) return '';
-  const d = new Date(t);
-  const now = new Date();
-  const diff = now.getTime() - t;
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  if (diff < 5 * 60 * 1000) return '刚刚';
-  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)} 分钟前`;
-  if (d.toDateString() === now.toDateString()) return hm;
-  const yesterday = new Date(now.getTime() - 86400000);
-  if (d.toDateString() === yesterday.toDateString()) return `昨天 ${hm}`;
-  if (d.getFullYear() === now.getFullYear()) return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-const RECENT_WINDOW = 72 * 3600 * 1000;
-
-const convGroups = computed(() => {
-  // 全列表按最近对话时间倒序
-  const sorted = [...sessions.value].sort((a, b) => sessionTime(b) - sessionTime(a));
-  const groups: { key: string; project: any; sessions: any[] }[] = [];
-  // 「最近」分组：72 小时内活跃的前 8 条，置顶快达（条目同时保留在各自项目分组里）
-  const recent = sorted.filter((s) => Date.now() - sessionTime(s) < RECENT_WINDOW).slice(0, 8);
-  if (recent.length) groups.push({ key: 'recent', project: null, sessions: recent });
-  const projGroups = workProjects.value.map((p: any) => ({ key: 'p' + p.id, project: p, sessions: [] as any[] }));
-  const byId = new Map(projGroups.map((g) => [g.project.id, g]));
-  const loose: any[] = [];
-  for (const s of sorted) {
-    const pid = s.project_id === null || s.project_id === undefined ? null : Number(s.project_id);
-    const g = pid !== null ? byId.get(pid) : undefined;
-    (g ? g.sessions : loose).push(s);
-  }
-  if (loose.length || !projGroups.length) projGroups.push({ key: 'loose', project: null, sessions: loose });
-  groups.push(...projGroups);
-  return groups;
-});
 const inputRef = ref<HTMLTextAreaElement>();
 const messagesContainer = ref<HTMLElement>();
-const conversationListRef = ref<HTMLElement>();
 const pendingImages = ref<{ data: string; mimeType: string }[]>([]);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const piModels = ref<{ provider: string; providerLabel: string; id: string; name: string; pattern: string; configured: boolean }[]>([]);
 const selectedModel = ref('');
 const modelsLoaded = ref(false);
 const modelsLoading = ref(false);
-
-// ========== 新建对话（懒创建：真正发送后才建数据库会话） ==========
-const draftMode = ref(false);
-const draftInputRef = ref<HTMLTextAreaElement | null>(null);
-const draftProject = computed(() => {
-  const id = Number(selectedProjectId.value);
-  return Number.isFinite(id) && id > 0 ? workProjects.value.find((p: any) => p.id === id) || null : null;
-});
-function enterDraft(projectId?: number | null) {
-  draftMode.value = true;
-  if (projectId !== undefined && projectId !== null) {
-    selectedProjectId.value = projectId;
-  } else if (typeof selectedProjectId.value !== 'number') {
-    const def = kbLibraries.value.find((l: any) => l.isDefault) || kbLibraries.value[0] || null;
-    selectedProjectId.value = def ? def.id : null;
-  }
-  sessionsOpen.value = false;
-  nextTick(() => draftInputRef.value?.focus());
-}
 
 // ========== 每会话进行中的流 ==========
 // 监听只绑一次，事件按 sessionId 落到各自的缓冲：切走再切回来仍能看到这一轮的真实进度，
@@ -417,7 +226,6 @@ const liveMessage = computed(() => {
 });
 /** 只有当前会话在跑才锁输入：别的会话在回答不影响这里打字 */
 const isStreaming = computed(() => currentStream.value.running);
-const runningSessionIds = computed(() => new Set(Object.keys(streams.value).filter((sid) => streams.value[sid].running)));
 
 /** 历史消息 + 当前会话正在进行的那条 */
 const viewMessages = computed(() => {
@@ -459,30 +267,7 @@ const CHAT_STATE_KEY = 'chat_home_state';
 const CHAT_MODEL_KEY = 'chat_home_model_pi';
 
 // ========== 加载数据 ==========
-// ===== 项目：会话通过 project_id 归属，项目目录即 AI 的工作目录 =====
-function loadCollapsedGroups(): string[] {
-  try {
-    const saved = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) || '[]');
-    return Array.isArray(saved) ? saved.filter((k: any) => typeof k === 'string') : [];
-  } catch { return []; }
-}
-function isGroupCollapsed(key: string): boolean {
-  return collapsedGroups.value.includes(key);
-}
-function toggleGroup(key: string) {
-  collapsedGroups.value = isGroupCollapsed(key)
-    ? collapsedGroups.value.filter((k) => k !== key)
-    : collapsedGroups.value.concat(key);
-  try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(collapsedGroups.value)); } catch {}
-}
-function expandGroup(key: string) {
-  if (!isGroupCollapsed(key)) return;
-  collapsedGroups.value = collapsedGroups.value.filter((k) => k !== key);
-  try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(collapsedGroups.value)); } catch {}
-}
-function groupIsCurrent(group: { sessions: any[] }): boolean {
-  return !!currentSessionId.value && group.sessions.some((s) => (s.session_id || String(s.id)) === currentSessionId.value);
-}
+// ===== 项目：会话通过 project_id 归属，项目目录即 AI 的工作目录（详情页只读，项目在新建对话时选定） =====
 
 /** 当前会话绑定的项目（历史会话可能挂在项目或 null） */
 function sessionProjectId(): number | null {
@@ -494,18 +279,6 @@ function sessionProjectId(): number | null {
 
 function syncProjectFromSession() {
   selectedProjectId.value = sessionProjectId();
-  expandGroup(selectedProjectId.value !== null ? 'p' + selectedProjectId.value : 'loose');
-}
-function rememberProjectPick() {
-  try {
-    if (typeof selectedProjectId.value === 'number') localStorage.setItem(PROJECT_PICK_KEY, String(selectedProjectId.value));
-    else localStorage.removeItem(PROJECT_PICK_KEY);
-  } catch {}
-}
-function restoreProjectPick() {
-  if (currentSessionId.value) return;
-  const saved = Number(localStorage.getItem(PROJECT_PICK_KEY) || '');
-  if (Number.isFinite(saved) && workProjects.value.some((p: any) => p.id === saved)) selectedProjectId.value = saved;
 }
 
 /** 会话这一轮的工作目录：项目目录即该项目的库目录；日常对话沿用默认项目 */
@@ -591,7 +364,6 @@ async function loadMessages(sessionId: string) {
 
 // ========== 对话操作 ==========
 async function selectSession(session: any) {
-  draftMode.value = false;
   const sid = session.session_id || String(session.id);
   const stale = streams.value[sid];
   if (stale && !stale.running) {
@@ -604,115 +376,40 @@ async function selectSession(session: any) {
   currentSession.value = session;
   syncProjectFromSession();
   await loadMessages(sid);
-  sessionsOpen.value = false;
   saveState();
 }
 
-// 「新建对话」只进入草稿页，不再立刻写库；真正发送时才 createSession
-function newSession(projectId?: number | null) {
-  enterDraft(projectId);
-}
-
-async function createSessionNow(pid: number | null): Promise<string | null> {
-  const id = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-  try {
-    const session = await API.chat.createSession(id, pid, '新对话', 'general', 'general', 'ui');
-    currentSessionId.value = id;
-    currentSession.value = session;
-    selectedProjectId.value = pid;
-    expandGroup(pid !== null ? 'p' + pid : 'loose');
-    rememberProjectPick();
-    messages.value = [];
-    await loadSessions();
-    saveState();
-    return id;
-  } catch (e: any) {
-    console.error('创建对话失败:', e);
-    return null;
-  }
-}
-
-async function deleteSession(sessionId: string) {
-  if (!confirm('确定删除此对话？')) return;
-  try {
-    await API.chat.deleteSession(sessionId);
-    delete streams.value[sessionId];
-    if (currentSessionId.value === sessionId) {
-      currentSessionId.value = '';
-      currentSession.value = null;
-      messages.value = [];
-      localStorage.removeItem(CHAT_STATE_KEY);
-    }
-    await loadSessions();
-  } catch (e: any) {
-    console.error('删除失败:', e);
-  }
-}
-
-// ========== 项目切换 ==========
-function savedProjectPick(): number | null {
-  const n = Number(localStorage.getItem(PROJECT_PICK_KEY) || '');
-  return Number.isFinite(n) && workProjects.value.some((p: any) => p.id === n) ? n : null;
-}
-
-async function onProjectChange() {
-  if (selectedProjectId.value === NEW_PROJECT) {
-    await createProjectFromPicker();
-    return;
-  }
-  const pid = typeof selectedProjectId.value === 'number' ? selectedProjectId.value : null;
-  if (!currentSessionId.value) {
-    rememberProjectPick();
-    if (pid !== null) expandGroup('p' + pid);
-    return;
-  }
-  try {
-    const r = await API.chat.updateProject(currentSessionId.value, pid);
-    if (r && r.ok === false) throw new Error(r.error || '切换项目失败');
-    if (currentSession.value) currentSession.value.project_id = pid;
-    rememberProjectPick();
-    await loadSessions();
-    expandGroup(pid !== null ? 'p' + pid : 'loose');
-  } catch (e: any) {
-    selectedProjectId.value = sessionProjectId();
-    alert('切换项目失败: ' + (e?.message || e));
-  }
-}
-
-async function createProjectFromPicker() {
-  const previous = currentSessionId.value ? sessionProjectId() : savedProjectPick();
-  try {
-    const dir = await API.dialog.openDirectory();
-    if (!dir) { selectedProjectId.value = previous; return; }
-    const base = String(dir).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '新项目';
-    const name = (prompt('项目名称', base) || '').trim() || base;
-    const p = await API.project.add(name, 'note', dir, '', '');
-    await loadWorkProjects();
-    selectedProjectId.value = p.id;
-    rememberProjectPick();
-    if (currentSessionId.value) {
-      const r = await API.chat.updateProject(currentSessionId.value, p.id);
-      if (r && r.ok === false) throw new Error(r.error || '绑定项目失败');
-      if (currentSession.value) currentSession.value.project_id = p.id;
-      await loadSessions();
-    }
-    expandGroup('p' + p.id);
-  } catch (e: any) {
-    selectedProjectId.value = previous;
-    alert('创建项目失败: ' + (e?.message || e));
-  }
-}
 
 // ========== 状态持久化 ==========
 function saveState() {
   try {
     localStorage.setItem(CHAT_STATE_KEY, JSON.stringify({ sessionId: currentSessionId.value }));
+    // 通知侧栏对话树同步当前会话高亮（storage 事件同窗口不触发）
+    window.dispatchEvent(new Event('chat-state-changed'));
   } catch (e) {
     console.error('保存对话状态失败:', e);
   }
 }
 
-// 会话恢复策略已改为「进页展示最近活跃的一条」（见 onMounted），旧的状态恢复逻辑废弃
+// ========== 新建对话页交接的首条消息 ==========
+// NewChatView 发送时才懒创建会话，然后把 {sessionId, text, images} 交给这里发送：
+// 本页的 chat 事件监听已就绪，流式回包不会因为切页而丢。
+const NEW_CHAT_HANDOFF_KEY = 'new_chat_handoff';
+function consumeHandoff() {
+  try {
+    const raw = sessionStorage.getItem(NEW_CHAT_HANDOFF_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(NEW_CHAT_HANDOFF_KEY);
+    const obj = JSON.parse(raw);
+    if (obj?.sessionId !== currentSessionId.value) return;
+    const text = String(obj.text || '').trim();
+    const images = Array.isArray(obj.images) ? obj.images : [];
+    if (!text && !images.length) return;
+    pendingImages.value = images;
+    inputText.value = text;
+    doSend(text);
+  } catch {}
+}
 
 // ========== 图片处理 ==========
 function handlePaste(event: ClipboardEvent) {
@@ -760,15 +457,10 @@ function removeImage(index: number) {
 async function sendMessage() {
   const text = inputText.value.trim();
   if ((!text && !pendingImages.value.length) || isStreaming.value) return;
-
-  // 草稿页首次发送：此刻才创建数据库会话
-  if (draftMode.value || !currentSessionId.value) {
-    const pid = selectedProjectId.value === NEW_PROJECT
-      ? null
-      : (typeof selectedProjectId.value === 'number' ? selectedProjectId.value : null);
-    const sid = await createSessionNow(pid);
-    if (!sid) return;
-    draftMode.value = false;
+  // 详情页只处理已存在的会话；新建走独立的 /new 页
+  if (!currentSessionId.value) {
+    router.replace({ path: '/new' });
+    return;
   }
   doSend(text);
 }
@@ -921,17 +613,6 @@ const scrollToBottom = () => {
   });
 };
 
-const scrollToActiveConversation = () => {
-  nextTick(() => {
-    if (conversationListRef.value && currentSessionId.value) {
-      const activeItem = conversationListRef.value.querySelector('.conversation-item.active');
-      if (activeItem) {
-        activeItem.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      }
-    }
-  });
-};
-
 const autoResizeTextarea = () => {
   if (inputRef.value) {
     inputRef.value.style.height = 'auto';
@@ -943,20 +624,22 @@ const autoResizeTextarea = () => {
 onMounted(async () => {
   await Promise.all([loadKbLibraries(), loadWorkProjects(), loadSessions(), loadPiModels()]);
 
-  // 侧栏「新对话」快速入口：/chat?new=1 直接进草稿页
-  if (route.query.new === '1') {
-    newSession();
-    router.replace({ path: '/chat' });
+  const qs = typeof route.query.session === 'string' ? route.query.session : '';
+  if (qs) {
+    // 侧栏对话树点进来的：直达指定会话
+    await openFromQuery(qs);
   } else if (sessions.value.length > 0) {
     // 进入对话页默认展示最近活跃的一条（以最后一条消息时间为准）
     const latest = [...sessions.value].sort((a, b) => sessionTime(b) - sessionTime(a))[0];
     await selectSession(latest);
-    scrollToActiveConversation();
-  } else {
-    // 没有会话时进入新建对话页，沿用上次选的项目作为默认归属
-    restoreProjectPick();
   }
-  
+
+  if (!currentSessionId.value) {
+    // 没有可展示的会话（或 ?session= 没找到）：新建对话走独立页面
+    router.replace({ path: '/new' });
+    return;
+  }
+
   // 工具箱跳转：?prompt= 预填输入框
   const qp = route.query.prompt;
   if (typeof qp === 'string' && qp.trim()) {
@@ -966,6 +649,9 @@ onMounted(async () => {
 
   // 对话事件全程只绑这一次：桌面自己发的、移动端发的都走同一套缓冲
   bindChatEvents();
+
+  // 新建对话页交接的首条消息（监听已就绪，此时发出不丢流）
+  consumeHandoff();
 
   // 移动端经中继打进来的动态：全程挂着，不随切会话收放
   API.on('chat:remote', onRemoteMessage);
@@ -1000,394 +686,6 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-/* ========== 会话浮层（从对话页头部唤出，不再常驻三栏） ========== */
-.session-flyout {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  width: 348px;
-  max-height: calc(100% - 24px);
-  z-index: 60;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.sessions-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
-}
-.sessions-toggle:hover {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
-/* 会话条目时间 */
-.conv-time {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-/* ========== 新建对话页（懒创建） ========== */
-.draft-page {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  justify-content: center;
-  background: var(--bg-main);
-}
-.draft-top {
-  position: absolute;
-  top: 14px;
-  left: 16px;
-  z-index: 5;
-}
-.draft-inner {
-  width: 100%;
-  max-width: 720px;
-  padding: 9vh 24px 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.draft-title {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: 0.01em;
-}
-.draft-sub {
-  margin-top: 12px;
-  font-size: 14px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.draft-project {
-  border: none;
-  border-bottom: 1px dashed var(--primary);
-  background: none;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--primary);
-  cursor: pointer;
-  outline: none;
-  padding: 0 2px;
-}
-.draft-composer {
-  width: 100%;
-  margin-top: 26px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow-md);
-  display: flex;
-  flex-direction: column;
-  transition: border-color 0.15s;
-}
-.draft-composer:focus-within { border-color: var(--primary); }
-.draft-images {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 12px 14px 0;
-}
-.draft-img {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-}
-.draft-img img { width: 100%; height: 100%; object-fit: cover; }
-.draft-img-del {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.draft-input {
-  width: 100%;
-  border: none;
-  outline: none;
-  background: none;
-  resize: none;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--text-primary);
-  padding: 16px 18px 8px;
-  min-height: 88px;
-}
-.draft-input::placeholder { color: var(--text-muted); }
-.draft-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--border);
-}
-.draft-tool {
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.draft-tool:hover { background: var(--hover); color: var(--text-primary); }
-.draft-select {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12.5px;
-  padding: 6px 10px;
-  outline: none;
-  cursor: pointer;
-}
-.draft-hint {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-.draft-send {
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 50%;
-  background: var(--primary);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.15s;
-}
-.draft-send:hover:not(:disabled) { background: var(--primary-dark); }
-.draft-send:disabled { opacity: 0.4; cursor: not-allowed; }
-.draft-meta {
-  margin-top: 14px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.draft-meta-dim {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-
-.sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  background: var(--surface);
-}
-
-.sidebar-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.conversation-groups {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.conv-group {
-  margin-bottom: 6px;
-}
-
-.conv-group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  user-select: none;
-  color: var(--text-secondary);
-  transition: background 0.15s;
-}
-
-.conv-group-header:hover {
-  background: #eef2f7;
-}
-
-.conv-group-header.current .group-name {
-  color: var(--primary);
-}
-
-.group-arrow {
-  font-size: 10px;
-  width: 12px;
-  text-align: center;
-  color: var(--text-muted);
-  transition: transform 0.15s;
-}
-
-.group-arrow.collapsed {
-  transform: rotate(-90deg);
-}
-
-.group-icon {
-  font-size: 12px;
-}
-
-.group-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.group-count {
-  font-size: 10px;
-  color: var(--text-muted);
-  background: var(--hover);
-  border-radius: 8px;
-  padding: 1px 6px;
-}
-
-.group-add {
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 5px;
-  cursor: pointer;
-  visibility: hidden;
-}
-
-.conv-group-header:hover .group-add {
-  visibility: visible;
-}
-
-.group-add:hover {
-  color: var(--primary);
-  background: rgba(var(--primary-rgb), 0.1);
-}
-
-.conversation-list {
-  padding: 2px 0 2px 12px;
-}
-
-.group-empty {
-  font-size: 11px;
-  color: #b0bac7;
-  padding: 6px 12px;
-}
-
-.conversation-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 10px;
-  margin-bottom: 4px;
-}
-
-.conversation-item:hover {
-  background: var(--surface);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  transform: translateX(2px);
-}
-
-.conversation-item.active {
-  background: linear-gradient(135deg, rgba(var(--primary-rgb), 0.12), rgba(139, 92, 246, 0.08));
-  border-left: 3px solid var(--primary);
-  box-shadow: 0 2px 8px rgba(var(--primary-rgb), 0.1);
-}
-
-.conv-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(var(--primary-rgb), 0.1);
-  border-radius: 6px;
-}
-
-.conv-info {
-  flex: 1;
-  overflow: hidden;
-  min-width: 0;
-}
-
-.conv-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* 飞书来源会话的来源徽标（列表条目 + 聊天区头部共用飞书品牌蓝） */
 .conv-badge,
 .chat-source-badge {
@@ -1408,63 +706,6 @@ onBeforeUnmount(() => {
   padding: 1px 7px;
   font-size: 11px;
   line-height: 17px;
-}
-
-.conv-preview {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-top: 3px;
-}
-
-.conv-delete {
-  font-size: 16px;
-  color: var(--text-muted);
-  cursor: pointer;
-  visibility: hidden;
-  width: 24px;
-  height: 24px;
-  text-align: center;
-  border-radius: 6px;
-  flex-shrink: 0;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.conversation-item:hover .conv-delete {
-  visibility: visible;
-}
-
-.conv-delete:hover {
-  color: var(--danger);
-  background: rgba(239, 68, 68, 0.1);
-  transform: scale(1.1);
-}
-
-.sidebar-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 20px;
-  gap: 8px;
-}
-
-.sidebar-empty .empty-icon {
-  font-size: 32px;
-  opacity: 0.3;
-}
-
-.sidebar-empty .empty-text {
-  font-size: 13px;
-  color: var(--text-muted);
 }
 
 /* ========== 右栏 ========== */
