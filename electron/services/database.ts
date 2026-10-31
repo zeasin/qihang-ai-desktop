@@ -74,23 +74,6 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
-    CREATE TABLE IF NOT EXISTS kb_documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      path TEXT NOT NULL UNIQUE,
-      content TEXT NOT NULL,
-      indexed_at TEXT,
-      file_mtime INTEGER,
-      title TEXT DEFAULT '',
-      project_id INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS kb_chunks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      doc_id INTEGER NOT NULL REFERENCES kb_documents(id),
-      content TEXT NOT NULL,
-      embedding TEXT
-    );
-
     CREATE TABLE IF NOT EXISTS data_center_datasets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       dataset_id TEXT,
@@ -243,14 +226,10 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
   // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
   try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
-  // kb_documents 多项目归属迁移：存量索引挂到默认（或第一个）项目
-  try { getDb().exec("ALTER TABLE kb_documents ADD COLUMN project_id INTEGER DEFAULT 0"); } catch (e) {}
-  try {
-    getDb().exec(`UPDATE kb_documents SET project_id =
-      (SELECT id FROM prj_projects ORDER BY is_default DESC, id ASC LIMIT 1)
-      WHERE (project_id = 0 OR project_id IS NULL)
-        AND (SELECT id FROM prj_projects ORDER BY is_default DESC, id ASC LIMIT 1) IS NOT NULL`);
-  } catch (e) {}
+  // 索引路线已整体下线：向量索引表（kb_documents / kb_chunks）连同 rag.ts、indexer.ts 一并删除。
+  // 项目库的检索与读写改由 pi agent 用原生 read/bash/write 直接做；概览看板改为实时扫盘统计。
+  try { getDb().exec('DROP TABLE IF EXISTS kb_chunks'); } catch (e) {}
+  try { getDb().exec('DROP TABLE IF EXISTS kb_documents'); } catch (e) {}
   // prj_messages 旧库补列：thinking 存思考过程、duration_ms 存该条回答耗时。
   // 必须在主键迁移之前补，那套迁移会整表重建 prj_messages 并按列名逐列 SELECT，缺列会直接失败
   ensureMessageExtraColumns();
@@ -434,9 +413,6 @@ const project = {
   },
   remove: (id) => {
     run('DELETE FROM ai_analysis WHERE project_id = ?', id);
-    // 该库的知识索引随库删除
-    run('DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', id);
-    run('DELETE FROM kb_documents WHERE project_id = ?', id);
     let sessions: any[] = [];
     try { sessions = q('SELECT session_id FROM prj_sessions WHERE project_id = ?', id); } catch {}
     for (const s of sessions) {
@@ -444,36 +420,6 @@ const project = {
     }
     run('DELETE FROM prj_sessions WHERE project_id = ?', id);
     run('DELETE FROM prj_projects WHERE id = ?', id);
-  },
-  docCount: (projectId?: number) => {
-    try {
-      const r = projectId
-        ? qOne<{c: number}>('SELECT COUNT(*) as c FROM kb_documents WHERE project_id = ?', projectId)
-        : qOne<{c: number}>('SELECT COUNT(*) as c FROM kb_documents');
-      return r ? r.c : 0;
-    } catch { return 0; }
-  },
-  insertDoc: (pathVal, content, fileMtime, title, projectId?) => {
-    run("INSERT OR REPLACE INTO kb_documents (path, content, indexed_at, file_mtime, title, project_id) VALUES (?, ?, datetime('now', '+8 hours'), ?, ?, ?)", pathVal, content, fileMtime || null, title || '', projectId || 0);
-    const r = qOne<{id: number}>('SELECT id FROM kb_documents WHERE path = ?', pathVal);
-    return r!.id;
-  },
-  insertChunk: (docId, content, embedding) => {
-    if (embedding) {
-      run('INSERT INTO kb_chunks (doc_id, content, embedding) VALUES (?, ?, ?)', docId, content, JSON.stringify(embedding));
-    } else {
-      run('INSERT INTO kb_chunks (doc_id, content) VALUES (?, ?)', docId, content);
-    }
-  },
-  getChunks: () => q<{content: string}>('SELECT c.content FROM kb_chunks c JOIN kb_documents d ON c.doc_id = d.id').map(r => r.content),
-  deleteDocs: (projectId?: number) => {
-    if (projectId) {
-      run('DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', projectId);
-      run('DELETE FROM kb_documents WHERE project_id = ?', projectId);
-    } else {
-      run('DELETE FROM kb_chunks');
-      run('DELETE FROM kb_documents');
-    }
   },
 };
 

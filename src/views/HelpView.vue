@@ -110,7 +110,7 @@
           <thead><tr><th>能力</th><th>说明</th></tr></thead>
           <tbody>
           <tr><td>💬 日常问答</td><td>通用对话，无需绑定项目即可提问</td></tr>
-          <tr><td>📚 知识库检索</td><td>添加项目并在对话左上角选择项目后，AI 自动携带该项目目录下的笔记上下文回答</td></tr>
+          <tr><td>📚 知识库检索</td><td>添加项目并在对话左上角选择项目后，AI 会自己到该项目目录里搜、读笔记并回答</td></tr>
           <tr><td>💾 数据集操作</td><td>查询数据集记录，AI 可帮你新建、插入、更新数据</td></tr>
           <tr><td>📁 笔记读写</td><td>在项目目录中浏览、新建、编辑 Markdown 文件</td></tr>
           <tr><td>🌐 联网搜索</td><td>网页搜索与抓取，实时信息补充回答</td></tr>
@@ -189,15 +189,48 @@
         <table class="help-table">
           <thead><tr><th>配置项</th><th>说明</th></tr></thead>
           <tbody>
-          <tr><td>📁 项目</td><td>统一管理：添加/重命名/换目录/删除项目，指定默认项目，按项目重建索引；飞书对话与任务归档固定使用默认项目，桌面对话与任务可逐条选择项目</td></tr>
+          <tr><td>📁 项目</td><td>统一管理：添加/重命名/换目录/删除项目，指定默认项目；AI 直接读取项目目录里的 Markdown 文件作答，无需建索引；飞书对话与任务归档固定使用默认项目，桌面对话与任务可逐条选择项目</td></tr>
           <tr><td>💬 对话模型配置</td><td>新增/编辑多个模型接入点（名称、服务地址、API Key、模型列表），内置 DeepSeek、硅基流动、Ollama、自定义等快捷模板，支持连接测试</td></tr>
           <tr><td>🔗 飞书 Webhook</td><td>消息推送 URL，用于发送日报和提醒到飞书群（仅发送）</td></tr>
-          <tr><td>📩 飞书 Bot</td><td>App ID / Secret，WebSocket 长连接接收消息，可在飞书内直接对话、下发任务</td></tr>
+          <tr><td>📩 飞书 Bot</td><td>App ID / Secret，WebSocket 长连接接收消息，可在飞书内直接对话、下发任务；卡片按钮选项目见下方「📩 飞书卡片交互」</td></tr>
           <tr><td>💾 数据备份与恢复</td><td>一键备份、每日自动备份（保留 N 份）、从备份文件恢复</td></tr>
           <tr><td>📊 综合日报设置</td><td>日报保留天数管理</td></tr>
           <tr><td>🤖 日报 AI 提示词</td><td>自定义日报生成提示词（系统级工具说明可展开查看），支持恢复默认</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="card" id="sec-feishu-card">
+        <h2>📩 飞书卡片交互</h2>
+        <p class="text-muted mb-2">配置飞书 Bot 后，机器人通过交互卡片与你确认每条消息落在哪个项目，再执行。核心策略：<strong>每条消息先确认落点，再执行</strong>——即使会话之前选过项目，也会作为默认选项让你再确认一次，绝不静默落错项目。</p>
+
+        <p style="font-weight:600;margin:10px 0 6px;font-size:13px;">三种卡片</p>
+        <table class="help-table">
+          <thead><tr><th>卡片</th><th>何时出现</th><th>怎么用</th></tr></thead>
+          <tbody>
+          <tr><td>📂 请选择项目</td><td>消息未指明项目且项目数 &gt; 1（包括之前选过项目的情况）</td><td>点项目按钮直接派活；之前选过项目时，第一个按钮是「继续上下文对话（当前项目）」</td></tr>
+          <tr><td>🤖 AI 结果卡片</td><td>任务执行完成</td><td>底部标注「本条发到：X」；下方 ↻ 按钮可把同一条消息换到其他项目重跑（30 分钟内有效）</td></tr>
+          <tr><td>状态卡片</td><td>全程反馈</td><td>已接单、项目已切换、处理出错、工作单已记录等</td></tr>
+          </tbody>
+        </table>
+
+        <p style="font-weight:600;margin:10px 0 6px;font-size:13px;">项目指派方式（按钮点不了时照样能用）</p>
+        <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>点卡片按钮（推荐）：点击即派活，立刻看到「已派活到「X」」轻提示</li>
+          <li>回复序号：<code>2</code> 或 <code>/项目 2</code>（序号即卡片列表里的编号）</li>
+          <li>回复项目名：<code>/项目 笔记库</code>；行内标记 <code>[笔记库：项目名]</code> 只对这一条生效</li>
+          <li>追问上一条：<code>继续 把刚才的报告补充一段风险说明</code></li>
+        </ul>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">飞书卡片回调配置（一次性开通，按钮功能必需）</p>
+        <ol style="margin:0;padding-left:20px;font-size:13px;line-height:2;">
+          <li>登录 <a href="#" @click.prevent="openExternal('https://open.feishu.cn/')">飞书开放平台</a>，进入你的自建应用 → 「开发配置」→「事件与回调」</li>
+          <li>切到「回调配置」Tab，订阅方式选择「<strong>长连接</strong>」（推荐，无需公网域名）</li>
+          <li>在「已订阅的回调」中添加「<strong>卡片回传交互（card.action.trigger）</strong>」</li>
+          <li>创建版本并发布生效，然后重启本应用，使长连接生效</li>
+          <li>验证：在飞书里给机器人发一条消息 → 点弹出的项目选择卡片按钮，应立即看到「已派活」提示</li>
+        </ol>
+        <p class="text-muted" style="margin-top:8px;">未订阅回调时按钮点击无响应，但回复序号 /「/项目 名称」不受影响，功能不丢。</p>
       </div>
 
       <div class="card" id="sec-log">
@@ -220,6 +253,8 @@
           <tr><td>AI 答非所问，没有用到笔记</td><td>项目未添加或所选项目内容较少</td><td>在「设置 → 📁 项目」添加包含 Markdown 文件的文件夹，或在对话左上角切换项目后重新提问</td></tr>
           <tr><td>模型下拉是空的/不可用</td><td>接入点没有可用模型</td><td>到「设置 → 💬 对话模型配置」为接入添加模型 ID（管理模型）并测试连接</td></tr>
           <tr><td>飞书消息收不到</td><td>Webhook 或 Bot 配置有误</td><td>在设置页检查飞书配置，点「测试」验证</td></tr>
+          <tr><td>飞书卡片按钮点了没反应</td><td>飞书后台未订阅「卡片回传交互」回调</td><td>按上方「📩 飞书卡片交互」的开通步骤，在「回调配置」订阅 <code>card.action.trigger</code>（长连接）并发布生效；或直接回复序号 /「/项目 名称」</td></tr>
+          <tr><td>点卡片按钮提示"目标回调服务超时未响应"</td><td>旧版本应用把任务执行等在了回调里，超过飞书 3 秒响应时限</td><td>升级/重启本应用后重试；该报错不代表任务没执行——出现「已接单」即已派活，结果卡片会稍后送达</td></tr>
           <tr><td>任务没有按计划执行</td><td>任务触发方式或时间设置不对</td><td>到「任务」页检查任务的触发方式（立即/指定时间/定时循环）与最近执行记录</td></tr>
           <tr><td>提醒没弹出</td><td>提醒未启用或时间/日期不对</td><td>到「提醒」页检查开关状态，点「测试触发」验证通知</td></tr>
           <tr><td>可以完全离线使用吗</td><td>—</td><td>可以。对话模型配置为 Ollama 本地模型即可完全离线</td></tr>
@@ -248,6 +283,9 @@ import { ref, onMounted } from 'vue';
 const API = (window as any).electronAPI;
 const appVersion = ref('');
 
+/** 外部链接交给系统默认浏览器打开，避免应用窗口被导航走 */
+const openExternal = (url: string) => { try { API?.app?.openExternal?.(url); } catch {} };
+
 const sections = [
   { id: 'sec-core', icon: '✨', label: '核心卖点' },
   { id: 'sec-prereq', icon: '📋', label: '使用前必读' },
@@ -260,6 +298,7 @@ const sections = [
   { id: 'sec-reminders', icon: '🔔', label: '提醒' },
   { id: 'sec-tools', icon: '🔧', label: '工具箱' },
   { id: 'sec-config', icon: '⚙️', label: '系统配置' },
+  { id: 'sec-feishu-card', icon: '📩', label: '飞书卡片交互' },
   { id: 'sec-log', icon: '📋', label: '日志' },
   { id: 'sec-faq', icon: '❓', label: '常见问题' },
   { id: 'sec-privacy', icon: '🔒', label: '数据与隐私' },

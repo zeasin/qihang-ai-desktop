@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as db from './database';
+import * as projectScan from './project-scan';
 import { normalizeDatasetRecord } from './dataset-normalize';
 import logger from './logger';
 
@@ -253,17 +254,6 @@ async function queryMessagesTool({ date_from, date_to, role, limit }) {
   return rows.length ? JSON.stringify(rows, null, 2) : '暂无对话数据';
 }
 
-async function queryDocumentsTool({ date_from, date_to, limit }) {
-  let sql = "SELECT id, path, substr(content, 1, 300) as content, file_mtime FROM kb_documents WHERE 1=1";
-  const p: any[] = [];
-  if (date_from) { sql += ' AND file_mtime >= ?'; p.push(date_from); }
-  if (date_to) { sql += ' AND file_mtime <= ?'; p.push(date_to); }
-  sql += " AND path NOT LIKE '%node_modules%' AND path NOT LIKE '%.git%' ORDER BY file_mtime DESC LIMIT ?";
-  p.push(limit || 20);
-  const rows = db.q(sql, ...p);
-  return rows.length ? JSON.stringify(rows, null, 2) : '暂无文档更新';
-}
-
 async function queryDataRecordsTool({ dataset_name, date_from, date_to, limit }) {
   let sql = "SELECT r.*, d.name as dataset_name FROM data_center_records r LEFT JOIN data_center_datasets d ON r.dataset_id = d.id WHERE 1=1";
   const p: any[] = [];
@@ -286,7 +276,20 @@ async function queryRemindersTool() {
 
 async function getTodayInfoTool({}, kbId) {
   const projectName = kbId ? (db.qOne("SELECT name FROM prj_projects WHERE id = ?", kbId) || {}).name || '项目' : '项目';
-  return JSON.stringify({ today: getChinaDate(), yesterday: getChinaDate(-1), weekAgo: getChinaDate(-7), projectId: kbId || null, projectName }, null, 2);
+  // 笔记统计改为实时扫盘（原先来自已下线的索引表 kb_documents / query_documents 工具）
+  let notes: any = null;
+  try {
+    const perProject = projectScan.collectPerProject();
+    const scan = projectScan.collectStats();
+    notes = {
+      totalFiles: scan.fileCount,
+      todayModified: scan.todayModified,
+      perProject: perProject.map((p: any) => ({ name: p.name, files: p.docCount, todayModified: p.todayModified })),
+    };
+  } catch (e: any) {
+    notes = { error: e.message };
+  }
+  return JSON.stringify({ today: getChinaDate(), yesterday: getChinaDate(-1), weekAgo: getChinaDate(-7), projectId: kbId || null, projectName, notes }, null, 2);
 }
 
 // ========== AI 任务工具 ==========
@@ -398,7 +401,6 @@ async function buildReportToolDefs(kbId) {
   const optNum = (description?: string) => Type.Optional(Type.Union([Type.Number({ description }), Type.String(), Type.Null()]));
   return [
     { name: 'query_messages', label: 'query_messages', description: '查询聊天/对话记录（prj_messages）。可过滤日期范围、角色( user / assistant )。', parameters: Type.Object({ date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), role: optStr('角色: user / assistant'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryMessagesTool({ ...args, limit: toNumber(args.limit, 20) })) },
-    { name: 'query_documents', label: 'query_documents', description: '查询知识库中文档更新记录（kb_documents）。可过滤日期范围。', parameters: Type.Object({ date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryDocumentsTool({ ...args, limit: toNumber(args.limit, 20) })) },
     { name: 'query_data_records', label: 'query_data_records', description: '查询数据中心记录（data_center_records）。可过滤数据集名称、日期范围。', parameters: Type.Object({ dataset_name: optStr('数据集名称关键词（模糊匹配）'), date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryDataRecordsTool({ ...args, limit: toNumber(args.limit, 20) })) },
     { name: 'query_reminders', label: 'query_reminders', description: '查询已启用的提醒事项（plan_reminders）。', parameters: Type.Object({}), execute: exec(() => queryRemindersTool()) },
     { name: 'add_reminder', label: 'add_reminder', description: '创建一条定时提醒。类型: daily(每天)/weekly(每周，需 day_of_week 0=周日)/monthly(每月，需 day_of_month)/once(一次性，需 date YYYY-MM-DD)。', parameters: Type.Object({ name: Type.String({ description: '提醒名称，如 "喝水"' }), message: optStr('提醒内容'), type: optStr('类型: daily / weekly / monthly / once，默认 daily'), time: optStr('时间 HH:MM，默认 09:00'), day_of_week: optNum('weekly 用: 0-6，0=周日'), day_of_month: optNum('monthly 用: 1-31'), date: optStr('once 用: 日期 YYYY-MM-DD') }), execute: exec(addReminderTool) },

@@ -1,10 +1,12 @@
 /**
- * feishu-router 路由逻辑回归测试。
- * 覆盖：显式指令 / 行内标记 / 开头项目名 / 会话绑定 / 数字 id 防误判 / 单项目 / 多项目歧义 / 待指派暂存。
+ * feishu 链路回归测试。
+ * 覆盖：显式指令 / 行内标记 / 开头项目名 / 会话绑定 / 数字 id 防误判 / 单项目 / 多项目歧义 /
+ *       待指派暂存 / 卡片按钮与重跑记忆 / 交互卡片 JSON 结构。
  *
  * 运行：npm run compile:electron && npm run test:router
  */
 const router = require('../dist-electron/electron/services/feishu-router.js');
+const feishu = require('../dist-electron/electron/services/feishu.js');
 
 const PROJECTS = [
   { id: 1, name: '金箔雲项目', dir: '/d/jfy' },
@@ -144,6 +146,88 @@ check('不等选择时裸数字 → 走歧义', rr('2', false).needChoice, true)
 check('@机器人提及 + 指令', rr('@启航编程AI /项目 2').projectId, 8);
 check('@机器人提及 + 指令 + 正文', rr('@启航编程AI /项目 2 帮我查库存').cleanText, '帮我查库存');
 check('@机器人提及不影响普通消息', rr('@启航编程AI 帮我查库存').needChoice, true);
+
+console.log('\n[9] 卡片按钮与重跑记忆');
+// 按钮组：序号与卡片文字里的列表序号一致
+const btns = router.buildProjectButtons(PROJECTS);
+check('按钮数量 = 项目数', btns.length, 3);
+check('按钮文本带序号', btns[0].text, '1. 金箔雲项目');
+check('按钮 value 带项目 id', btns[1].value, { act: 'pick_project', pid: 2, seq: 2, rerun: false });
+check('重跑模式加 ↻ 前缀', router.buildProjectButtons(PROJECTS, { rerun: true })[0].text, '↻ 1. 金箔雲项目');
+check('重跑模式排除当前项目', router.buildProjectButtons(PROJECTS, { rerun: true, excludeId: 2 }).map(b => b.value.pid), [1, 3]);
+check('排除后序号仍连续', router.buildProjectButtons(PROJECTS, { rerun: true, excludeId: 2 }).map(b => b.text), ['↻ 1. 金箔雲项目', '↻ 2. 618大促']);
+check('有绑定时首个按钮是继续上下文对话', router.buildProjectButtons(PROJECTS, { keepLabel: '继续上下文对话（金箔雲项目）', keepId: 1 })[0].text, '继续上下文对话（金箔雲项目）');
+check('继续上下文按钮带绑定项目 id', router.buildProjectButtons(PROJECTS, { keepLabel: 'x', keepId: 1 })[0].value.pid, 1);
+check('无绑定时不加继续上下文按钮', router.buildProjectButtons(PROJECTS)[0].text, '1. 金箔雲项目');
+
+// 上一条消息记忆：供「换个项目重跑」取回正文
+check('初始没有上一条消息', router.recallLastBody('cm1'), null);
+router.rememberLastBody('cm1', '帮我查库存');
+check('记住后可取回', router.recallLastBody('cm1'), '帮我查库存');
+check('取回不消费记忆', router.recallLastBody('cm1'), '帮我查库存');
+router.rememberLastBody('cm2', '别的会话');
+check('不同会话互不干扰', router.recallLastBody('cm1'), '帮我查库存');
+check('会话绑定查询', router.boundProjectId(db, 'cb1'), null);
+db.feishuContext.set('cb1', 'group', 2);
+check('已绑定会话能查到项目 id', router.boundProjectId(db, 'cb1'), 2);
+
+console.log('\n[10] 交互卡片 JSON 结构');
+const els = feishu.buildCardElements('正文内容', {
+  note: '本条发到：笔记库',
+  buttons: [{ text: '↻ 1. 金箔雲项目', type: 'default', value: { act: 'pick_project', pid: 1, seq: 1, rerun: true } }],
+});
+check('元素数量 = 正文+note+action', els.length, 3);
+check('首个是 markdown', els[0].tag, 'markdown');
+check('正文内容正确', els[0].content, '正文内容');
+check('note 元素结构', els[1].elements[0].content, '本条发到：笔记库');
+check('action 元素', els[2].tag, 'action');
+check('按钮数量', els[2].actions.length, 1);
+check('按钮文案', els[2].actions[0].text.content, '↻ 1. 金箔雲项目');
+check('按钮类型', els[2].actions[0].type, 'default');
+check('按钮 value 带动作与项目', els[2].actions[0].value, { act: 'pick_project', pid: 1, seq: 1, rerun: true });
+check('无按钮时不产生 action 元素', feishu.buildCardElements('x').length, 1);
+check('无 note 时不产生 note 元素', feishu.buildCardElements('x', { buttons: [{ text: 'b', value: {} }] })[1].tag, 'action');
+
+console.log('\n[11] 内部 id 指令（卡片按钮派活用）');
+// 9 个项目、id 与序号完全错位：普通「/项目 2」按序号解析到第 2 个（id 8），
+// 内部「/项目#2」必须严格按 id 解析到 id 2（第 9 个）。
+const MANY = Array.from({ length: 9 }, (_, i) => ({ id: 9 - i, name: 'P' + (9 - i), dir: '/d/p' + (9 - i) }));
+const manyDb = {
+  project: { list: () => MANY.slice(), get: (id) => MANY.find(p => p.id === id) || null },
+  feishuContext: db.feishuContext,
+};
+const rm = (text) => router.resolveFeishuTarget({ text, chatId: 'rm', chatType: 'group', db: manyDb });
+check('普通 /项目 2 → 列表序号第2个', rm('/项目 2').projectId, 8);
+check('内部 /项目#2 → 严格按 id', rm('/项目#2').projectId, 2);
+check('内部 /项目#9 → id 9', rm('/项目#9').projectId, 9);
+check('内部 /项目#1 → id 1', rm('/项目#1').projectId, 1);
+check('内部指令无正文', rm('/项目#2').cleanText, '');
+check('内部指令是显式指定', rm('/项目#2').explicit, true);
+check('内部指令不触发歧义', rm('/项目#2').needChoice, false);
+check('内部指令 id 不存在 → 走歧义', rm('/项目#99').needChoice, true);
+
+console.log('\n[12] 每条消息都先问项目（needsProjectChoice）');
+const npc = (text, chatId, projectCount) => router.needsProjectChoice(
+  router.resolveFeishuTarget({ text, chatId, chatType: 'group', db }), projectCount
+);
+// 无线索 + 有绑定 → 也要问（绑定只是默认选项，不再静默执行）
+db.feishuContext.set('cbind', 'group', 1);
+check('无线索 + 有绑定 → 仍需确认', npc('帮我查库存', 'cbind', 3), true);
+check('无线索 + 无绑定 → 需确认', npc('帮我查库存', 'cnone', 3), true);
+// 消息本身已明确指定项目 → 不问
+check('/项目 指定 → 不问', npc('/项目 门店运营 帮我查库存', 'cnone', 3), false);
+check('行内标记 → 不问', npc('[笔记库：门店运营] 帮我查库存', 'cnone', 3), false);
+check('开头项目名 → 不问', npc('门店运营 帮我查库存', 'cnone', 3), false);
+// 只有一个项目 → 没得选，不问（用只有 1 个项目的库来测）
+const ONE = [{ id: 1, name: '唯一项目', dir: '/d/only' }];
+const oneDb = {
+  project: { list: () => ONE.slice(), get: (id) => ONE.find(p => p.id === id) || null },
+  feishuContext: db.feishuContext,
+};
+check('单项目 + 无线索 → 不问', router.needsProjectChoice(
+  router.resolveFeishuTarget({ text: '帮我查库存', chatId: 'cone', chatType: 'group', db: oneDb }), 1), false);
+// 认不出项目 → 必须问
+check('认不出项目 → 需确认', npc('/项目 999', 'cnone', 3), true);
 
 console.log('\n————————————————');
 console.log('通过 ' + pass + ' / 失败 ' + fail);

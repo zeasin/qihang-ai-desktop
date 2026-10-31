@@ -114,6 +114,9 @@ async function start(configData, onMessage) {
         },
         // 卡片按钮回调：点击交互卡片上的按钮时触发。
         // 需要在飞书开放平台为该应用订阅「卡片回调」事件，否则收不到点击。
+        // ⚠️ 飞书要求回调 3 秒内响应，超时客户端会弹「目标回调服务超时未响应」：
+        // 这里只做事件解析，handler 只能做快速校验并返回响应体（如 { toast: {...} }），
+        // 慢活（派 AI 任务）由 handler 自己丢到后台执行，绝不能在这里 await。
         'card.action.trigger': async (data: any) => {
           try {
             const event = (data as any).event || data;
@@ -132,10 +135,13 @@ async function start(configData, onMessage) {
             };
             logger.info('[Feishu] Card action: value=%s chatId=%s operator=%s',
               JSON.stringify(payload.value), payload.chatId, payload.operatorOpenId);
-            if (cardActionHandler) await cardActionHandler(payload);
-            else logger.warn('[Feishu] Card action received but no handler registered');
+            // 返回值（toast / card）作为回调响应回传，点击后立刻轻提示，不用等任务执行完
+            if (cardActionHandler) return await cardActionHandler(payload);
+            logger.warn('[Feishu] Card action received but no handler registered');
+            return undefined;
           } catch (e) {
             logger.error('[Feishu] Card action handler error: %s', e.message);
+            return undefined;   // 出错也回个空 OK，别让客户端一直等
           }
         },
       }),
@@ -187,6 +193,31 @@ function replyMessage(msg, content, msgType?) {
 }
 
 /**
+ * 构造交互卡片的 elements 数组（纯函数，便于单测）。
+ * extra.note：卡片底部的一行小字说明（如「本条发到：笔记库」）。
+ * extra.buttons：按钮组，每个按钮带 value（点击后通过 card.action.trigger 回传）。
+ */
+export function buildCardElements(content: string, extra?: { note?: string; buttons?: Array<{ text: string; value: any; type?: string; url?: string }> }) {
+  const elements: any[] = [{ tag: 'markdown', content }];
+  if (extra?.note) {
+    elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: extra.note }] });
+  }
+  if (extra?.buttons && extra.buttons.length) {
+    elements.push({
+      tag: 'action',
+      actions: extra.buttons.map((b) => ({
+        tag: 'button',
+        text: { tag: 'plain_text', content: b.text },
+        type: b.type || 'default',
+        value: b.value,
+        ...(b.url ? { url: b.url } : {}),
+      })),
+    });
+  }
+  return elements;
+}
+
+/**
  * 发送交互卡片。
  * extra.note：卡片底部的一行小字说明（如「本条发到：笔记库」）。
  * extra.buttons：按钮组，每个按钮带 value（点击后通过 card.action.trigger 回传）。
@@ -204,22 +235,6 @@ async function replyCard(msg, content, headerText?, extra?: { note?: string; but
     return;
   }
   try {
-    const elements: any[] = [{ tag: 'markdown', content }];
-    if (extra?.note) {
-      elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: extra.note }] });
-    }
-    if (extra?.buttons && extra.buttons.length) {
-      elements.push({
-        tag: 'action',
-        actions: extra.buttons.map((b) => ({
-          tag: 'button',
-          text: { tag: 'plain_text', content: b.text },
-          type: b.type || 'default',
-          value: b.value,
-          ...(b.url ? { url: b.url } : {}),
-        })),
-      });
-    }
     await client.im.message.create({
       params: { receive_id_type: targetType },
       data: {
@@ -227,7 +242,7 @@ async function replyCard(msg, content, headerText?, extra?: { note?: string; but
         msg_type: 'interactive',
         content: JSON.stringify({
           config: { wide_screen_mode: true },
-          elements,
+          elements: buildCardElements(content, extra),
           header: headerText
             ? { template: 'blue', title: { tag: 'plain_text', content: headerText } }
             : { template: 'blue', title: { tag: 'plain_text', content: '启航AI' } },

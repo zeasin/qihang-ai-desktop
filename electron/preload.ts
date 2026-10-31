@@ -3,8 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 const VALID_CHANNELS = [
   'chat:delta', 'chat:status', 'chat:thinking', 'chat:tool', 'chat:done', 'chat:error',
   'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session',
-  'kb:scan-progress', 'service:status', 'service:toggle', 'feishu:message',
-  'indexer:progress', 'report:generated', 'aitool:delta', 'task:changed',
+  'service:status', 'service:toggle', 'feishu:message',
+  'report:generated', 'aitool:delta', 'task:changed',
   'task:followup:delta', 'task:followup:done', 'task:followup:error',
 ];
 
@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     version: () => ipcRenderer.invoke('app:version'),
     firstRun: () => ipcRenderer.invoke('app:firstRun'),
     firstRunDone: () => ipcRenderer.invoke('app:firstRun:done'),
+    openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   },
   dialog: {
     openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
@@ -45,9 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: number, data: { name?: string; dir?: string }) => ipcRenderer.invoke('kb:update', { id, ...data }),
     setDir: (dir: string) => ipcRenderer.invoke('kb:setDir', { dir }),
     remove: (id: number) => ipcRenderer.invoke('kb:remove', { id }),
-    scan: (projectId: number) => ipcRenderer.invoke('kb:scan', { projectId }),
     search: (dir: string, query: string) => ipcRenderer.invoke('kb:search', { dir, query }),
-    status: () => ipcRenderer.invoke('kb:status'),
     setDefault: (id: number) => ipcRenderer.invoke('kb:setDefault', { id }),
     getDefault: () => ipcRenderer.invoke('kb:getDefault'),
   },
@@ -161,9 +160,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     startScheduler: () => ipcRenderer.invoke('service:startScheduler'),
     stopScheduler: () => ipcRenderer.invoke('service:stopScheduler'),
     reloadScheduler: () => ipcRenderer.invoke('service:reloadScheduler'),
-    startIndexer: () => ipcRenderer.invoke('service:startIndexer'),
-    stopIndexer: () => ipcRenderer.invoke('service:stopIndexer'),
-    indexAll: () => ipcRenderer.invoke('service:indexAll'),
   },
 
   // Reminders
@@ -208,9 +204,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stats: () => ipcRenderer.invoke('insights:stats'),
     reports: () => ipcRenderer.invoke('insights:reports'),
     weeklyReports: () => ipcRenderer.invoke('insights:weeklyReports'),
-    indexerInfo: () => ipcRenderer.invoke('insights:indexerInfo'),
+    subProjects: () => ipcRenderer.invoke('insights:subProjects'),
+    tags: () => ipcRenderer.invoke('insights:tags'),
+    heatmap: () => ipcRenderer.invoke('insights:heatmap'),
     libraryStats: () => ipcRenderer.invoke('insights:libraryStats'),
-    clearIndex: () => ipcRenderer.invoke('insights:clearIndex'),
     reportGenerating: () => ipcRenderer.invoke('insights:reportGenerating'),
   },
 
@@ -255,11 +252,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   config: {
     get: () => ipcRenderer.invoke('config:get'),
     set: (cfg: unknown) => ipcRenderer.invoke('config:set', cfg),
-  },
-
-  // Embedding Model
-  embedding: {
-    test: (model: string, host: string, apiKey: string) => ipcRenderer.invoke("embedding:test", { model, host, apiKey }),
   },
 
   // Event listeners (streaming)

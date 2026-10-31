@@ -9,20 +9,19 @@
       <!-- Project Management -->
       <div class="card">
         <h2>📁 项目</h2>
-        <div class="text-muted mb-2">项目就是本地目录。AI 对话按所选项目目录运行；知识库按项目目录索引其中的 Markdown 文件；综合日报聚合<b>所有项目 + 数据集</b>；飞书派活、任务结果存档与数据归档默认写入<b>默认项目</b>。</div>
+        <div class="text-muted mb-2">项目就是本地目录。AI 对话按所选项目目录运行，AI 直接读取项目目录里的 Markdown 文件作答；综合日报聚合<b>所有项目 + 数据集</b>；飞书派活、任务结果存档与数据归档默认写入<b>默认项目</b>。</div>
         <div v-if="!kbLibraries.length" class="text-muted mb-2" style="font-size:13px;">尚未添加任何项目。添加后 AI 对话、任务执行、日报生成、知识库浏览方可使用。</div>
         <div v-for="lib in kbLibraries" :key="lib.id" class="kb-lib-row">
           <div class="kb-lib-main">
             <span class="kb-lib-name">📁 {{ lib.name }}</span>
             <span v-if="lib.isDefault" class="kb-lib-badge">默认</span>
             <span class="kb-lib-dir text-muted">{{ lib.dir }}</span>
-            <span class="text-muted kb-lib-count">已索引 {{ lib.docCount || 0 }} 篇</span>
+            <span class="text-muted kb-lib-count">{{ lib.docCount || 0 }} 个笔记文件</span>
           </div>
           <div class="kb-lib-actions">
             <button v-if="!lib.isDefault" class="text-btn" @click="setDefaultLib(lib)">设为默认</button>
             <button class="text-btn" @click="renameLib(lib)">重命名</button>
             <button class="text-btn" @click="changeLibDir(lib)">换目录</button>
-            <button class="text-btn" :disabled="lib.scanning" @click="reindexLib(lib)">{{ lib.scanning ? '索引中…' : '重建索引' }}</button>
             <button class="text-btn" style="color:#ef4444;" @click="removeLib(lib)">删除</button>
           </div>
         </div>
@@ -250,33 +249,6 @@
         </div>
       </div>
 
-      <!-- Embedding Model Configuration (hidden) -->
-      <div v-if="false" class="card">
-        <h2>🧠 嵌入模型配置</h2>
-        <div class="text-muted mb-2">配置项目知识库索引使用的嵌入模型（Embedding Model），用于语义搜索。支持 Ollama 和 OpenAI 兼容接口（如 vLLM、LM Studio 等）。填写 API Key 则使用 OpenAI 兼容接口，否则使用 Ollama。</div>
-        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
-          <div class="form-group" style="flex:1;min-width:130px;">
-            <label style="font-size:12px;">提供商名称</label>
-            <input v-model="embeddingProvider" type="text" class="form-control" placeholder="Ollama">
-          </div>
-          <div class="form-group" style="flex:1;min-width:160px;">
-            <label style="font-size:12px;">模型名称</label>
-            <input v-model="embeddingModel" type="text" class="form-control" placeholder="bge-m3 / ...">
-          </div>
-          <div class="form-group" style="flex:1;min-width:200px;">
-            <label style="font-size:12px;">服务地址</label>
-            <input v-model="embeddingBaseUrl" type="text" class="form-control" placeholder="http://127.0.0.1:11434">
-          </div>
-          <div class="form-group" style="flex:1;min-width:220px;">
-            <label style="font-size:12px;">API Key（可选，非 Ollama 时填写）</label>
-            <input v-model="embeddingApiKey" type="password" class="form-control" placeholder="sk-... 留空则使用 Ollama">
-          </div>
-          <button class="btn btn-primary" @click="saveEmbeddingConfig" style="margin-bottom:12px;">保存配置</button>
-          <button class="btn btn-secondary" @click="testEmbedding" style="margin-bottom:12px;">测试连接</button>
-        </div>
-        <span v-if="embeddingStatus" class="text-muted" :style="{ color: embeddingStatus.startsWith('✅') ? '#22c55e' : embeddingStatus.startsWith('⏳') ? '#f59e0b' : '#ef4444' }">{{ embeddingStatus }}</span>
-      </div>
-
       <!-- 移动端（飞书 + 中继） -->
       <div class="card">
         <h2>📱 移动端</h2>
@@ -366,7 +338,7 @@
       <!-- Backup / Restore -->
       <div class="card">
         <h2>💾 数据备份与恢复</h2>
-        <div class="text-muted mb-2">备份本地 SQLite 快照（会话、项目、待办、数据中心、知识库索引等全部数据）；恢复后需重启应用生效。</div>
+        <div class="text-muted mb-2">备份本地 SQLite 快照（会话、项目、待办、数据中心等全部数据）；恢复后需重启应用生效。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
           <div class="form-group" style="flex:1;min-width:300px;margin:0;">
             <label style="font-size:12px;">备份目录（建议选择其他盘符）</label>
@@ -437,10 +409,9 @@
           <table class="vars-table">
             <thead><tr><th>工具</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td><code>get_today_info()</code></td><td>获取今天的日期、项目/知识库信息</td></tr>
+              <tr><td><code>get_today_info()</code></td><td>获取今天的日期、项目信息，以及笔记的实时统计（总数 / 今日更新数 / 分项目文件数）</td></tr>
               <tr><td><code>query_todos(status, date_from)</code></td><td>查询待办事项，可按状态( done/in_progress/pending )和日期范围过滤</td></tr>
               <tr><td><code>query_messages(date_from, role)</code></td><td>查询对话记录，可按日期和角色( user/assistant )过滤</td></tr>
-              <tr><td><code>query_documents(project_id, date_from)</code></td><td>查询项目/知识库文档更新记录</td></tr>
               <tr><td><code>query_data_records(dataset_name, date_from)</code></td><td>查询数据中心记录，可按数据集名称过滤</td></tr>
               <tr><td><code>query_reminders()</code></td><td>查询所有已启用的提醒</td></tr>
             </tbody>
@@ -481,12 +452,6 @@ const reportPrompt = ref('');
 const reportSettingsStatus = ref('');
 const showTemplateHelp = ref(false);
 const templateStatus = ref('');
-// Embedding model
-const embeddingModel = ref('');
-const embeddingProvider = ref('');
-const embeddingBaseUrl = ref('');
-const embeddingApiKey = ref('');
-const embeddingStatus = ref('');
 
 // 网络搜索
 const searchProvider = ref('auto');
@@ -945,7 +910,7 @@ async function addLib() {
     const name = prompt('为这个项目起个名字（留空则用目录名）', dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '') ?? '';
     const r = await API.kb.add(name.trim(), dir);
     if (r?.error) { kbFlash('❌ ' + r.error); return; }
-    kbFlash('✅ 已添加项目「' + (r?.name || '') + '」，正在后台建立索引');
+    kbFlash('✅ 已添加项目「' + (r?.name || '') + '」');
     await loadKbLibraries();
     await loadProjects();
   } catch (e: any) { kbFlash('❌ ' + (e.message || '添加失败')); }
@@ -961,22 +926,12 @@ async function changeLibDir(lib: any) {
   try {
     const dir = await API.dialog.openDirectory();
     if (!dir || dir === lib.dir) return;
-    if (!confirm(`项目「${lib.name}」将改指向新目录，原目录的索引会被清除并在新目录重建（文件本身不受影响）。继续？`)) return;
+    if (!confirm(`项目「${lib.name}」将改指向新目录，磁盘上的文件不受影响。继续？`)) return;
     const r = await API.kb.update(lib.id, { dir });
     if (r?.error) { kbFlash('❌ ' + r.error); return; }
-    kbFlash('✅ 已更新目录，正在后台重建索引');
+    kbFlash('✅ 已更新目录');
     await loadKbLibraries();
   } catch {}
-}
-async function reindexLib(lib: any) {
-  lib.scanning = true;
-  try {
-    const r = await API.kb.scan(lib.id);
-    if (r?.error) kbFlash('❌ ' + r.error);
-    else kbFlash('✅ 「' + lib.name + '」索引完成：' + (r?.files ?? 0) + ' 个文件');
-  } catch (e: any) { kbFlash('❌ ' + (e.message || '索引失败')); }
-  lib.scanning = false;
-  await loadKbLibraries();
 }
 async function setDefaultLib(lib: any) {
   await API.kb.setDefault(lib.id);
@@ -984,7 +939,7 @@ async function setDefaultLib(lib: any) {
   kbFlash('✅ 已将「' + lib.name + '」设为默认项目');
 }
 async function removeLib(lib: any) {
-  if (!confirm(`删除项目「${lib.name}」？\n\n· 磁盘上的文件不会被删除\n· 该项目的索引与执行结果归档记录会一并清除\n· 该项目下的对话会变为未分组`)) return;
+  if (!confirm(`删除项目「${lib.name}」？\n\n· 磁盘上的文件不会被删除\n· 该项目的执行结果归档记录会一并清除\n· 该项目下的对话会变为未分组`)) return;
   await API.kb.remove(lib.id);
   await loadKbLibraries();
   await loadProjects();
@@ -1065,10 +1020,6 @@ async function loadConfig() {
     feishuAppSecret.value = cfg.feishuAppSecret || '';
     reportRetentionDays.value = cfg.dailyReportRetentionDays || '30';
     reportPrompt.value = cfg.dailyReportPrompt || '';
-    embeddingModel.value = cfg.embeddingModel || '';
-    embeddingProvider.value = cfg.embeddingProvider || 'Ollama';
-    embeddingBaseUrl.value = cfg.embeddingBaseUrl || 'http://127.0.0.1:11434';
-    embeddingApiKey.value = cfg.embeddingApiKey || '';
   } catch { console.warn('加载配置失败'); }
 }
 
@@ -1238,44 +1189,6 @@ async function resetReportTemplate() {
   reportPrompt.value = '';
   await saveReportTemplate();
 }
-async function saveEmbeddingConfig() {
-  if (!embeddingModel.value.trim()) { embeddingStatus.value = '❌ 请输入模型名称'; return; }
-  try {
-    await API.config.set({
-      embeddingModel: embeddingModel.value.trim(),
-      embeddingProvider: embeddingProvider.value.trim() || 'Ollama',
-      embeddingBaseUrl: embeddingBaseUrl.value.trim() || 'http://127.0.0.1:11434',
-      embeddingApiKey: embeddingApiKey.value.trim() || '',
-    });
-    embeddingStatus.value = '✅ 已保存，重启应用后生效';
-    setTimeout(() => embeddingStatus.value = '', 3000);
-  } catch (e) {
-    embeddingStatus.value = '❌ ' + (e.message || '保存失败');
-  }
-}
-
-async function testEmbedding() {
-  if (!embeddingModel.value.trim()) { embeddingStatus.value = '❌ 请输入模型名称'; return; }
-  embeddingStatus.value = '⏳ 正在测试连接...';
-  try {
-    const result = await API.embedding.test(
-      embeddingModel.value.trim(),
-      embeddingBaseUrl.value.trim() || 'http://127.0.0.1:11434',
-      embeddingApiKey.value.trim() || ''
-    );
-    if (result.ok) {
-      embeddingStatus.value = result.message;
-    } else {
-      embeddingStatus.value = result.message;
-    }
-  } catch (e) {
-    embeddingStatus.value = '❌ 测试异常: ' + (e.message || e);
-  }
-  setTimeout(() => {
-    if (embeddingStatus.value.startsWith('⏳')) embeddingStatus.value = '';
-  }, 10000);
-}
-
 // ===== 移动端远程连接（中继服务） =====
 const relayUrl = ref('');
 const relayPassword = ref('');

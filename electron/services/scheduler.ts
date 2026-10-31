@@ -404,10 +404,9 @@ const SYSTEM_PROMPT = `你是一位日报生成助手。请使用提供的工具
 ## 可用工具
 - query_tasks — 查询任务（plan_tasks，按状态、优先级过滤）
 - query_messages — 查询今日对话记录
-- query_documents — 查询今日更新的文档/笔记
 - query_data_records — 查询数据中心记录
 - query_reminders — 查询已启用的提醒
-- get_today_info — 获取当前日期、项目信息
+- get_today_info — 获取当前日期、项目信息，以及笔记的实时统计（总数 / 今日更新数 / 分项目文件数）
 
 ## 要求
 1. 先调用 get_today_info 了解当前日期和项目
@@ -647,16 +646,9 @@ const executors = {
     logger.info(`[Scheduler] ping: ${task.name}`);
   },
   'auto_index': async (task) => {
-    logger.info(`[Scheduler] auto-index triggered: ${task.name}`);
-    const projects = db.project.list();
-    for (const p of projects) {
-      try {
-        const indexer = require('./indexer');
-        await indexer.indexSingle(p.dir);
-      } catch (e) {
-        logger.error(`[Scheduler] index error for ${p.name}: ${e.message}`);
-      }
-    }
+    // 索引路线已整体下线（kb_documents / kb_chunks / indexer.ts 一并删除），概览看板改为实时扫盘，
+    // 不再需要后台索引任务。这里只记一条日志，避免老任务每次触发都报错。
+    logger.warn('[Scheduler] auto_index 任务「%s」已失效：索引路线已下线，可在任务列表里删除它', task.name);
   },
 'daily_report': async (task) => {
     logger.info(`[Scheduler] daily report: ${task.name}`);

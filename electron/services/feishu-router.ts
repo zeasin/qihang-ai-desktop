@@ -11,15 +11,16 @@
  *   1. 显式指令   /项目 名称、/项目 3、/p 名称、#项目 名称
  *   2. 行内标记   [笔记库：X]、项目：X
  *   3. 开头项目名 「金箔雲项目 帮我看下库存」（强信号）
- *   4. 会话绑定   某个飞书会话（群/私聊）此前已绑定项目 → 自动沿用
+ *   4. 会话绑定   某个飞书会话（群/私聊）此前选过项目 → 作为默认上下文带出
  *   5. 只有一个项目 → 无歧义，直接落它
  *   6. 其余情况   → needChoice：绝不静默落默认项目，交给调用方询问用户
  *
  * 数字 id 只能通过显式指令「/项目 3」指定：裸数字开头（「3 个商品要补货」）
  * 歧义太大，误判一次就会把数据写进错项目，宁可问一句。
  *
- * 绑定语义：只有「显式指令」和「卡片选择」会写入会话绑定（粘性上下文）；
+ * 绑定语义：只有「显式指令」和「卡片选择」会写入会话绑定，它代表本会话的默认上下文；
  * 行内标记只影响当前这一条消息，不改变绑定。
+ * 注意：绑定 ≠ 自动执行 —— 上层仍会先弹一次项目选择卡片让用户确认（见 needsProjectChoice）。
  */
 import logger from './logger';
 
@@ -104,6 +105,21 @@ export function resolveFeishuTarget(opts: {
   const cmdText = /^\s*@\S+\s+/.test(raw) ? raw.replace(/^\s*@\S+\s+/, '') : raw;
 
   // —— 1. 显式指令 ——
+  // 内部指令「/项目#<id>」：严格按项目 id 解析，不走「序号优先」。
+  // 卡片按钮回调用它派活 —— 按钮里存的是项目 id，若复用普通「/项目 N」，
+  // 项目数 ≥ id 时会被当成列表序号，落到别的项目去。
+  const idCmd = cmdText.match(/^\s*[/#]\s*(?:项目|工程)\s*#\s*(\d+)\s*$/);
+  if (idCmd) {
+    const byId = projects.find(x => x.id === parseInt(idCmd[1], 10));
+    if (byId) {
+      return {
+        projectId: byId.id, project: byId, cleanText: '',
+        explicit: true, viaBinding: false, needChoice: false,
+        isCommand: true, matchedName: byId.name,
+      };
+    }
+  }
+
   const cmd = cmdText.match(CMD_ZH) || cmdText.match(CMD_EN);
   if (cmd) {
     const argRaw = String(cmd[1] || '').trim();
@@ -269,6 +285,26 @@ export function listBindings(db: any): any[] {
 }
 
 /**
+ * 决定这条消息是否需要先问用户选项目。
+ *
+ * 策略（2026-10-31 起）：**除消息本身已明确指定项目外，一律先弹项目选择卡片**。
+ * 会话绑定不再是「直接执行」，而是变成卡片上的默认选项「继续上下文对话（当前项目）」——
+ * 这样上下文始终由用户确认一次，不会静默落到某个项目。
+ *
+ * 不问的情况只有三种：
+ *   1. 消息里已明确指定项目（/项目 X、[笔记库：X]、开头项目名）—— 指定本身就是选择；
+ *   2. 只有一个项目 —— 没得选;
+ *   3. 消息本身就是纯指令且未指明项目（交给上层按歧义处理）。
+ */
+export function needsProjectChoice(target: FeishuTarget, projectCount: number): boolean {
+  if (!target || !target.project) return true;   // 认不出来 → 必须问
+  if (target.needChoice) return true;
+  if (target.explicit) return false;             // 消息已明确指定 → 不问
+  if (projectCount <= 1) return false;           // 只有一个项目 → 没得选
+  return true;                                   // 其余（含会话绑定）→ 一律先问
+}
+
+/**
  * 生成「请选择项目」的回复文本。
  * 列表序号即用户可用的指派编号（解析时序号优先、项目 id 兜底），
  * 另给出按名称指派的写法，两种都能落到同一个项目。
@@ -280,7 +316,8 @@ export function buildProjectChoiceText(projects: any[], hint = ''): string {
     hint ? `\n${hint}` : '',
     `\n${lines.join('\n')}`,
     `\n直接回复序号（如「2」或「/项目 2」）即可指派；也可以写项目名（如「/项目 笔记库」）。`,
-    `指派后本会话后续消息都会自动落到该项目；只对这一条生效请写「[笔记库：项目名]」。`,
+    `选中的项目会成为本会话的默认上下文，下一条消息默认带出它（仍会让你确认一次）。`,
+    `只对这一条生效请写「[笔记库：项目名]」。`,
   ].join('\n');
 }
 
@@ -348,4 +385,66 @@ export function takePendingBody(chatId: string): string | null {
   pendingBodies.delete(chatId);
   if (Date.now() - v.at > PENDING_BODY_TTL) return null;
   return v.text;
+}
+
+// ========== 上一条消息记忆（供卡片「换个项目重跑」用） ==========
+// 记录本会话最近一次实际执行的正文。用户点结果卡片上的「换个项目重跑」时，
+// 用它在新项目里重放同一条消息，而不是让用户重新打字。
+const lastBodies = new Map<string, { text: string; at: number }>();
+
+/** 记住本会话最近一次执行的正文 */
+export function rememberLastBody(chatId: string, text: string): void {
+  if (!chatId || !text) return;
+  const now = Date.now();
+  for (const [k, v] of lastBodies) {
+    if (now - v.at > PENDING_BODY_TTL) lastBodies.delete(k);
+  }
+  lastBodies.set(chatId, { text, at: now });
+}
+
+/** 取回本会话最近一次执行的正文；没有或已过期返回 null */
+export function recallLastBody(chatId: string): string | null {
+  if (!chatId) return null;
+  const v = lastBodies.get(chatId);
+  if (!v) return null;
+  if (Date.now() - v.at > PENDING_BODY_TTL) { lastBodies.delete(chatId); return null; }
+  return v.text;
+}
+
+/** 查某会话当前绑定的项目 id；没有绑定返回 null */
+export function boundProjectId(db: any, chatId: string): number | null {
+  if (!chatId || !db || !db.feishuContext) return null;
+  try {
+    const bind = db.feishuContext.get(chatId);
+    return bind && bind.project_id ? Number(bind.project_id) : null;
+  } catch { return null; }
+}
+
+/**
+ * 生成项目选择按钮组。按钮 value 携带动作类型与项目 id，
+ * 点击后由 card.action.trigger 回调接管（需要飞书后台订阅卡片回调事件）。
+ *
+ * opts.excludeId：排除某个项目（重跑场景不必再给「当前项目」按钮）。
+ * opts.keepLabel：为 true 时第一个按钮是「继续上下文对话」（用于选择卡片）。
+ */
+export function buildProjectButtons(
+  projects: any[],
+  opts: { rerun?: boolean; excludeId?: number | null; keepLabel?: string; keepId?: number | null } = {},
+): Array<{ text: string; value: any; type?: 'default' | 'primary' | 'danger' }> {
+  const list = (projects || []).filter((p: any) => !opts.excludeId || p.id !== opts.excludeId);
+  const buttons: Array<{ text: string; value: any; type?: 'default' | 'primary' | 'danger' }> = list.map((p: any, i: number) => ({
+    // 重跑模式加 ↻ 前缀，和「选择项目」区分开：重跑会把这条消息再执行一遍
+    text: opts.rerun ? `↻ ${i + 1}. ${p.name}` : `${i + 1}. ${p.name}`,
+    type: 'default',
+    value: { act: 'pick_project', pid: p.id, seq: i + 1, rerun: !!opts.rerun },
+  }));
+  // 「继续上下文对话」放在最前，语义上就是「沿用当前会话绑定的项目」
+  if (opts.keepLabel && opts.keepId) {
+    buttons.unshift({
+      text: opts.keepLabel,
+      type: 'primary',
+      value: { act: 'pick_project', pid: opts.keepId, seq: 0, rerun: !!opts.rerun },
+    });
+  }
+  return buttons;
 }

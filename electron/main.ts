@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -35,7 +35,7 @@ try {
 import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession, SILENT_RUN_TIMEOUT_MS } from './services/pi-agent';
+import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
 import { agentVersions } from './services/agent-versions';
 import { buildDataToolDefs, appendTodoNote } from './services/tools';
 import { recordFeishuTask, followUpTask } from './services/task-runner';
@@ -44,16 +44,15 @@ import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
 import * as backup from './services/backup';
 import * as feishu from './services/feishu';
-import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice } from './services/feishu-router';
+import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice, rememberLastBody, recallLastBody, buildProjectButtons, boundProjectId, needsProjectChoice } from './services/feishu-router';
 import * as scheduler from './services/scheduler';
-import * as indexer from './services/indexer';
+import * as projectScan from './services/project-scan';
 import logger from './services/logger';
 import { relayClient, probeRelayHealth } from './services/relay-client';
 import { extractDigest, syncCheckedDone } from './services/note-digest';
 import * as relayDevice from './services/relay-device';
 import { notify } from './services/notify';
 import { createTrayIcon, getWindowIcon } from './icon';
-import * as rag from './services/rag';
 
 const START_UPTIME = process.uptime();
 function startupElapsed(label: string) {
@@ -219,14 +218,12 @@ function createWindow() {
 function stopAllServices() {
   feishu.stop();
   scheduler.stop();
-  indexer.stop();
 }
 
 function getServicesStatus() {
   return {
     feishu: feishu.isRunning(),
     scheduler: scheduler.isRunning(),
-    indexer: indexer.isRunning(),
   };
 }
 
@@ -287,6 +284,67 @@ function detectWorkOrderEnd(text: string): string {
   return found.length ? found.join('、') : '总部';
 }
 
+// ========== 飞书卡片按钮回调 ==========
+// 卡片回调事件里只有 chatId，没有 chatType；这里记住每个会话的类型，
+// 供回调时构造伪消息走既有派活流程（/项目 N）。
+const feishuChatTypes = new Map<string, string>();
+
+// 卡片按钮点击 → 复用既有派活流程：把点击转成一条「/项目 N」的伪消息，
+// 由 feishuMessageHandler 统一处理（挂起正文取回、绑定会话、执行任务都在那一处）。
+// ⚠️ 飞书要求卡片回调 3 秒内响应，超时客户端弹「目标回调服务超时未响应」：
+// 所以这里只做快速校验并返回 toast（点击即刻有反馈），真正的派活用 void 丢到
+// 后台执行，绝不 await —— AI 任务以分钟计，回调响应等不起。
+// 按钮不可用时（飞书后台未订阅卡片回调事件）用户仍可回复「/项目 N」，功能不丢。
+feishu.setCardActionHandler(async (action: any) => {
+  try {
+    const v = action?.value;
+    if (!v || typeof v !== 'object') return;
+    const chatId = String(action.chatId || '');
+    if (!chatId) return;
+    if (v.act !== 'pick_project') return;
+
+    const pid = Number(v.pid);
+    const proj = Number.isFinite(pid) ? db.project.get(pid) : null;
+    if (!proj) {
+      logger.warn('[Feishu] Card action: unknown project id %s', v.pid);
+      return { toast: { type: 'error', content: '该项目不存在或已删除，请重新选择' } };
+    }
+
+    // 「换个项目重跑」：把最近一次执行的正文重新挂起，好让派活流程能取回。
+    // 记忆只保留 30 分钟，过期就明说，不要落成一句莫名的「项目已切换」。
+    if (v.rerun) {
+      const last = recallLastBody(chatId);
+      if (!last) {
+        // toast 即时反馈，sendMessage 留痕（关掉卡片也能看到）
+        void feishu.sendMessage(chatId, 'chat_id', '⏳ 这条消息的原文已过期（仅保留 30 分钟），请重新发送要执行的内容。');
+        return { toast: { type: 'warning', content: '原文已过期，请重新发送要执行的内容' } };
+      }
+      stashPendingBody(chatId, last);
+    }
+
+    const chatType = feishuChatTypes.get(chatId) || 'p2p';
+    logger.info('[Feishu] Card action → 派活到项目「%s」(id=%s), chatType=%s', proj.name, proj.id, chatType);
+    // 用「/项目#<id>」而不是「/项目 <id>」：后者序号优先，项目数 ≥ id 时会落到别的项目
+    void feishuMessageHandler({
+      text: `/项目#${proj.id}`,
+      sender: action.operatorOpenId || '',
+      chatId,
+      chatType,
+      messageId: action.messageId || '',
+    }).catch((e: any) => logger.error('[Feishu] Card dispatch failed: %s', e?.message));
+
+    return {
+      toast: {
+        type: 'success',
+        content: v.rerun ? `已派活到「${proj.name}」重跑，执行中…` : `已派活到「${proj.name}」，执行中…`,
+      },
+    };
+  } catch (e: any) {
+    logger.error('[Feishu] Card action failed: %s', e?.message);
+    return { toast: { type: 'error', content: '处理点击失败，请回复「/项目 名称」重试' } };
+  }
+});
+
 const feishuMessageHandler = async (msg) => {
   logger.info('═══════════════════════════════════════');
   logger.info(' 飞书消息已接收');
@@ -294,6 +352,7 @@ const feishuMessageHandler = async (msg) => {
   logger.info(' 内容: %s', msg.text);
   logger.info(' ChatId: %s', msg.chatId);
   logger.info('═══════════════════════════════════════');
+  if (msg.chatId) feishuChatTypes.set(msg.chatId, msg.chatType || 'p2p');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('feishu:message', msg);
@@ -322,10 +381,12 @@ const feishuMessageHandler = async (msg) => {
       return;
     }
     try {
-      const ok = await followUpTask(lastTask.id, question, db, {
-        onDone: (text) => {
-          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）'), '🤖 启航AI');
-        },
+    const ok = await followUpTask(lastTask.id, question, db, {
+      onDone: (text, meta) => {
+        // 中止时发出的部分输出必须明确标注，不能看起来像最终回答
+        const prefix = meta?.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
+        feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), meta?.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI');
+      },
         onError: (err) => feishu.replyCard(msg, `处理出错: ${err}`, '❌ 错误'),
       });
       feishu.replyCard(msg, ok ? '已接单，执行中…' : '该任务正在执行中，请稍后再试。', ok ? '🤖 启航AI' : '⚠️ 任务执行中');
@@ -404,14 +465,24 @@ const feishuMessageHandler = async (msg) => {
       return;
     }
 
-    if (target.needChoice || !target.project) {
-      // 把原消息正文挂起：用户回复「/项目 2」后自动执行它，而不是只切一次项目
-      // 纯数字是「在回答上一个问题」，不是新请求，不挂起
+    if (needsProjectChoice(target, allProjects.length)) {
+      // 统一先问：正文暂存 → 用户点按钮或回序号 → 自动执行挂起的那条消息。
+      // 会话绑定不再静默执行，而是变成卡片上的默认选项「继续上下文对话」。
       const pendingBody = String(target.cleanText || '').trim();
       if (pendingBody && !/^\d{1,4}$/.test(pendingBody)) stashPendingBody(msg.chatId, pendingBody);
       markAskedChoice(msg.chatId);
-      const hint = target.isCommand ? '' : '这条消息里没有识别出项目，为避免落错地方，需要你指定一下：';
-      feishu.replyCard(msg, buildProjectChoiceText(allProjects, hint), '📂 请选择项目');
+      const boundId = boundProjectId(db, msg.chatId);
+      const boundProj = boundId ? db.project.get(boundId) : null;
+      const hint = boundProj
+        ? `继续用当前会话的项目「${boundProj.name}」，还是换一个？`
+        : (target.isCommand ? '' : '这条消息里没有识别出项目，为避免落错地方，需要你指定一下：');
+      feishu.replyCard(msg, buildProjectChoiceText(allProjects, hint), '📂 请选择项目', {
+        buttons: buildProjectButtons(allProjects, {
+          keepLabel: boundProj ? `继续上下文对话（${boundProj.name}）` : '',
+          keepId: boundProj ? boundProj.id : null,
+        }),
+        note: '点按钮直接选中；也可回复序号或「/项目 名称」',
+      });
       return;
     }
 
@@ -428,17 +499,21 @@ const feishuMessageHandler = async (msg) => {
       // 纯项目切换命令且没有待执行正文 → 回一句确认绑定结果即可
       feishu.replyCard(
         msg,
-        `✅ 当前会话已绑定项目「${feishuProject.name}」，接下来的消息都会落到这个项目。`,
+        `✅ 当前会话的默认上下文已切换为项目「${feishuProject.name}」，下一条消息会默认带出它（仍会再让你确认一次）。`,
         '📂 项目已切换'
       );
       return;
     }
 
-    // 显式指令选定项目 → 绑定该会话（群/私聊），后续消息自动落到同一项目
+    // 显式选定项目 → 写入会话绑定，作为本会话的默认上下文（下一条消息默认带出它，仍会确认一次）
     if (target.explicit && target.isCommand && msg.chatId) {
       bindChatToProject(db, msg.chatId, msg.chatType, feishuProjectId);
       logger.info('[Feishu] session bound: chatId=%s project=%s', msg.chatId, feishuProject.name);
     }
+
+    // 记住本条正文：结果卡片上的「换个项目重跑」靠它取回原文重放。
+    // 在发起任务前就记，失败的那次同样能换项目重跑（不记就只能等下一次成功）。
+    rememberLastBody(msg.chatId, bodyText);
 
     feishu.replyMessage(msg, `已接单（项目：${feishuProject.name}），执行中…`);
 
@@ -482,14 +557,21 @@ const feishuMessageHandler = async (msg) => {
       sessionId,
       cwd: projectDir || undefined,
       customTools: toolDefs,
-      // 飞书只有一句「执行中…」，没有流式进度：必须设超时，
-      // 否则模型限流(429)时 SDK 无限退避重试，用户永远收不到任何回应。
-      timeoutMs: SILENT_RUN_TIMEOUT_MS,
-      onDone: (text) => {
+      // 不设超时（2026-10-31 用户决策）：300 秒硬超时会掐断活跃的长任务——
+      // 曾把「查 4 个数据集 + 读笔记」任务干到一半的旁白当结果发出（[PiAgent] timeout 300000ms）。
+      // 代价：模型限流(429)无限退避时会一直挂着，飞书端等不到回应；可在任务页查看执行状态。
+      onDone: (text, meta) => {
         logger.info('[Feishu] Sending card reply: "%s"', (text || '').slice(0, 200));
         if (text) {
           db.chat.addMessage(sessionId, 'assistant', text || '', 'general');
-          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）'), '🤖 启航AI');
+          // 中断时发出的部分输出必须明确标注，不能看起来像最终回答
+          const prefix = meta?.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
+          // 卡片底部固定标注「本条发到：X」，并给一组「换个项目重跑」按钮：
+          // 上下文绑定不再是黑箱，点一下就能把同一条消息换到别的项目重跑。
+          feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), meta?.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI', {
+            note: `本条发到：${feishuProject.name} ｜ 点 ↻ 按钮会用该项目重跑这条消息`,
+            buttons: buildProjectButtons(allProjects, { rerun: true, excludeId: feishuProjectId }),
+          });
         }
         const end = fTs();
         if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'SUCCESS', end_time: end, result_text: text || '' });
@@ -545,25 +627,19 @@ function ensureNotesLibraryMigration() {
   syncDefaultNotesDir();
 }
 
-/** 项目变更后重启文件监听 + 后台重建该项目索引（嵌入不可用时会静默跳过向量化） */
-function refreshLibrariesAfterChange(projectId?: number) {
-  try {
-    const indexer = require('./services/indexer');
-    if (indexer.isRunning()) indexer.watchAll();
-    if (projectId) {
-      const p = db.project.get(projectId);
-      if (p && p.dir) void indexer.indexSingle(p).catch((e: any) => logger.warn('[KB] 后台索引失败: ' + e.message));
-    }
-  } catch (e: any) { logger.warn('[KB] refresh watchers failed: ' + e.message); }
-}
+/** 项目目录变更后无需重建索引 —— 概览看板改为实时扫盘，索引路线已整体下线 */
 
 ipcMain.handle('kb:getDir', () => appConfig.getNotesDir());
 
-ipcMain.handle('kb:list', () => db.project.list().map((p: any) => ({
-  ...p,
-  docCount: db.project.docCount(p.id),
-  isDefault: p.id === (db.project.getDefault() || {}).id,
-})));
+ipcMain.handle('kb:list', () => {
+  const defaultId = (db.project.getDefault() || {}).id;
+  return db.project.list().map((p: any) => ({
+    ...p,
+    // 实时文件数（原先读索引表 kb_documents，索引路线已下线）
+    docCount: projectScan.scanProject(p).length,
+    isDefault: p.id === defaultId,
+  }));
+});
 
 ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
   if (!dirPath) return { error: '请选择目录' };
@@ -574,7 +650,6 @@ ipcMain.handle('kb:add', (_, { name, path: dirPath }) => {
   const r = db.project.add((name || '').trim() || path.basename(abs), 'note', abs, '', '');
   if (isFirst) db.project.setDefault(r.id);
   syncDefaultNotesDir();
-  refreshLibrariesAfterChange(r.id);
   return db.project.get(r.id);
 });
 
@@ -592,9 +667,7 @@ ipcMain.handle('kb:update', (_, { id, name, dir }) => {
   if (!Object.keys(patch).length) return p;
   db.project.update(id, patch);
   if (patch.dir) {
-    db.project.deleteDocs(id);
     syncDefaultNotesDir();
-    refreshLibrariesAfterChange(id);
   }
   return db.project.get(id);
 });
@@ -608,15 +681,12 @@ ipcMain.handle('kb:setDir', (_, { dir }) => {
     const p = db.project.add(path.basename(abs) || '项目', 'note', abs, '', '');
     db.project.setDefault(p.id);
     syncDefaultNotesDir();
-    refreshLibrariesAfterChange(p.id);
     return db.project.get(p.id);
   }
   const d = db.project.getDefault() || projects[0];
   if (d.dir && path.resolve(d.dir) === abs) return db.project.get(d.id);
   db.project.update(d.id, { dir: abs });
-  db.project.deleteDocs(d.id);
   syncDefaultNotesDir();
-  refreshLibrariesAfterChange(d.id);
   return db.project.get(d.id);
 });
 
@@ -624,7 +694,6 @@ ipcMain.handle('kb:remove', (_, { id }) => {
   if (db.project.get(id)) {
     db.project.remove(id);
     syncDefaultNotesDir();
-    refreshLibrariesAfterChange();
   }
   return { ok: true };
 });
@@ -662,100 +731,6 @@ ipcMain.handle('notes:read', (_, { dir, filePath }) => {
 
 
 
-let _indexingLock = false;
-
-let _docBatchCount = 0;
-
-function handleWorkerMessages(worker, sendProgress, resolve, track, projectId?) {
-  _docBatchCount = 0;
-  worker.on('message', (msg) => {
-    try {
-      if (msg.type === 'progress') {
-        sendProgress(msg);
-      } else if (msg.type === 'deleteOld') {
-        // 按库重建：只清该库的索引，不碰其他库
-        if (projectId) {
-          db.runRaw('DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', [projectId]);
-          db.runRaw('DELETE FROM kb_documents WHERE project_id = ?', [projectId]);
-        } else {
-          db.runRaw('DELETE FROM kb_chunks', []);
-          db.runRaw('DELETE FROM kb_documents', []);
-        }
-        db.save();
-      } else if (msg.type === 'doc') {
-        db.runRaw("INSERT INTO kb_documents (path, content, indexed_at, file_mtime, title, project_id) VALUES (?, ?, datetime('now', '+8 hours'), ?, ?, ?)", [msg.path, msg.content, msg.fileMtime || null, msg.title || '', projectId || msg.projectId || 0]);
-        const docRow = db.qOne('SELECT id FROM kb_documents WHERE path = ?', msg.path);
-        if (docRow) {
-          for (const c of msg.chunks) {
-            db.runRaw('INSERT INTO kb_chunks (doc_id, content) VALUES (?, ?)', [docRow.id, c.content]);
-          }
-        }
-        if (track) { track.fileCount++; track.chunkCount += msg.chunks.length; }
-        if (++_docBatchCount % 10 === 0) db.save();
-      } else if (msg.type === 'scanDone') {
-        db.save();
-        const embedConfig = {
-model: appConfig.getConfig('embeddingModel') || '',
-          host: appConfig.getConfig('embeddingBaseUrl') || 'http://127.0.0.1:11434',
-          apiKey: appConfig.getConfig('embeddingApiKey') || '',
-        };
-        const rows = db.q(`SELECT c.id, c.content FROM kb_chunks c WHERE c.embedding IS NULL`);
-        worker.send({ type: 'embed', chunks: rows, config: embedConfig });
-      } else if (msg.type === 'embedding') {
-        db.runRaw('UPDATE kb_chunks SET embedding = ? WHERE id = ?', [JSON.stringify(msg.vector), msg.chunkId]);
-        if (++_docBatchCount % 10 === 0) db.save();
-      } else if (msg.type === 'embedDone') {
-        db.save();
-        if (track) track.embedded = msg.embedded;
-      } else if (msg.type === 'done') {
-        sendProgress({ phase: 'done', current: 0, total: 0, file: '' });
-        worker.kill();
-        _indexingLock = false;
-        resolve(track ? { files: track.fileCount, totalChunks: track.chunkCount } : true);
-      } else if (msg.type === 'error') {
-        sendProgress({ phase: 'done', current: 0, total: 0, file: '' });
-        worker.kill();
-        _indexingLock = false;
-        resolve({ error: msg.message });
-      }
-    } catch (e) {
-      logger.error(`[IndexWorker] handler error: ${e.message}`);
-    }
-  });
-  worker.on('error', () => { sendProgress({ phase: 'done' }); _indexingLock = false; resolve({ error: 'worker error' }); });
-  worker.on('exit', () => { _indexingLock = false; resolve({}); });
-}
-
-ipcMain.handle('kb:scan', async (_, { projectId, dir }) => {
-  // 按项目重建索引：优先 projectId，兼容旧入口传 dir
-  const proj = projectId
-    ? db.project.get(projectId)
-    : db.project.list().find((p: any) => p.dir && dir && path.resolve(p.dir) === path.resolve(dir));
-  if (!proj || !proj.dir) return { error: '项目不存在' };
-  if (!fs.existsSync(proj.dir)) return { error: '项目目录不存在' };
-  if (_indexingLock) return { error: '正在索引中，请稍后再试' };
-  try {
-    _indexingLock = true;
-    const sendProgress = (data) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('kb:scan-progress', { id: proj.id, ...data });
-      }
-    };
-    sendProgress({ phase: 'scan', current: 0, total: 0, file: '' });
-
-    const { fork } = require('child_process');
-    const worker = fork(path.join(__dirname, 'services', 'index-worker.js'));
-
-    return new Promise((resolve) => {
-      const track = { fileCount: 0, chunkCount: 0, embedded: 0 };
-      handleWorkerMessages(worker, sendProgress, resolve, track, proj.id);
-      worker.send({ type: 'start', projects: [{ id: proj.id, name: proj.name, dir: proj.dir, ignore_dirs: proj.ignore_dirs || '', ignore_files: proj.ignore_files || '' }] });
-    });
-  } catch (e) {
-    _indexingLock = false;
-    return { error: e.message };
-  }
-});
 ipcMain.handle('kb:search', async (_, { dir, query }) => {
   try {
     if (!query || !dir || !fs.existsSync(dir)) return [];
@@ -806,12 +781,6 @@ ipcMain.handle('kb:search', async (_, { dir, query }) => {
     return [];
   }
 });
-ipcMain.handle('kb:status', () => {
-  const total = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0;
-  const embedded = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks WHERE embedding IS NOT NULL") || {}).c || 0;
-  return { indexed: total > 0, chunks: total, embedded };
-});
-
 // --- Module ---
 ipcMain.handle('module:list', () => db.dm.list());
 ipcMain.handle('module:get', (_, { id }) => db.dm.get(id));
@@ -1617,37 +1586,21 @@ ipcMain.handle('archive:moduleOverview', async (_, { moduleId }) => {
   return { ok: true, module: mod, datasets, analysis };
 });
 
-/** 递归统计笔记库目录中的 Markdown 文件数（忽略常见非内容目录） */
-function countMarkdownFiles(dir: string): number {
-  const IGNORED_DIRS = new Set(['node_modules', '.git', '.svn', '.hg', '__pycache__', '.cache']);
-  let count = 0;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
-      count += countMarkdownFiles(path.join(dir, entry.name));
-    } else if (entry.name.endsWith('.md')) {
-      count++;
-    }
-  }
-  return count;
-}
-
 ipcMain.handle('insights:stats', () => {
-  const libs = db.project.list();
-  let notesFileCount = 0;
-  for (const p of libs) {
-    if (p.dir && fs.existsSync(p.dir)) { try { notesFileCount += countMarkdownFiles(p.dir); } catch {} }
-  }
-  const fileCount = (db.qOne("SELECT COUNT(*) as c FROM kb_documents") || {}).c || 0;
-  const chunkCount = (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0;
+  // 文件相关数字改为实时扫盘（索引路线已下线，kb_documents / kb_chunks 不再是数据源）
+  const scan = projectScan.collectStats();
   const totalChats = (db.qOne("SELECT COUNT(*) as c FROM prj_messages") || {}).c || 0;
-  const todayModified = (db.qOne("SELECT COUNT(*) as c FROM kb_documents WHERE indexed_at >= date('now')") || {}).c || 0;
   const projectCount = (db.qOne("SELECT COUNT(*) as c FROM prj_projects") || {}).c || 0;
   const todoPending = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const todoOverdue = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE scheduled_start != '' AND scheduled_start < datetime('now', '+8 hours') AND status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const remindersActive = (db.qOne("SELECT COUNT(*) as c FROM plan_reminders WHERE enabled = 1") || {}).c || 0;
   const todayDataRecords = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE created_at >= datetime('now', '+8 hours', 'start of day')") || {}).c || 0;
-  return { fileCount, notesFileCount, chunkCount, totalChats, todayModified, projectCount, todoPending, todoOverdue, remindersActive, todayDataRecords };
+  return {
+    fileCount: scan.fileCount,
+    notesFileCount: scan.fileCount,
+    todayModified: scan.todayModified,
+    totalChats, projectCount, todoPending, todoOverdue, remindersActive, todayDataRecords,
+  };
 });
 ipcMain.handle('insights:reports', () => {
   return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'daily_report' ORDER BY created_at DESC LIMIT 10");
@@ -1661,125 +1614,24 @@ ipcMain.handle('insights:weeklyReports', () => {
   return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'weekly_report' ORDER BY created_at DESC LIMIT 10");
 });
 ipcMain.handle('insights:subProjects', () => {
-  const rows = db.q("SELECT path, content, file_mtime FROM kb_documents");
-  const dirMap: any = {};
-  for (const row of rows) {
-    const dir = row.path ? row.path.split(/[\\/]/).slice(-2, -1)[0] || '根目录' : '根目录';
-    if (!dirMap[dir]) dirMap[dir] = { name: dir, fileCount: 0, totalSize: 0, files: [] };
-    dirMap[dir].fileCount++;
-    dirMap[dir].totalSize += (row.content || '').length;
-    dirMap[dir].files.push(row.path);
-  }
-  const result: any[] = Object.values(dirMap);
-  const analyses = db.q("SELECT dir_path, content FROM ai_analysis WHERE type = 'project_analysis'");
-  for (const p of result) {
-    const a = analyses.find(a => a.dir_path === p.name);
-    if (a) p.analysis = a.content;
-    p.hasAnalysis = !!a;
-  }
-  return result;
+  // 实时扫盘：按项目根下的一级子目录归类（原先读索引表 kb_documents）
+  return projectScan.collectSubProjects();
 });
 ipcMain.handle('insights:tags', () => {
-  const rows = db.q("SELECT content FROM kb_documents");
-  const tagCount: any = {};
-  for (const row of rows) {
-    const content = row.content || '';
-    const frontmatter = content.match(/^---\n([\s\S]*?)\n---/);
-    if (frontmatter) {
-      const tagsMatch = frontmatter[1].match(/tags\s*:\s*\[([^\]]*)\]/);
-      if (tagsMatch) {
-        tagsMatch[1].split(',').forEach(t => {
-          const tag = t.trim().replace(/['"]/g, '');
-          if (tag) tagCount[tag] = (tagCount[tag] || 0) + 1;
-        });
-      }
-    }
-    const hashtags = content.match(/#([\p{L}\p{N}_\-\u4e00-\u9fff]+)/gu);
-    if (hashtags) {
-      hashtags.forEach(t => {
-        const tag = t.slice(1);
-        if (tag) tagCount[tag] = (tagCount[tag] || 0) + 1;
-      });
-    }
-  }
-  return (Object.entries(tagCount) as any[]).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  // 实时扫盘：frontmatter tags + 正文 #话题（原先读索引表内容副本）
+  return projectScan.collectTags();
 });
 ipcMain.handle('insights:heatmap', () => {
-  const rows = db.q("SELECT file_mtime FROM kb_documents WHERE file_mtime IS NOT NULL");
-  const dateCount: any = {};
-  const now = Date.now();
-  for (const row of rows) {
-    const d = new Date(row.file_mtime);
-    const key = d.toISOString().slice(0, 10);
-    dateCount[key] = (dateCount[key] || 0) + 1;
-  }
-  const heatmap: any = {};
-  for (let i = 364; i >= 0; i--) {
-    const d = new Date(now - i * 86400000);
-    const key = d.toISOString().slice(0, 10);
-    heatmap[key] = dateCount[key] || 0;
-  }
-  return heatmap;
+  // 实时扫盘：按文件修改时间统计（原先读索引表 file_mtime）
+  return projectScan.collectHeatmap();
 });
 
-ipcMain.handle('service:startIndexer', () => {
-  indexer.start();
-  updateTrayMenu(getServicesStatus());
-  return true;
-});
-ipcMain.handle('service:stopIndexer', () => {
-  indexer.stop();
-  updateTrayMenu(getServicesStatus());
-  return true;
-});
-ipcMain.handle('service:indexAll', async () => {
-  if (_indexingLock) return { error: '正在索引中，请稍后再试' };
-  _indexingLock = true;
-  const sendProgress = (data) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('indexer:progress', data);
-    }
-  };
-  sendProgress({ phase: 'scan', current: 0, total: 0, file: '' });
-
-  const { fork } = require('child_process');
-  const worker = fork(path.join(__dirname, 'services', 'index-worker.js'));
-
-  const projectsAll = db.project.list();
-  const projects = projectsAll.map(p => ({ name: p.name, dir: p.dir, ignore_dirs: p.ignore_dirs, ignore_files: p.ignore_files }));
-
-  return new Promise((resolve) => {
-    handleWorkerMessages(worker, sendProgress, resolve, null);
-    worker.send({ type: 'start', projects });
-  });
-});
-ipcMain.handle('insights:clearIndex', () => {
-  db.run('DELETE FROM kb_chunks');
-  db.run('DELETE FROM kb_documents');
-  return true;
-});
-
-ipcMain.handle('insights:indexerInfo', () => {
-  return {
-    running: indexer.isRunning(),
-    model: appConfig.getConfig('embeddingModel') || '',
-    host: appConfig.getConfig('embeddingBaseUrl') || 'http://127.0.0.1:11434',
-    docCount: (db.qOne("SELECT COUNT(*) as c FROM kb_documents") || {}).c || 0,
-    chunkCount: (db.qOne("SELECT COUNT(*) as c FROM kb_chunks") || {}).c || 0,
-    embeddedCount: (db.qOne("SELECT COUNT(*) as c FROM kb_chunks WHERE embedding IS NOT NULL") || {}).c || 0,
-  };
-});
-
+// 索引服务已整体下线：kb:scan / service:indexAll / insights:clearIndex / insights:indexerInfo
+// 连同 kb_documents / kb_chunks 表、rag.ts、indexer.ts、index-worker.ts 一并删除。
+// 概览看板的文件数字改由 project-scan.ts 实时扫盘提供。
 ipcMain.handle('insights:libraryStats', () => {
-  const defaultId = (db.project.getDefault() || {}).id;
-  return db.project.list().map((p: any) => ({
-    projectId: p.id,
-    name: p.name,
-    isDefault: p.id === defaultId,
-    docCount: db.project.docCount(p.id),
-    chunkCount: (db.qOne('SELECT COUNT(*) as c FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', p.id) || {}).c || 0,
-    embeddedCount: (db.qOne('SELECT COUNT(*) as c FROM kb_chunks WHERE embedding IS NOT NULL AND doc_id IN (SELECT id FROM kb_documents WHERE project_id = ?)', p.id) || {}).c || 0,
-  }));
+  // 实时扫盘：每个项目的 .md 文件数与今日修改数
+  return projectScan.collectPerProject();
 });
 
 // --- Dialog ---
@@ -1793,6 +1645,12 @@ ipcMain.handle('dialog:openDirectory', async () => {
 
 // --- App ---
 ipcMain.handle('app:version', () => app.getVersion());
+/** 用系统默认浏览器打开外部链接；只放行 http(s)，防止渲染层借道打开任意协议 */
+ipcMain.handle('app:openExternal', (_, url: string) => {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) return { error: '仅支持 http(s) 链接' };
+  return shell.openExternal(u).then(() => ({ ok: true }), (e: any) => ({ error: e?.message || String(e) }));
+});
 ipcMain.handle('app:firstRun', () => {
   return { firstRun: !appConfig.hasConfigKey('firstRunWelcomeSeen') };
 });
@@ -1865,10 +1723,6 @@ ipcMain.handle('config:get', () => {
     llmModel: appConfig.getConfig('llmModel') || '',
     llmApiKey: appConfig.getConfig('llmApiKey') || '',
     llmBaseUrl: appConfig.getConfig('llmBaseUrl') || '',
-    embeddingModel: appConfig.getConfig('embeddingModel') || '',
-    embeddingProvider: appConfig.getConfig('embeddingProvider') || 'Ollama',
-    embeddingBaseUrl: appConfig.getConfig('embeddingBaseUrl') || 'http://127.0.0.1:11434',
-    embeddingApiKey: appConfig.getConfig('embeddingApiKey') || '',
     feishuWebhookUrl: appConfig.getConfig('feishuWebhookUrl') || '',
     feishuAppId: appConfig.getConfig('feishuAppId') || '',
     feishuAppSecret: appConfig.getConfig('feishuAppSecret') || '',
@@ -1880,15 +1734,6 @@ ipcMain.handle('config:get', () => {
 ipcMain.handle('config:set', (_, cfg) => {
   appConfig.saveConfig(cfg || {});
   return true;
-});
-
-ipcMain.handle("embedding:test", async (_, { model, host, apiKey }) => {
-  try {
-    const result = await rag.testConnection({ model, host, apiKey });
-    return result;
-  } catch (e) {
-    return { ok: false, message: "❌ 测试异常: " + (e.message || e) };
-  }
 });
 
 // ========== AI 工具箱（aitool:*） ==========
@@ -2115,12 +1960,9 @@ app.whenReady().then(async () => {
     logger.error('ensureNotesLibraryMigration error: %s', e);
   }
 
-  // 配置嵌入模型（从 config.json 读取）
-  rag.configure({
-    model: appConfig.getConfig("embeddingModel") || "",
-    host: appConfig.getConfig("embeddingBaseUrl") || "http://127.0.0.1:11434",
-    apiKey: appConfig.getConfig("embeddingApiKey") || '',
-  });
+  // 注：嵌入模型配置（embeddingModel / embeddingBaseUrl / embeddingApiKey）原先只服务于向量索引，
+  // 索引路线已整体下线，这些配置项不再被读取，留在 config.json 里也不生效。
+
   createWindow();
   startupElapsed('window created');
 

@@ -18,6 +18,8 @@ interface ElectronAPI {
     version: () => Promise<string>;
     firstRun: () => Promise<{ firstRun: boolean }>;
     firstRunDone: () => Promise<boolean>;
+    /** 用系统默认浏览器打开外部链接（仅 http/https） */
+    openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
   };
   dialog: {
     openDirectory: () => Promise<string | null>;
@@ -46,9 +48,7 @@ interface ElectronAPI {
     update: (id: number, data: { name?: string; dir?: string }) => Promise<any>;
     setDir: (dir: string) => Promise<any>;
     remove: (id: number) => Promise<any>;
-    scan: (projectId: number) => Promise<any>;
     search: (dir: string, query: string) => Promise<any[]>;
-    status: () => Promise<any>;
     setDefault: (id: number) => Promise<any>;
     getDefault: () => Promise<any>;
   };
@@ -104,14 +104,11 @@ interface ElectronAPI {
     configTest: (cfg: { baseUrl: string; apiKey: string; modelName: string }) => Promise<{ ok: boolean; error?: string; latencyMs?: number }>;
   };
   service: {
-    status: () => Promise<{ feishu: boolean; scheduler: boolean; indexer: boolean }>;
+    status: () => Promise<{ feishu: boolean; scheduler: boolean }>;
     startFeishu: (config: any) => Promise<boolean>;
     stopFeishu: () => Promise<boolean>;
     startScheduler: () => Promise<boolean>;
     stopScheduler: () => Promise<boolean>;
-    startIndexer: () => Promise<boolean>;
-    stopIndexer: () => Promise<boolean>;
-    indexAll: () => Promise<boolean>;
   };
   config: {
     get: () => Promise<any>;
@@ -152,8 +149,20 @@ interface ElectronAPI {
   llm: {
     test: (opts: { provider?: string; model?: string; apiKey?: string; baseUrl?: string }) => Promise<{ ok: boolean; message: string; response?: string }>;
   };
-  embedding: {
-    test: (model: string, host: string, apiKey: string) => Promise<any>;
+  insights: {
+    stats: () => Promise<{
+      fileCount: number; notesFileCount: number; todayModified: number;
+      projectCount: number; totalChats: number; todoPending: number; todoOverdue: number;
+      remindersActive: number; todayDataRecords: number;
+    }>;
+    reports: () => Promise<any[]>;
+    weeklyReports: () => Promise<any[]>;
+    reportGenerating: () => Promise<{ generating: boolean }>;
+    subProjects: () => Promise<Array<{ name: string; fileCount: number; totalSize: number; files: string[]; analysis?: string; hasAnalysis: boolean }>>;
+    tags: () => Promise<Array<{ name: string; count: number }>>;
+    heatmap: () => Promise<Record<string, number>>;
+    /** 实时扫盘得到的每项目文件统计（原先读索引表） */
+    libraryStats: () => Promise<Array<{ projectId: number; name: string; isDefault: boolean; docCount: number; todayModified: number }>>;
   };
   on: (channel: string, callback: (...args: any[]) => void) => void;
   removeAllListeners: (channel: string) => void;

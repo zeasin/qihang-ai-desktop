@@ -4,7 +4,7 @@
  * 飞书消息落库为 plan_tasks（task_type 'note'），追问复用原 pi 会话在笔记库中
  * 继续执行，流式进度以 task:followup:* 事件回传桌面端。
  */
-import { runPi, SILENT_RUN_TIMEOUT_MS } from './pi-agent';
+import { runPi } from './pi-agent';
 import logger from './logger';
 import * as appConfig from './app-config';
 import { projectDirOf } from './feishu-router';
@@ -67,7 +67,7 @@ function emitFollowup(type: string, payload: any) {
  */
 export async function followUpTask(
   taskId: number, question: string, db: any,
-  opts: { model?: string; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
+  opts: { model?: string; onDone?: (text: string, meta?: { incomplete?: boolean }) => void; onError?: (err: string) => void } = {},
 ): Promise<boolean> {
   const task = db.task.get(taskId);
   if (!task) return false;
@@ -113,12 +113,12 @@ export async function followUpTask(
         emitFollowup('delta', { taskId, delta });
       };
       const onTool = (t: any) => logger.info('[Followup] tool %s %s', t.name, t.type);
-      const onDone = (finalText: string) => {
+      const onDone = (finalText: string, meta?: { incomplete?: boolean }) => {
         if (finalText) reply = finalText;
         db.chat.addMessage(sessionId, 'assistant', reply, 'general');
         finish('SUCCESS', { result: reply });
-        emitFollowup('done', { taskId, text: reply });
-        try { opts.onDone && opts.onDone(reply); } catch (e: any) { logger.warn('[Followup] onDone callback failed: %s', e?.message); }
+        emitFollowup('done', { taskId, text: reply, incomplete: !!meta?.incomplete });
+        try { opts.onDone && opts.onDone(reply, meta); } catch (e: any) { logger.warn('[Followup] onDone callback failed: %s', e?.message); }
       };
       const onError = (err: string) => {
         db.chat.addMessage(sessionId, 'assistant', `❌ ${err}`, 'general');
@@ -146,8 +146,9 @@ export async function followUpTask(
         cwd: notesDir || undefined,
         modelPattern: opts.model || undefined,
         customTools,
-        // 追问同样是「等结果」：模型限流时必须有上限，否则一直挂着不回复
-        timeoutMs: SILENT_RUN_TIMEOUT_MS,
+        // 不设超时（2026-10-31 用户决策）：300 秒硬超时会掐断活跃的长任务——
+        // 曾把「查 4 个数据集 + 读笔记」任务干到一半的旁白当结果发出。
+        // 代价：模型限流(429)无限退避时会一直挂着，需用户在界面主动停止。
         onDelta, onTool, onDone, onError,
       });
     } catch (e: any) {

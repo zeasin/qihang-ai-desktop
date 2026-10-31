@@ -1,10 +1,10 @@
 // 笔记提炼（规则层）：扫描各项目 .md，粗提待办/跟进/工作日志并带出处；勾选项单向回写任务状态
+// 扫描器与概览页看板共用（见 project-scan.ts），保证两处口径一致。
 import * as fs from 'fs';
 import * as path from 'path';
 import * as db from './database';
+import { walkMd, splitIgnore } from './project-scan';
 import logger from './logger';
-
-const SYSTEM_IGNORED = new Set(['node_modules', '.git', '.svn', '.hg', '__pycache__', '.cache', 'dist', 'build', 'target', '.idea', '.vscode', 'release', 'out']);
 
 const MAX_FILES_PER_PROJECT = 300;
 const MAX_SCAN_BYTES = 2 * 1024 * 1024;
@@ -18,10 +18,6 @@ export interface DigestResult { todos: DigestTodo[]; followups: DigestFollowup[]
 
 interface Candidate { full: string; rel: string; size: number; m: number; anchor: boolean; }
 
-function splitIgnore(s: string): string[] {
-  return String(s || '').split(/[,;、\n]/).map(x => x.trim()).filter(Boolean);
-}
-
 /** 去掉行内 markdown 记号，只留可读文本；超长截断（出处已带行号，完整原文在笔记里） */
 function cleanText(s: string): string {
   const t = String(s || '')
@@ -31,29 +27,6 @@ function cleanText(s: string): string {
     .replace(/\s+/g, ' ')
     .trim();
   return t.length > 160 ? t.slice(0, 160) + '…' : t;
-}
-
-function walkMd(dir: string, base: string, ignoreDirs: string[], ignoreFiles: string[], out: Candidate[]) {
-  let entries: fs.Dirent[] = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name.startsWith('.') || SYSTEM_IGNORED.has(entry.name.toLowerCase())) continue;
-      if (ignoreDirs.includes(entry.name)) continue;
-      walkMd(full, base, ignoreDirs, ignoreFiles, out);
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
-      if (ignoreFiles.includes(entry.name)) continue;
-      let size = 0;
-      let m = 0;
-      try { const st = fs.statSync(full); size = st.size; m = st.mtimeMs; } catch { continue; }
-      out.push({ full, rel: path.relative(base, full).replace(/\\/g, '/'), size, m, anchor: isAnchorName(entry.name) });
-    }
-  }
-}
-
-function isAnchorName(name: string): boolean {
-  return /^TODO\.md$/i.test(name) || /^\d{4}-\d{2}-\d{2}\.md$/i.test(name);
 }
 
 /** 取样：锚点文件（待办清单/日期日志）无条件纳入，其余按最近修改填满预算 */

@@ -1,0 +1,171 @@
+/* ==========================================================================
+   纸墨（Paper & Ink）设计令牌层
+   --------------------------------------------------------------------------
+   唯一权威参照：docs/ui-redesign-proto.html 第 427~711 行的 <style> 块
+   （该原型由用户定稿，是「B 纸墨」方向的最终稿）。
+
+   本文件只做两件事：
+     1. 把原型里带 `#qh2-proto` 前缀的设计变量翻译成全局 CSS 自定义属性；
+     2. 提供一层语义别名，方便现有组件（老变量名 --primary / --bg-main /
+        --text-primary / --border / --radius-sm …）逐步迁移。
+
+   约定：
+     · 不带 `#qh2-proto` 前缀，全部为全局 token；
+     · 不 import 任何东西，不引用 global.css 里的老变量；
+     · 语义别名一律引用基础 token，不重复写死色值，因此深色主题自动跟随；
+     · 项目当前还没有主题切换机制，这里只定义变量与选择器，不含任何 JS。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. 基础令牌 —— 浅色（纸墨）主题
+   -------------------------------------------------------------------------- */
+:root {
+  /* 字体栈 */
+  --sf:'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif;
+  --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+  --mono:'JetBrains Mono','Cascadia Mono',Consolas,'Microsoft YaHei',monospace;
+
+  /* 画布与面板 */
+  --cv:#f4f5f2;   /* 画布/纸底 */
+  --pn:#ffffff;   /* 面板 */
+  --pn2:#fafaf7;  /* 次级面板 */
+  --sd:#fbfbf9;   /* 侧栏底 */
+
+  /* 线与框 */
+  --ln:#e4e6df;   /* 分隔线 */
+  --frame:#dfe2d9;/* 边框 */
+
+  /* 文字 */
+  --ink:#242820;  /* 主文字 */
+  --ink2:#5b6156; /* 次文字 */
+  --ink3:#8f948a; /* 弱文字 */
+
+  /* 强调 / 警示 / 危险 */
+  --ac:#2f8c74;   /* 强调色(青绿) */
+  --acc:#ffffff;  /* 强调色上的文字 */
+  --acsoft:rgba(47,140,116,.1);
+  --warn:#b07a24;
+  --warnsoft:rgba(176,122,36,.13);
+  --dgr:#c25450;
+  --dgrsoft:rgba(194,84,80,.12);
+
+  /* 圆角 / 阴影 */
+  --r:10px;       /* 圆角 */
+  --rs:7px;       /* 小圆角 */
+  --pill:999px;   /* 全圆角（胶囊） */
+  --shadow:0 14px 36px -14px rgba(30,36,28,.28);
+}
+
+/* --------------------------------------------------------------------------
+   2. 基础令牌 —— 深色主题
+      用法：给 <html>（即 :root）加 data-theme="dark" 即可整体切换。
+   -------------------------------------------------------------------------- */
+:root[data-theme="dark"] {
+  --cv:#15181b; --pn:#1d2125; --pn2:#191d21; --sd:#191d20; --ln:#2b3136;
+  --ink:#e4e8e2; --ink2:#a6ada4; --ink3:#737a72; --ac:#58c7ab; --acc:#0d211b;
+  --acsoft:rgba(88,199,171,.13); --warn:#d9a054; --warnsoft:rgba(217,160,84,.15);
+  --dgr:#e08078; --dgrsoft:rgba(224,128,120,.15); --frame:#262c30;
+  --shadow:0 16px 44px -14px rgba(0,0,0,.65);
+}
+
+/* --------------------------------------------------------------------------
+   3. 语义别名 —— 全部引用上面的基础 token
+      深色主题下不需要重复定义：基础 token 变了，别名自动跟着变。
+   -------------------------------------------------------------------------- */
+:root {
+  /* 背景 */
+  --bg:var(--cv);            /* 画布 / 纸底 */
+  --bg-panel:var(--pn);      /* 面板 */
+  --bg-panel-2:var(--pn2);   /* 次级面板 */
+  --bg-sidebar:var(--sd);    /* 侧栏底 */
+
+  /* 描边 */
+  --border:var(--ln);        /* 分隔线 / 常规描边 */
+  --border-soft:var(--frame);/* 更弱一层的边框 */
+
+  /* 文字 */
+  --text:var(--ink);         /* 主文字 */
+  --text-2:var(--ink2);      /* 次文字 */
+  --text-3:var(--ink3);      /* 弱文字 */
+  --text-invert:var(--acc);  /* 强调色底上的文字 */
+
+  /* 强调 */
+  --accent:var(--ac);        /* 强调色 */
+  --accent-fg:var(--acc);    /* 强调色上的文字 */
+  --accent-soft:var(--acsoft);
+
+  /* 语义色 */
+  --danger:var(--dgr);
+  --danger-soft:var(--dgrsoft);
+  --warning:var(--warn);
+  --warning-soft:var(--warnsoft);
+
+  /* 字体 */
+  --font-sans:var(--sf);
+  --font-serif:var(--serif);
+  --font-mono:var(--mono);
+
+  /* 圆角 */
+  --radius:var(--r);
+  --radius-sm:var(--rs);
+  --radius-pill:var(--pill);
+
+  /* 阴影
+     原型只定义了一档阴影（弹层用），故两档别名都指向它；
+     语义上 md = 弹层/浮层，sm = 同源轻量阴影。 */
+  --shadow-sm:var(--shadow);
+  --shadow-md:var(--shadow);
+
+  /* 旧变量名兼容（便于现有组件零改动迁移到老体系） */
+  --primary:var(--ac);
+  --bg-main:var(--cv);
+  --text-primary:var(--ink);
+  --text-secondary:var(--ink2);
+  --text-muted:var(--ink3);
+  --hover:var(--acsoft);
+  --success:var(--ac);
+}
+
+/* --------------------------------------------------------------------------
+   4. 基础排版基线
+   -------------------------------------------------------------------------- */
+body {
+  background: var(--cv);
+  color: var(--ink);
+  font-family: var(--sf);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--frame);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink3);
+}
+
+/* --------------------------------------------------------------------------
+   5. 通用工具类
+   -------------------------------------------------------------------------- */
+
+/* 等宽字体：用于 ID、时间戳、命令等 */
+.mono {
+  font-family: var(--mono);
+}
+
+/* 纸面板卡片 */
+.paper-card {
+  background: var(--pn);
+  border: 1px solid var(--ln);
+  border-radius: var(--r);
+}

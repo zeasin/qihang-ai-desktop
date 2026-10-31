@@ -297,7 +297,7 @@ export interface RunPiCallbacks {
   onDelta?: (text: string) => void;
   onThinking?: (text: string) => void;
   onTool?: (event: { type: 'start' | 'end' | 'thinking'; name?: string; args?: any; error?: boolean; text?: string }) => void;
-  onDone?: (finalText: string) => void;
+  onDone?: (finalText: string, meta?: { incomplete?: boolean }) => void;
   onError?: (err: string) => void;
 }
 
@@ -404,7 +404,9 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
       logger.warn('[PiAgent] timeout %sms, aborting session %s', timeoutMs, sessionId);
       finished = true;
       void session.abort().catch(() => {});
-      if (finalText) onDone(finalText);
+      // 已有部分输出时照样上报，但带 incomplete 标记——调用方必须明确标注
+      // 「这是中断前的部分输出」，不能让它看起来像最终回答
+      if (finalText) onDone(finalText, { incomplete: true });
       else onError(`处理超时（超过 ${Math.round(timeoutMs / 1000)} 秒）。可能是模型服务商限流或响应过慢，请稍后重试。`);
     }, timeoutMs);
   }
