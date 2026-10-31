@@ -1,154 +1,132 @@
 <template>
-  <div class="overview-view">
-    <!-- ========== 顶部条：笔记库看板 ========== -->
-    <div class="board-bar">
-      <div class="board-brand">
-        <span class="board-title">📚 笔记库看板</span>
-        <span class="board-sub">{{ digestMeta }}</span>
+  <div class="page today-view">
+    <!-- ========== 页头 ========== -->
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">{{ pageDateStr }} <small>{{ pageWeekStr }}</small></h1>
+        <p class="page-sub">{{ greeting }}{{ digestMeta ? ' · ' + digestMeta : '' }}</p>
       </div>
-      <div class="board-actions">
-        <button class="btn btn-sm btn-secondary" :disabled="digestLoading" @click="loadNoteDigest">{{ digestLoading ? '扫描中…' : '↻ 重新扫描' }}</button>
-        <button class="btn btn-sm btn-secondary" :disabled="syncing" @click="syncDone" title="把笔记里已勾选的 - [x] 对应任务标记完成">⇄ 同步完成项</button>
-        <button class="btn btn-sm btn-secondary" @click="openNotes">浏览笔记</button>
-        <button class="btn btn-sm btn-secondary" @click="openConfig" title="管理项目">⚙</button>
+      <div class="page-actions">
+        <button class="btn btn-sm btn-secondary" :disabled="digestLoading" @click="loadNoteDigest">
+          <AppIcon name="refresh-cw" :size="13" />{{ digestLoading ? '扫描中…' : '重新扫描' }}
+        </button>
+        <button class="btn btn-sm btn-secondary" :disabled="syncing" @click="syncDone" title="把笔记里已勾选的 - [x] 对应任务标记完成">
+          <AppIcon name="check" :size="13" />同步完成项
+        </button>
+        <button class="btn btn-sm btn-secondary" @click="openNotes">
+          <AppIcon name="book-open" :size="13" />浏览笔记
+        </button>
+        <button class="icon-btn" @click="openConfig" title="管理项目"><AppIcon name="settings" :size="14" /></button>
       </div>
-    </div>
+    </header>
 
     <!-- 一个笔记库都没有：AI 功能门禁 -->
     <NotesGate
       v-if="notesLoaded && !kbCount"
       compact
-      desc="概览的待办、跟进、工作日志全部由笔记库提炼，添加至少一个笔记库后自动可用；数据集、提醒不受影响。"
+      desc="今天的待办、跟进、工作日志全部由笔记库提炼，添加至少一个笔记库后自动可用；数据集、提醒不受影响。"
       @ready="onGateReady"
     />
 
     <template v-else>
-      <!-- ========== KPI：全部来自笔记提炼 ========== -->
-      <div class="kpi-row">
-        <div class="kpi"><div class="kpi-num accent">{{ digestPending.length }}</div><div class="kpi-label">未勾待办</div></div>
-        <div class="kpi"><div class="kpi-num ok">{{ digestDoneCount }}</div><div class="kpi-label">笔记已勾</div></div>
-        <div class="kpi"><div class="kpi-num warn">{{ digestFollowups.length }}</div><div class="kpi-label">待跟进</div></div>
-        <div class="kpi"><div class="kpi-num">{{ digestLogs.length }}</div><div class="kpi-label">工作日志</div></div>
-        <div class="kpi clickable" @click="openNotes" title="浏览笔记库"><div class="kpi-num">{{ stats.notesFileCount }}</div><div class="kpi-label">笔记文件</div></div>
+      <!-- ========== 概览统计行 ========== -->
+      <div class="statline">
+        <span>待你处理 <b class="acc">{{ digestPending.length }}</b></span>
+        <span>笔记已勾 <b>{{ digestDoneCount }}</b></span>
+        <span>待跟进 <b>{{ digestFollowups.length }}</b></span>
+        <span class="warm">数据待确认 <b>{{ pendingRecordCount }}</b></span>
       </div>
 
-      <!-- ========== 三栏看板 ========== -->
-      <div class="board-grid">
-        <section class="board-col">
-          <header class="col-head">☐ 待办<span class="col-count">{{ digestPending.length }}</span></header>
-          <div class="col-body">
-            <div v-for="g in digestTodoGroups" :key="g.file" class="src-group">
-              <div class="src-title" :title="g.file">{{ g.file }}<span class="src-count">{{ g.items.length }}</span></div>
-              <div v-for="(t, i) in g.items" :key="g.file + ':' + i" class="row" :title="g.file + ':' + t.line">
-                <span class="row-mark">☐</span>
-                <span class="row-text">{{ t.text }}</span>
-                <span class="row-line" v-if="t.line">{{ t.line }}</span>
-              </div>
+      <!-- ========== 引擎简报 ========== -->
+      <section class="brief panel">
+        <div class="sec-label"><AppIcon name="sparkles" :size="13" />引擎简报<em>由笔记库与任务数据自动汇编</em></div>
+        <div v-if="briefLines.length" class="brief-body">
+          <p v-for="(line, i) in briefLines" :key="i" v-html="line"></p>
+        </div>
+        <div v-else class="brief-body"><p>暂无数据。扫描笔记库后，这里会汇总你的待办、跟进与最新产出。</p></div>
+      </section>
+
+      <!-- ========== 等你处理 ========== -->
+      <div class="sec-label"><AppIcon name="list-checks" :size="13" />等你处理<em>{{ digestPending.length + todos.length }} 项</em></div>
+      <section class="panel todo-panel">
+        <!-- 本地待办（可勾选） -->
+        <div v-for="t in todos" :key="'lt' + t.id" class="todo-row" :class="{ done: t.status === 'done', overdue: t.due_date && t.due_date < todayStr && t.status !== 'done' }">
+          <button class="todo-box" :title="t.status === 'done' ? '标记为未完成' : '标记完成'" @click="toggleTodo(t)">
+            <AppIcon v-if="t.status === 'done'" name="check" :size="11" />
+          </button>
+          <span class="prio" :class="t.priority"></span>
+          <span class="todo-tx">{{ t.title }}</span>
+          <span class="todo-src">本地待办</span>
+          <span class="todo-dt" :class="{ warm: t.due_date && t.due_date < todayStr && t.status !== 'done' }">{{ t.due_date || '' }}</span>
+        </div>
+        <div v-if="!todos.length" class="empty-row">本地库暂无待办</div>
+        <!-- 来自笔记的待办（只读，按来源文件分组） -->
+        <template v-for="g in digestTodoGroups" :key="g.file">
+          <div class="src-title" :title="g.file"><AppIcon name="file-text" :size="11" />{{ g.file }}<span class="src-count">{{ g.items.length }}</span></div>
+          <div v-for="(t, i) in g.items" :key="g.file + ':' + i" class="todo-row ro" :title="g.file + ':' + t.line">
+            <span class="todo-box ro-box"></span>
+            <span class="todo-tx">{{ t.text }}</span>
+            <span class="todo-src">来自笔记</span>
+            <span class="todo-dt">{{ t.line || '' }}</span>
+          </div>
+        </template>
+        <div v-if="digestPending.length > shownTodoCount" class="empty-row">仅列出前 {{ shownTodoCount }} 条，共 {{ digestPending.length }} 条</div>
+        <div v-if="!digestPending.length && !todos.length" class="empty-row">{{ digestLoading ? '正在扫描笔记…' : '笔记里没有未勾选的待办' }}</div>
+      </section>
+
+      <!-- ========== 今日节奏 + 新产出 ========== -->
+      <div class="grid2">
+        <section>
+          <div class="sec-label"><AppIcon name="clock" :size="13" />今日节奏</div>
+          <div class="panel list-panel">
+            <div v-if="reportScheduleText" class="plan-row">
+              <AppIcon name="clock" :size="14" />
+              <span class="plan-tx"><b>{{ reportScheduleText }}</b><small>综合日报自动生成{{ reportPushText }}</small></span>
             </div>
-            <div v-if="digestPending.length > shownTodoCount" class="col-more">仅列出前 {{ shownTodoCount }} 条，共 {{ digestPending.length }} 条</div>
-            <div v-if="!digestPending.length" class="col-empty">{{ digestLoading ? '正在扫描笔记…' : '笔记里没有未勾选的待办' }}</div>
+            <div v-for="r in activeReminders" :key="r.id" class="plan-row">
+              <AppIcon name="bell-ring" :size="14" />
+              <span class="plan-tx"><b>{{ r.time || '09:00' }} {{ r.name }}</b><small>{{ reminderTypeText(r.type) }}{{ r.date ? ' · ' + r.date : '' }}</small></span>
+            </div>
+            <div v-if="!reportScheduleText && !activeReminders.length" class="empty-row">暂无定时安排</div>
           </div>
         </section>
-
-        <section class="board-col">
-          <header class="col-head">📌 跟进<span class="col-count">{{ digestFollowups.length }}</span></header>
-          <div class="col-body">
-            <div v-for="(f, i) in digestFollowups.slice(0, 30)" :key="'f' + i" class="row" :title="f.file + ':' + f.line">
-              <span class="row-mark">📌</span>
-              <span class="row-text">{{ f.text }}</span>
-              <span class="row-line">{{ f.file.split('/').pop() }}</span>
+        <section>
+          <div class="sec-label"><AppIcon name="file-text" :size="13" />新产出<em>{{ reports.length }}</em></div>
+          <div class="panel list-panel">
+            <div v-for="r in reports.slice(0, 6)" :key="r.id" class="file-row" @click="openReportModal(r)">
+              <AppIcon name="file-text" :size="14" />
+              <span class="plan-tx">
+                <b>{{ r.report_date || '日报' }} 综合日报</b>
+                <small>{{ (r.summary || '').slice(0, 60) || '（无摘要）' }}</small>
+              </span>
+              <span class="badge badge-primary">日报</span>
             </div>
-            <div v-if="!digestFollowups.length" class="col-empty">没有命中「待跟进 / 跟进中」这类话术</div>
-          </div>
-        </section>
-
-        <section class="board-col">
-          <header class="col-head">🗓️ 工作日志<span class="col-count">{{ digestLogs.length }}</span></header>
-          <div class="col-body">
-            <div v-for="(g, date) in digestLogGroups" :key="date" class="log-row" :title="g[0].file + ':' + g[0].line">
-              <div class="log-date">{{ date }}<span class="log-src">{{ g[0].file }}</span></div>
-              <div class="log-preview">{{ g[0].preview || '（无正文摘要）' }}</div>
-            </div>
-            <div v-if="!digestLogs.length" class="col-empty">没有日期命名的日志文件</div>
+            <div v-if="!reports.length" class="empty-row">暂无日报</div>
           </div>
         </section>
       </div>
 
-      <!-- ========== 次级区：综合日报 + 本地库 ========== -->
-      <div class="sub-grid">
-        <section class="sub-card">
-          <header class="col-head">📊 综合日报<span class="col-sub">{{ reportScheduleText }}</span></header>
-          <div class="card" v-if="latestReport">
-            <div class="latest-header">
-              <div class="latest-info">
-                <div class="latest-date">{{ latestReport.report_date || '最新日报' }}</div>
-                <div class="latest-time">{{ latestReport.created_at }}</div>
-              </div>
-              <button class="btn btn-sm btn-secondary" @click="openReportModal(latestReport)">查看详情</button>
+      <!-- ========== 跟进事项 + 工作日志 ========== -->
+      <div class="grid2">
+        <section>
+          <div class="sec-label"><AppIcon name="bookmark" :size="13" />跟进事项<em>{{ digestFollowups.length }}</em></div>
+          <div class="panel list-panel">
+            <div v-for="(f, i) in digestFollowups.slice(0, 20)" :key="'f' + i" class="file-row" :title="f.file + ':' + f.line">
+              <AppIcon name="bookmark" :size="14" />
+              <span class="plan-tx"><b>{{ f.text }}</b><small>{{ f.file.split('/').pop() }}</small></span>
             </div>
-            <div v-if="keyPointGroups.length" class="key-points">
-              <div v-for="g in keyPointGroups" :key="g.label" class="key-point-group">
-                <div class="key-points-title">{{ g.label }}</div>
-                <div v-for="(p, i) in g.items" :key="i" class="key-point">• {{ p }}</div>
-              </div>
-            </div>
-            <div v-else class="key-points"><div class="key-point">{{ (latestReport.summary || '').slice(0, 200) }}</div></div>
-          </div>
-          <div class="card">
-            <div v-if="reports.length" class="report-list">
-              <div v-for="r in reports" :key="r.id" class="report-item" @click="openReportModal(r)">
-                <div class="report-header">
-                  <span class="report-date">{{ r.report_date || '日报' }}</span>
-                  <span class="report-time" style="margin:0;">{{ r.created_at }}</span>
-                  <span class="report-expand">查看详情</span>
-                </div>
-                <div class="report-summary">{{ (r.summary || '').slice(0, 200) }}</div>
-              </div>
-            </div>
-            <div v-else class="empty-state" style="padding:20px;">
-              <div class="empty-icon">📊</div>
-              <div class="empty-title">暂无日报</div>
-            </div>
+            <div v-if="!digestFollowups.length" class="empty-row">没有命中「待跟进 / 跟进中」这类话术</div>
           </div>
         </section>
-
-        <section class="sub-card">
-          <div class="tab-bar">
-            <button :class="{ on: subTab === 'todo' }" @click="subTab = 'todo'">本地待办 {{ stats.todoPending }}</button>
-            <button :class="{ on: subTab === 'reminder' }" @click="subTab = 'reminder'">提醒 {{ stats.remindersActive }}</button>
-            <button :class="{ on: subTab === 'pending' }" @click="subTab = 'pending'">待处理记录</button>
-          </div>
-          <div class="card tab-body">
-            <div v-if="subTab === 'todo'" class="stack">
-              <div v-for="t in todos" :key="t.id" class="todo-item" :class="{ overdue: t.due_date && t.due_date < todayStr && t.status !== 'done' }">
-                <div class="todo-priority" :class="t.priority">{{ t.priority === 'high' ? '🔴' : t.priority === 'mid' ? '🟡' : '🟢' }}</div>
-                <div class="todo-body">
-                  <div class="todo-title">{{ t.title }}</div>
-                  <div class="todo-meta" v-if="t.due_date">{{ t.due_date }}</div>
-                </div>
-                <button class="todo-done-btn" @click="toggleTodo(t)">{{ t.status === 'done' ? '↩' : '✓' }}</button>
-              </div>
-              <div v-if="!todos.length" class="col-empty">本地库暂无待办</div>
+        <section>
+          <div class="sec-label"><AppIcon name="history" :size="13" />工作日志<em>{{ digestLogs.length }}</em></div>
+          <div class="panel list-panel">
+            <div v-for="(g, date) in digestLogGroups" :key="date" class="file-row" :title="g[0].file + ':' + g[0].line">
+              <AppIcon name="file-text" :size="14" />
+              <span class="plan-tx"><b>{{ date }} 日志</b><small>{{ g[0].preview || '（无正文摘要）' }}</small></span>
+              <span class="row-src">{{ g[0].file }}</span>
             </div>
-
-            <div v-else-if="subTab === 'reminder'" class="stack">
-              <div v-for="r in reminders" :key="r.id" class="reminder-item">
-                <div class="reminder-name">{{ r.name }}</div>
-                <div class="reminder-time">{{ r.time || '09:00' }}{{ r.date ? ' · ' + r.date : '' }}</div>
-              </div>
-              <div v-if="!reminders.length" class="col-empty">暂无提醒</div>
-            </div>
-
-            <div v-else class="stack">
-              <div v-for="group in pendingRecords" :key="group.datasetId" class="pending-group">
-                <div class="pending-group-title">{{ group.datasetName }}</div>
-                <div v-for="rec in group.records" :key="rec.id" class="pending-item">
-                  <div class="pending-text">{{ Object.values(rec).filter(v => typeof v === 'string' && v.length < 80 && v !== rec._created_at).slice(0, 2).join(' · ') || '(无标题)' }}</div>
-                  <div class="pending-time">{{ rec._created_at || '' }}</div>
-                </div>
-              </div>
-              <div v-if="!pendingRecords.length" class="col-empty">暂无待处理记录</div>
-            </div>
+            <div v-if="!digestLogs.length" class="empty-row">没有日期命名的日志文件</div>
           </div>
         </section>
       </div>
@@ -159,7 +137,7 @@
   <div v-if="showReportModal" class="modal-overlay" @click.self="closeReportModal">
     <div class="modal-box modal-box-lg">
       <div class="modal-header">
-        <h3>📊 综合日报{{ modalReport?.report_date ? ' · ' + modalReport.report_date : '' }}</h3>
+        <h3>综合日报{{ modalReport?.report_date ? ' · ' + modalReport.report_date : '' }}</h3>
         <button class="modal-close" @click="closeReportModal">&times;</button>
       </div>
       <div class="modal-body report-modal-body">
@@ -173,6 +151,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import NotesGate from '@/components/NotesGate.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const API = window.electronAPI;
 const router = useRouter();
@@ -196,16 +175,76 @@ const reportScheduleText = computed(() => {
     if (parts.length >= 2) {
       const hour = parts[1].padStart(2, '0');
       const min = parts[0].padStart(2, '0');
-      return `每日 ${hour}:${min} 自动生成`;
+      return `每日 ${hour}:${min}`;
     }
   }
-  return '每日自动生成综合日报';
+  return '';
 });
+
+const reportPushText = '，可推送飞书';
 
 const todos = ref<any[]>([]);
 const reminders = ref<any[]>([]);
 const pendingRecords = ref<any[]>([]);
 const todayStr = ref('');
+
+const pendingRecordCount = computed(() =>
+  (pendingRecords.value || []).reduce((n: number, g: any) => n + (g.records?.length || 0), 0));
+
+const activeReminders = computed(() => (reminders.value || []).filter((r: any) => r.enabled !== 0));
+
+function reminderTypeText(type: string): string {
+  const m: Record<string, string> = { daily: '每天', weekly: '每周', monthly: '每月', yearly: '每年', once: '仅一次' };
+  return m[type] || type || '提醒';
+}
+
+// ========== 页头日期与问候 ==========
+const pageDateStr = computed(() => {
+  const d = new Date();
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+});
+const pageWeekStr = computed(() => {
+  const w = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  return w[new Date().getDay()];
+});
+const greeting = computed(() => {
+  const h = new Date().getHours();
+  if (h < 6) return '夜深了';
+  if (h < 12) return '早上好';
+  if (h < 14) return '中午好';
+  if (h < 18) return '下午好';
+  return '晚上好';
+});
+
+// ========== 引擎简报（由现有数据汇编，不额外调用 AI） ==========
+const briefLines = computed(() => {
+  const lines: string[] = [];
+  const latest = reports.value[0];
+  if (latest) {
+    const points = keyPointGroups.value.flatMap((g) => g.items).slice(0, 2);
+    lines.push(
+      `最新综合日报 <b>《${latest.report_date || '最新'}》</b> 已生成${latest.created_at ? '（' + latest.created_at + '）' : ''}` +
+      (reportScheduleText.value ? `，${reportScheduleText.value}自动更新` : '') + '。'
+    );
+    for (const p of points) lines.push(escapeHtml(p) + '。');
+  }
+  if (digest.value) {
+    const dp = digestPending.value.length;
+    const df = digestFollowups.value.length;
+    if (dp || df) {
+      lines.push(`笔记库扫描 <b>${digest.value.scannedFiles ?? 0}</b> 个文件：发现未勾待办 <b>${dp}</b> 项、待跟进 <b>${df}</b> 项。`);
+    }
+  }
+  const topPending = (pendingRecords.value || [])[0];
+  if (topPending && topPending.records?.length) {
+    lines.push(`<b>「${topPending.datasetName}」</b>数据集新增 <b>${topPending.records.length}</b> 条待确认记录，去数据页确认入库。`);
+  }
+  return lines.slice(0, 4);
+});
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 const renderMarkdown = (text: string) => {
   if (!text) return '';
@@ -219,7 +258,7 @@ const renderMarkdown = (text: string) => {
         .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
         .replace(/`(.+?)`/g,'<code>$1</code>')
         .replace(/\[(.+?)\]\((.+?)\)/g,'<a href="$2">$1</a>');
-      out.push('<blockquote style="border-left:3px solid #6366f1;padding:6px 12px;margin:8px 0;background:#f8fafc;border-radius:4px;color:#475569">' + cnt + '</blockquote>');
+      out.push('<blockquote style="border-left:3px solid var(--primary);padding:6px 12px;margin:8px 0;background:var(--primary-soft);border-radius:4px;color:var(--text-secondary)">' + cnt + '</blockquote>');
       continue;
     }
     if (/^\|/.test(line)) {
@@ -231,7 +270,7 @@ const renderMarkdown = (text: string) => {
         const hcells = trows[0].split('|').filter(c => c.trim() !== '');
         for (const hc of hcells) {
           const hv = hc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          thtml += '<th style="padding:6px 10px;border:1px solid #d0d5dd;background:#f0f0f5;font-weight:600;text-align:left;font-size:13px">' + hv + '</th>';
+          thtml += '<th style="padding:6px 10px;border:1px solid var(--border);background:var(--surface-2);font-weight:600;text-align:left;font-size:13px">' + hv + '</th>';
         }
         thtml += '</tr></thead><tbody>';
         for (let tj = 2; tj < trows.length; tj++) {
@@ -239,9 +278,8 @@ const renderMarkdown = (text: string) => {
           thtml += '<tr>';
           for (const dc of dcells) {
             const dv = dc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            thtml += '<td style="padding:6px 10px;border:1px solid #d0d5dd;font-size:13px">' + dv + '</td>';
+            thtml += '<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px">' + dv + '</td>';
           }
-          thtml += '</tr>';
         }
         thtml += '</tbody>';
       } else {
@@ -251,9 +289,8 @@ const renderMarkdown = (text: string) => {
           thtml += '<tr>';
           for (const dc of dcells) {
             const dv = dc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            thtml += '<td style="padding:6px 10px;border:1px solid #d0d5dd;font-size:13px">' + dv + '</td>';
+            thtml += '<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px">' + dv + '</td>';
           }
-          thtml += '</tr>';
         }
         thtml += '</tbody>';
       }
@@ -270,21 +307,13 @@ const renderMarkdown = (text: string) => {
     if (/^# /.test(line)) { out.push('<h1 style="font-size:18px;margin:16px 0 8px">' + esc.slice(2) + '</h1>'); continue; }
     if (/^---$/.test(line)) { out.push('<hr>'); continue; }
     if (/^☀️ /.test(line)) { out.push('<div style="font-size:20px;font-weight:700;margin:16px 0 8px">' + esc + '</div>'); continue; }
-    if (/^📅 /.test(line)) { out.push('<div style="font-size:14px;color:#64748b;margin-bottom:16px">' + esc + '</div>'); continue; }
-    if (/^✅ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:#16a34a">' + esc + '</div>'); continue; }
-    if (/^⚠️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:#ef4444">' + esc + '</div>'); continue; }
-    if (/^📋 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^⏰ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^💬 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^📝 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^🗂️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^📊 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^🌅 /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^🌤️ /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^🌇 /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^🌙 /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^💡 /.test(line)) { out.push('<div style="font-size:13px;color:#94a3b8;margin-top:8px">' + esc + '</div>'); continue; }
-    if (/^  - 🔴 /.test(line)) { out.push('<div style="padding:2px 0 2px 16px;color:#ef4444">' + esc.slice(6) + '</div>'); continue; }
+    if (/^📅 /.test(line)) { out.push('<div style="font-size:14px;color:var(--text-muted);margin-bottom:16px">' + esc + '</div>'); continue; }
+    if (/^✅ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:var(--success)">' + esc + '</div>'); continue; }
+    if (/^⚠️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:var(--danger)">' + esc + '</div>'); continue; }
+    if (/^(📋|⏰|💬|📝|🗂️|📊) /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
+    if (/^(🌅|🌤️|🌇|🌙) /.test(line)) { out.push('<div style="font-size:14px;color:var(--primary);margin:8px 0">' + esc + '</div>'); continue; }
+    if (/^💡 /.test(line)) { out.push('<div style="font-size:13px;color:var(--text-muted);margin-top:8px">' + esc + '</div>'); continue; }
+    if (/^  - 🔴 /.test(line)) { out.push('<div style="padding:2px 0 2px 16px;color:var(--danger)">' + esc.slice(6) + '</div>'); continue; }
     if (/^  - /.test(line)) { out.push('<div style="padding:2px 0 2px 16px">' + esc.slice(4) + '</div>'); continue; }
     if (line === '') { out.push('<br>'); continue; }
     out.push('<div>' + esc + '</div>');
@@ -399,7 +428,7 @@ async function loadOverviewData() {
   todayStr.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   try { stats.value = await API.insights.stats(); } catch {}
   try { reports.value = await API.insights.reports(); } catch {}
-  try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 10); } catch {}
+  try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 8); } catch {}
   try { reminders.value = await API.reminder.list(); } catch {}
   try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
 }
@@ -427,7 +456,7 @@ const digestLogGroups = computed(() => {
 const digestMeta = computed(() => {
   if (digestLoading.value) return '扫描中…';
   if (!digestAt.value) return '';
-  return `${digest.value?.scannedFiles ?? 0} 个文件 · ${digestAt.value}`;
+  return `已扫描 ${digest.value?.scannedFiles ?? 0} 个文件`;
 });
 
 // 待办按来源文件分组展示；一屏最多 40 条，多了不截断出处信息
@@ -445,8 +474,6 @@ const digestTodoGroups = computed(() => {
   }
   return groups;
 });
-
-const subTab = ref<'todo' | 'reminder' | 'pending'>('todo');
 
 async function loadNoteDigest() {
   digestLoading.value = true;
@@ -492,220 +519,111 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.overview-view {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 16px 20px;
-  background: var(--bg-main);
-}
+.today-view { display: flex; flex-direction: column; }
 
-/* ========== 顶部条 ========== */
-.board-bar {
+/* ========== 统计行 ========== */
+.statline {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.board-brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.board-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
-.board-sub { font-size: 12px; color: var(--text-muted); }
-.board-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
-
-/* ========== KPI ========== */
-.kpi-row { display: flex; gap: 8px; margin-bottom: 14px; }
-.kpi {
-  flex: 1;
-  min-width: 0;
-  background: white;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 8px;
-  text-align: center;
-}
-.kpi.clickable { cursor: pointer; transition: all 0.15s; }
-.kpi.clickable:hover { border-color: var(--primary); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
-.kpi-num { font-size: 20px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
-.kpi-num.accent { color: var(--primary); }
-.kpi-num.ok { color: #16a34a; }
-.kpi-num.warn { color: #ef4444; }
-.kpi-label { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
-
-.card {
-  background: white;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-  padding: 20px;
-  margin-bottom: 16px;
-}
-
-/* ========== 三栏看板 ========== */
-.board-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  align-items: start;
-  margin-bottom: 18px;
-}
-.board-col {
-  background: white;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.col-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border);
-}
-.col-count {
-  font-size: 11px;
-  font-weight: 500;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
   color: var(--text-muted);
-  background: var(--bg-main);
-  border-radius: 10px;
-  padding: 1px 7px;
+  margin-bottom: 4px;
 }
-.col-sub { font-size: 11px; font-weight: 400; color: var(--text-muted); margin-left: auto; }
-.col-body { padding: 8px 10px; max-height: 420px; overflow-y: auto; }
-.col-empty { font-size: 12px; color: var(--text-muted); padding: 14px 6px; text-align: center; }
-.col-more { font-size: 11px; color: var(--text-muted); padding: 6px; text-align: center; }
+.statline b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.statline b.acc { color: var(--primary); }
+.statline.warm, .statline .warm b { color: var(--warning); }
 
-.src-group { margin-bottom: 8px; }
+/* ========== 引擎简报 ========== */
+.brief { border-left: 3px solid var(--primary); padding: 12px 16px 14px; }
+.brief .sec-label { margin: 0 0 8px; }
+.brief-body { display: flex; flex-direction: column; gap: 5px; }
+.brief-body p { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary); }
+.brief-body p :deep(b) { color: var(--text-primary); font-weight: 600; }
+
+/* ========== 等你处理 ========== */
+.todo-panel { display: flex; flex-direction: column; }
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.todo-row:first-child { border-top: none; }
+.todo-row:hover { background: var(--primary-soft); }
+.todo-row.done .todo-tx { color: var(--text-muted); text-decoration: line-through; }
+.todo-row.overdue { background: var(--danger-soft); }
+.todo-box {
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  padding: 0;
+}
+.todo-box:hover { border-color: var(--primary); }
+.todo-row.done .todo-box { background: var(--primary); border-color: var(--primary); }
+.ro-box { cursor: default; background: none; }
+.prio { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); opacity: 0.6; }
+.prio.high { background: var(--danger); opacity: 1; }
+.prio.mid { background: var(--warning); opacity: 1; }
+.prio.low { background: var(--success); opacity: 1; }
+.todo-tx { flex: 1; min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-src { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.todo-dt { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.todo-dt.warm { color: var(--warning); font-weight: 600; }
 .src-title {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
-  padding: 2px 6px;
+  padding: 8px 14px 2px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
+.src-title:first-child { border-top: none; }
 .src-count { margin-left: auto; flex-shrink: 0; }
+.empty-row { font-size: 12px; color: var(--text-muted); padding: 14px; text-align: center; }
 
-.row {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-}
-.row:hover { background: var(--hover); }
-.row-mark { flex-shrink: 0; font-size: 11px; opacity: 0.75; }
-.row-text { flex: 1; min-width: 0; color: var(--text-secondary); line-height: 1.5; }
-.row-line { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
-
-.log-row { padding: 6px; border-radius: var(--radius-sm); }
-.log-row:hover { background: var(--hover); }
-.log-date { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text-primary); }
-.log-src { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.log-preview { font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.5; }
-
-/* ========== 次级区 ========== */
-.sub-grid {
+/* ========== 双栏区 ========== */
+.grid2 {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
   align-items: start;
+  margin-bottom: 4px;
 }
-.sub-card { min-width: 0; }
-.tab-bar { display: flex; gap: 4px; margin-bottom: 8px; }
-.tab-bar button {
-  flex: 1;
-  padding: 6px 8px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: white;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.tab-bar button.on { border-color: var(--primary); color: var(--primary); background: var(--hover); font-weight: 600; }
-.tab-body { min-height: 160px; max-height: 420px; overflow-y: auto; }
-.stack { display: flex; flex-direction: column; gap: 6px; }
-
-@media (max-width: 1180px) {
-  .board-grid { grid-template-columns: minmax(0, 1fr); }
-  .sub-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
-.todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.todo-item.overdue { border-color: #fca5a5; background: #fef2f2; }
-.todo-item:hover { border-color: var(--primary); }
-.todo-priority { flex-shrink: 0; font-size: 12px; }
-.todo-body { flex: 1; min-width: 0; }
-.todo-title { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.todo-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.todo-done-btn { flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 50%; background: white; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
-.todo-done-btn:hover { border-color: var(--primary); color: var(--primary); }
-
-.reminder-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.reminder-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
-.reminder-time { font-size: 11px; color: var(--text-muted); }
-
-.pending-group-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; padding: 4px 0; border-bottom: 1px solid var(--border); }
-.pending-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: var(--radius-sm); }
-.pending-item:hover { background: var(--hover); }
-.pending-text { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.pending-time { font-size: 11px; color: var(--text-muted); flex-shrink: 0; margin-left: 8px; }
-
-.report-list { display: flex; flex-direction: column; gap: 4px; }
-.report-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
-.report-item:hover { border-color: var(--primary); }
-.report-item.active { border-color: var(--primary); background: rgba(99,102,241,0.03); }
-.report-header { display: flex; align-items: center; justify-content: space-between; }
-.report-date { font-size: 13px; font-weight: 600; color: var(--primary); }
-.report-summary { font-size: 12px; color: var(--text-secondary); margin-top: 3px; line-height: 1.4; }
-.report-time { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
-.report-expand { font-size: 11px; color: var(--primary); margin-left: auto; padding-left: 8px; }
-.latest-header {
+.list-panel { display: flex; flex-direction: column; }
+.plan-row, .file-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.latest-date { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.latest-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.key-points {
-  display: flex;
-  flex-direction: column;
   gap: 10px;
-  background: rgba(99, 102, 241, 0.04);
-  border: 1px solid rgba(99, 102, 241, 0.12);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
 }
-.key-point-group { display: flex; flex-direction: column; gap: 4px; }
-.key-points-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary);
-}
-.key-point {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  word-break: break-word;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-.report-item { cursor: pointer; }
+.plan-row:first-child, .file-row:first-child { border-top: none; }
+.plan-row > svg, .file-row > svg { color: var(--primary); flex-shrink: 0; }
+.plan-tx { flex: 1; min-width: 0; }
+.plan-tx b { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-tx small { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row { cursor: pointer; }
+.file-row:hover { background: var(--primary-soft); }
+.row-src { font-size: 11px; color: var(--text-muted); flex-shrink: 0; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+@media (max-width: 1080px) {
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ========== 日报详情弹窗 ========== */
 .modal-overlay {
@@ -713,7 +631,7 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000;
 }
 .modal-box {
-  background: white; border-radius: var(--radius-md); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
   max-width: 90%; max-height: 90vh; overflow-y: auto; width: 520px;
 }
 .modal-box-lg { width: 680px; }
@@ -726,13 +644,4 @@ onUnmounted(() => {
 .modal-close:hover { color: var(--text-primary); background: var(--hover); }
 .modal-body { padding: 20px; }
 .report-modal-body { font-size: 14px; line-height: 1.7; color: var(--text-primary); word-break: break-word; }
-.report-detail {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--text-primary);
-  word-break: break-word;
-}
 </style>

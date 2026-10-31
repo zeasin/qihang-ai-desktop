@@ -44,7 +44,7 @@ import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
 import * as backup from './services/backup';
 import * as feishu from './services/feishu';
-import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice, rememberLastBody, recallLastBody, buildProjectButtons, boundProjectId, needsProjectChoice } from './services/feishu-router';
+import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice, buildProjectButtons, boundProjectId, needsProjectChoice, stashPendingFollowup, peekPendingFollowup, clearPendingFollowup } from './services/feishu-router';
 import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
 import logger from './services/logger';
@@ -293,8 +293,19 @@ const feishuChatTypes = new Map<string, string>();
 // status，改用进程内集合——「继续」命中执行中的会话时直接婉拒。
 const feishuRunningSessions = new Set<string>();
 
-// 卡片按钮点击 → 复用既有派活流程：把点击转成一条「/项目 N」的伪消息，
-// 由 feishuMessageHandler 统一处理（挂起正文取回、绑定会话、执行任务都在那一处）。
+/** 发送飞书结果卡片：底部标注归属项目 + 「💬 接着问」按钮（点后直接回复即可续聊这条对话） */
+function sendFeishuResultCard(msg: any, text: string, opts: { incomplete?: boolean; sid?: string; projectName?: string } = {}) {
+  const prefix = opts.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
+  feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), opts.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI', {
+    note: opts.projectName ? `本条已发到「${opts.projectName}」；点「接着问」后直接回复，可继续这条对话` : '',
+    buttons: opts.sid
+      ? [{ text: '💬 接着问', type: 'primary', value: { act: 'continue_task', sid: opts.sid } }]
+      : [],
+  });
+}
+
+// 卡片按钮点击 → 两种动作：选择项目（转「/项目#<id>」伪消息走派活链路）、
+// 「接着问」（本会话进入该对话的续聊模式）。
 // ⚠️ 飞书要求卡片回调 3 秒内响应，超时客户端弹「目标回调服务超时未响应」：
 // 所以这里只做快速校验并返回 toast（点击即刻有反馈），真正的派活用 void 丢到
 // 后台执行，绝不 await —— AI 任务以分钟计，回调响应等不起。
@@ -305,44 +316,39 @@ feishu.setCardActionHandler(async (action: any) => {
     if (!v || typeof v !== 'object') return;
     const chatId = String(action.chatId || '');
     if (!chatId) return;
-    if (v.act !== 'pick_project') return;
 
-    const pid = Number(v.pid);
-    const proj = Number.isFinite(pid) ? db.project.get(pid) : null;
-    if (!proj) {
-      logger.warn('[Feishu] Card action: unknown project id %s', v.pid);
-      return { toast: { type: 'error', content: '该项目不存在或已删除，请重新选择' } };
-    }
-
-    // 「换个项目重跑」：把最近一次执行的正文重新挂起，好让派活流程能取回。
-    // 记忆只保留 30 分钟，过期就明说，不要落成一句莫名的「项目已切换」。
-    if (v.rerun) {
-      const last = recallLastBody(chatId);
-      if (!last) {
-        // toast 即时反馈，sendMessage 留痕（关掉卡片也能看到）
-        void feishu.sendMessage(chatId, 'chat_id', '⏳ 这条消息的原文已过期（仅保留 30 分钟），请重新发送要执行的内容。');
-        return { toast: { type: 'warning', content: '原文已过期，请重新发送要执行的内容' } };
+    // 「1. 项目名」/「继续上下文对话」按钮：按项目 id 派活
+    if (v.act === 'pick_project') {
+      const pid = Number(v.pid);
+      const proj = Number.isFinite(pid) ? db.project.get(pid) : null;
+      if (!proj) {
+        logger.warn('[Feishu] Card action: unknown project id %s', v.pid);
+        return { toast: { type: 'error', content: '该项目不存在或已删除，请重新选择' } };
       }
-      stashPendingBody(chatId, last);
+      // 显式选项目 = 开始新话题，退出「接着问」模式
+      clearPendingFollowup(chatId);
+      const chatType = feishuChatTypes.get(chatId) || 'p2p';
+      logger.info('[Feishu] Card action → 派活到项目「%s」(id=%s), chatType=%s', proj.name, proj.id, chatType);
+      // 用「/项目#<id>」而不是「/项目 <id>」：后者序号优先，项目数 ≥ id 时会落到别的项目
+      void feishuMessageHandler({
+        text: `/项目#${proj.id}`,
+        sender: action.operatorOpenId || '',
+        chatId,
+        chatType,
+        messageId: action.messageId || '',
+      }).catch((e: any) => logger.error('[Feishu] Card dispatch failed: %s', e?.message));
+      return { toast: { type: 'success', content: `已派活到「${proj.name}」，执行中…` } };
     }
 
-    const chatType = feishuChatTypes.get(chatId) || 'p2p';
-    logger.info('[Feishu] Card action → 派活到项目「%s」(id=%s), chatType=%s', proj.name, proj.id, chatType);
-    // 用「/项目#<id>」而不是「/项目 <id>」：后者序号优先，项目数 ≥ id 时会落到别的项目
-    void feishuMessageHandler({
-      text: `/项目#${proj.id}`,
-      sender: action.operatorOpenId || '',
-      chatId,
-      chatType,
-      messageId: action.messageId || '',
-    }).catch((e: any) => logger.error('[Feishu] Card dispatch failed: %s', e?.message));
-
-    return {
-      toast: {
-        type: 'success',
-        content: v.rerun ? `已派活到「${proj.name}」重跑，执行中…` : `已派活到「${proj.name}」，执行中…`,
-      },
-    };
+    // 「💬 接着问」按钮：本会话进入该对话的续聊模式，下一条普通消息接在其会话后面
+    if (v.act === 'continue_task') {
+      const sid = String(v.sid || '');
+      const session = sid ? db.chat.getSession(sid) : null;
+      if (!session) return { toast: { type: 'error', content: '原对话不存在，请重新发送消息' } };
+      stashPendingFollowup(chatId, sid);
+      return { toast: { type: 'info', content: '好的，直接回复你的追问，会接在这条对话后面（30 分钟内有效）' } };
+    }
+    return;
   } catch (e: any) {
     logger.error('[Feishu] Card action failed: %s', e?.message);
     return { toast: { type: 'error', content: '处理点击失败，请回复「/项目 名称」重试' } };
@@ -393,9 +399,7 @@ const feishuMessageHandler = async (msg) => {
         onDone: (text, meta) => {
           feishuRunningSessions.delete(sid);
           emitChatEvent('chat:done', { sessionId: sid });
-          // 中止时发出的部分输出必须明确标注，不能看起来像最终回答
-          const prefix = meta?.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
-          feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), meta?.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI');
+          sendFeishuResultCard(msg, text || '', { incomplete: meta?.incomplete, sid });
         },
         onError: (err) => {
           feishuRunningSessions.delete(sid);
@@ -469,6 +473,51 @@ const feishuMessageHandler = async (msg) => {
   let activeSessionId: string | null = null;
 
   try {
+    // ===== 「接着问」续聊：点过结果卡片「💬 接着问」后，本会话的普通消息接在那条对话的
+    // 会话后面继续，不再每条新开会话。命令（/ 开头）与工单指令不在此列，仍走正常路由。
+    if (msg.chatId && !cmd.startsWith('/')) {
+      const followupSid = peekPendingFollowup(msg.chatId);
+      if (followupSid) {
+        if (feishuRunningSessions.has(followupSid)) {
+          feishu.replyCard(msg, '该对话正在执行中，请等这轮回答完再发。', '⚠️ 执行中');
+          return;
+        }
+        const followSession: any = db.chat.getSession(followupSid);
+        if (!followSession) {
+          clearPendingFollowup(msg.chatId);
+          feishu.replyCard(msg, '原对话已不存在，请重新发送你的问题。', '⚠️ 无法接着问');
+          return;
+        }
+        feishuRunningSessions.add(followupSid);
+        emitChatEvent('chat:status', { sessionId: followupSid, text: '飞书追加追问' });
+        const ok = await followUpFeishuSession(followupSid, cmd, db, {
+          onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: followupSid, text: delta }),
+          onTool: (toolEvent: any) => emitChatEvent('chat:tool', { sessionId: followupSid, ...toolEvent }),
+          onDone: (text, meta) => {
+            feishuRunningSessions.delete(followupSid);
+            emitChatEvent('chat:done', { sessionId: followupSid });
+            const followProj: any = followSession.project_id ? db.project.get(Number(followSession.project_id)) : null;
+            sendFeishuResultCard(msg, text || '', { incomplete: meta?.incomplete, sid: followupSid, projectName: followProj ? followProj.name : '' });
+          },
+          onError: (err) => {
+            feishuRunningSessions.delete(followupSid);
+            emitChatEvent('chat:error', { sessionId: followupSid, text: String(err) });
+            feishu.replyCard(msg, `处理出错: ${err}`, '❌ 错误');
+          },
+        });
+        if (!ok) {
+          feishuRunningSessions.delete(followupSid);
+          clearPendingFollowup(msg.chatId);
+          feishu.replyCard(msg, '原对话已不存在，请重新发送你的问题。', '⚠️ 无法接着问');
+          return;
+        }
+        // 续聊成功 → 刷新滑动的 30 分钟窗口，接下来这条会话里可以继续直接追问
+        stashPendingFollowup(msg.chatId, followupSid);
+        feishu.replyCard(msg, '已接上原对话，执行中…', '🤖 启航AI');
+        return;
+      }
+    }
+
     // ===== 项目路由：统一走 feishu-router；多项目且无线索时先问，绝不静默落默认项目 =====
     // awaitingChoice：机器人刚问过「落哪个项目」→ 允许只回一个裸数字
     const awaitingChoice = isAwaitingChoice(msg.chatId);
@@ -526,10 +575,6 @@ const feishuMessageHandler = async (msg) => {
       logger.info('[Feishu] session bound: chatId=%s project=%s', msg.chatId, feishuProject.name);
     }
 
-    // 记住本条正文：结果卡片上的「换个项目重跑」靠它取回原文重放。
-    // 在发起任务前就记，失败的那次同样能换项目重跑（不记就只能等下一次成功）。
-    rememberLastBody(msg.chatId, bodyText);
-
     feishu.replyMessage(msg, `已接单（项目：${feishuProject.name}），执行中…`);
 
     // 会话化（2026-10-31）：飞书消息不再落 plan_tasks，直接落纯会话（source='feishu'），
@@ -569,14 +614,8 @@ const feishuMessageHandler = async (msg) => {
         feishuRunningSessions.delete(sessionId);
         if (text) {
           db.chat.addMessage(sessionId, 'assistant', text || '', 'general');
-          // 中断时发出的部分输出必须明确标注，不能看起来像最终回答
-          const prefix = meta?.incomplete ? '⚠️ 任务被中止，以下为中断前的部分输出\n\n' : '';
-          // 卡片底部固定标注「本条发到：X」，并给一组「换个项目重跑」按钮：
-          // 上下文绑定不再是黑箱，点一下就能把同一条消息换到别的项目重跑。
-          feishu.replyCard(msg, prefix + convertMarkdownForFeishu(text || '（无输出）'), meta?.incomplete ? '⏱ 已中止（部分输出）' : '🤖 启航AI', {
-            note: `本条发到：${feishuProject.name} ｜ 点 ↻ 按钮会用该项目重跑这条消息`,
-            buttons: buildProjectButtons(allProjects, { rerun: true, excludeId: feishuProjectId }),
-          });
+          // 底部标注归属项目 + 「💬 接着问」按钮：点后直接回复即可续聊这条对话，不再每条新开会话
+          sendFeishuResultCard(msg, text || '', { incomplete: meta?.incomplete, sid: sessionId, projectName: feishuProject.name });
         }
         emitChatEvent('chat:done', { sessionId });
       },

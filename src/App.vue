@@ -15,9 +15,12 @@
 import { ref, onMounted } from 'vue';
 import AppSidebar from './components/AppSidebar.vue';
 import WelcomeGuide from './components/WelcomeGuide.vue';
+import { initTheme } from './composables/theme';
 
 const isMac = window.electronAPI ? window.electronAPI.platform === 'darwin' : false;
 const showWelcome = ref(false);
+
+initTheme();
 
 onMounted(async () => {
   try {

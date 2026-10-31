@@ -1,181 +1,425 @@
+<!--
+  AppSidebar —— 全新固定左右结构外壳（宽导航版）
+  结构：品牌区 → 默认项目切换 → 引擎状态 → 主导航（今天/对话/任务/待办/笔记/数据）
+        → 次级导航（技能/设置）→ 底部（运行日志/帮助/主题切换）
+-->
 <template>
   <aside class="sidebar">
-    <nav class="nav-menu">
+    <!-- 品牌区 -->
+    <div class="brand">
+      <span class="brand-mark"><AppIcon name="sailboat" :size="15" /></span>
+      <span class="brand-text"><b>启航</b><small>AI 工作台</small></span>
+    </div>
+
+    <!-- 默认项目切换 -->
+    <div v-if="projects.length" class="pop-wrap">
+      <button class="proj-btn" title="切换默认项目" @click.stop="projOpen = !projOpen">
+        <span class="proj-text"><small>默认项目</small><b>{{ defaultName }}</b></span>
+        <AppIcon name="chevrons-up-down" :size="13" class="proj-caret" />
+      </button>
+      <div v-if="projOpen" class="pop proj-pop" @click.stop>
+        <div class="pop-label">切换默认项目</div>
+        <button
+          v-for="p in projects"
+          :key="p.id"
+          class="pop-item"
+          :class="{ on: p.id === defaultId }"
+          @click="chooseDefault(p)"
+        >
+          <span class="mini"></span>
+          <span class="pop-item-name">{{ p.name }}</span>
+          <small v-if="p.is_default">默认</small>
+        </button>
+        <div class="pop-sep"></div>
+        <router-link class="pop-item" to="/config" @click="projOpen = false">
+          <AppIcon name="settings" :size="13" />
+          <span class="pop-item-name">管理项目…</span>
+        </router-link>
+      </div>
+    </div>
+
+    <!-- 引擎状态 -->
+    <div class="pop-wrap">
+      <button class="engine-chip" title="引擎与服务状态" @click.stop="engOpen = !engOpen">
+        <span class="status-dot pulse" :class="services.scheduler ? 'ok' : 'idle'"></span>
+        <span class="engine-text">{{ engineText }}</span>
+        <AppIcon name="chevron-right" :size="12" class="engine-caret" />
+      </button>
+      <div v-if="engOpen" class="pop eng-pop" @click.stop>
+        <div class="pop-label">服务状态</div>
+        <div class="svc">
+          <span>定时调度</span>
+          <b><i class="status-dot" :class="services.scheduler ? 'ok' : 'idle'"></i>{{ services.scheduler ? '运行中' : '已停止' }}</b>
+        </div>
+        <div class="svc">
+          <span>飞书 Bot</span>
+          <b><i class="status-dot" :class="services.feishu ? 'ok' : 'idle'"></i>{{ services.feishu ? '已连接' : '未启用' }}</b>
+        </div>
+        <router-link class="pop-more" to="/log" @click="engOpen = false">
+          打开运行日志
+          <AppIcon name="chevron-right" :size="12" />
+        </router-link>
+      </div>
+    </div>
+
+    <!-- 主导航 -->
+    <nav class="nav">
       <router-link
         v-for="item in navItems"
         :key="item.path"
         :to="item.path"
         class="nav-item"
         :class="{ active: isActive(item.path) }"
-        :title="item.label"
       >
-        <span v-if="item.beta" class="beta-tag">beta</span>
-        <span class="nav-icon" v-html="item.icon"></span>
+        <AppIcon :name="item.icon" :size="15" />
         <span class="nav-label">{{ item.label }}</span>
+        <span v-if="item.badge" class="ct" :class="item.badgeClass">{{ item.badge }}</span>
       </router-link>
     </nav>
 
-    <div class="sidebar-footer">
-      <div class="footer-divider"></div>
-      <router-link to="/config" class="nav-item" :class="{ active: isActive('/config') }" title="设置">
-        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+    <!-- 次级导航 -->
+    <nav class="nav nav2">
+      <router-link to="/tools" class="nav-item" :class="{ active: isActive('/tools') }">
+        <AppIcon name="sparkles" :size="15" />
+        <span class="nav-label">技能</span>
+        <span class="beta-tag">beta</span>
+      </router-link>
+      <router-link to="/config" class="nav-item" :class="{ active: isActive('/config') }">
+        <AppIcon name="settings" :size="15" />
         <span class="nav-label">设置</span>
       </router-link>
-      <router-link to="/log" class="nav-item" :class="{ active: isActive('/log') }" title="日志">
-        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
-        <span class="nav-label">日志</span>
-      </router-link>
-      <router-link to="/help" class="nav-item" :class="{ active: isActive('/help') }" title="帮助">
-        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
-        <span class="nav-label">帮助</span>
-      </router-link>
+    </nav>
+
+    <!-- 底部 -->
+    <div class="foot">
+      <router-link to="/log" class="foot-link" title="运行日志"><AppIcon name="terminal" :size="15" /></router-link>
+      <router-link to="/help" class="foot-link" title="帮助"><AppIcon name="circle-help" :size="15" /></router-link>
+      <span class="foot-sp"></span>
+      <button class="foot-link" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">
+        <AppIcon :name="isDark ? 'sun' : 'moon'" :size="15" />
+      </button>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import AppIcon from './AppIcon.vue';
+import { toggleTheme, useTheme } from '../composables/theme';
 
+const API = window.electronAPI;
 const route = useRoute();
+const isDark = useTheme();
 
-const navItems = [
-  {
-    path: '/overview',
-    label: '概览',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'
-  },
-  {
-    path: '/chat',
-    label: '对话',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
-  },
-  {
-    path: '/planner',
-    label: '任务',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>'
-  },
-  {
-    path: '/data',
-    label: '数据',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>'
-  },
-  {
-    path: '/reminders',
-    label: '提醒',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
-  },
-];
+// ========== 导航 ==========
+const navItems = computed(() => [
+  { path: '/overview', label: '今天', icon: 'sun', badge: 0, badgeClass: '' },
+  { path: '/chat', label: '对话', icon: 'message-square', badge: 0, badgeClass: '' },
+  { path: '/planner', label: '任务', icon: 'workflow', badge: taskRunning.value, badgeClass: 'run' },
+  { path: '/reminders', label: '待办', icon: 'list-checks', badge: todoOpen.value, badgeClass: '' },
+  { path: '/notes', label: '笔记', icon: 'library', badge: 0, badgeClass: '' },
+  { path: '/data', label: '数据', icon: 'database', badge: pendingCount.value, badgeClass: 'warm' },
+]);
 
 const isActive = (path: string) => {
   if (path === '/planner' && route.path.startsWith('/task/')) return true;
   return route.path === path || route.path.startsWith(path + '/');
 };
+
+// ========== 默认项目 ==========
+const projects = ref<any[]>([]);
+const defaultId = ref<number | null>(null);
+const defaultName = computed(() => {
+  const d = projects.value.find((p) => p.id === defaultId.value);
+  return d ? d.name : '未设置';
+});
+const projOpen = ref(false);
+
+async function loadProjects() {
+  try {
+    projects.value = (await API.kb.list()) || [];
+  } catch { projects.value = []; }
+  try {
+    const d = await API.kb.getDefault();
+    defaultId.value = d && d.id != null ? d.id : null;
+  } catch { defaultId.value = null; }
+}
+
+async function chooseDefault(p: any) {
+  projOpen.value = false;
+  if (p.id === defaultId.value) return;
+  try {
+    await API.kb.setDefault(p.id);
+    defaultId.value = p.id;
+  } catch {}
+}
+
+// ========== 引擎状态 ==========
+const services = ref({ feishu: false, scheduler: false });
+const engineText = computed(() => (services.value.scheduler ? '引擎就绪' : '引擎待机'));
+const engOpen = ref(false);
+
+async function loadServices() {
+  try { services.value = await API.service.status(); } catch {}
+}
+
+// ========== 徽标计数 ==========
+const todoOpen = ref(0);
+const taskRunning = ref(0);
+const pendingCount = ref(0);
+
+async function loadBadges() {
+  try {
+    const todos = await API.todo.list();
+    todoOpen.value = (todos || []).filter((t: any) => t.status !== 'done').length;
+  } catch { todoOpen.value = 0; }
+  try {
+    const tasks = await API.task.list();
+    taskRunning.value = (tasks || []).filter((t: any) => t.status === 'in_progress').length;
+  } catch { taskRunning.value = 0; }
+  try {
+    const groups = await (API as any).ds.pendingRecords();
+    pendingCount.value = (groups || []).reduce((n: number, g: any) => n + (g.records?.length || 0), 0);
+  } catch { pendingCount.value = 0; }
+}
+
+let timer: number | undefined;
+function refreshAll() {
+  loadServices();
+  loadBadges();
+}
+
+function onDocClick() {
+  projOpen.value = false;
+  engOpen.value = false;
+}
+
+onMounted(() => {
+  loadProjects();
+  refreshAll();
+  timer = window.setInterval(refreshAll, 60_000);
+  document.addEventListener('click', onDocClick);
+});
+
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer);
+  document.removeEventListener('click', onDocClick);
+});
+
+watch(() => route.path, () => {
+  projOpen.value = false;
+  engOpen.value = false;
+});
 </script>
 
 <style scoped>
 .sidebar {
-  width: 68px;
+  width: 216px;
+  flex-shrink: 0;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  padding: 12px 10px 10px;
+  overflow: visible;
 }
 
-.nav-menu {
-  flex: 1;
+/* ========== 品牌区 ========== */
+.brand {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 4px;
-  overflow-y: auto;
-}
-
-.nav-item {
-  position: relative;
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 10px 2px 6px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 10px;
-  transition: all 0.15s;
-  border-radius: var(--radius-sm);
-  text-decoration: none;
-  line-height: 1.2;
+  gap: 9px;
+  padding: 2px 6px 12px;
 }
-
-.beta-tag {
-  position: absolute;
-  top: 3px;
-  right: 2px;
-  font-size: 8px;
-  font-weight: 700;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 4px;
-  background: #f59e0b;
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--primary);
   color: #fff;
-  letter-spacing: 0.3px;
-  transform: rotate(8deg);
-}
-
-.nav-item:hover {
-  background: var(--hover);
-  color: var(--text-primary);
-}
-
-.nav-item.active {
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--primary);
-}
-
-.nav-item.active .nav-icon :deep(svg) {
-  stroke: var(--primary);
-}
-
-.nav-icon {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+.brand-text b { display: block; font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--text-primary); }
+.brand-text small { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.3; }
+
+/* ========== 弹出层通用 ========== */
+.pop-wrap { position: relative; }
+.pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+}
+.pop-label { font-size: 11px; color: var(--text-muted); padding: 4px 8px 6px; letter-spacing: 0.05em; }
+.pop-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  text-decoration: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.pop-item:hover { background: var(--hover); }
+.pop-item.on { color: var(--primary); font-weight: 600; }
+.pop-item small { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+.pop-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini { width: 8px; height: 8px; border-radius: 3px; background: var(--primary); flex-shrink: 0; }
+.pop-sep { height: 1px; background: var(--border); margin: 6px 4px; }
+.pop-more {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--primary);
+  margin: 8px 4px 2px;
+  text-decoration: none;
 }
 
-.nav-icon :deep(svg) {
-  width: 22px;
-  height: 22px;
+/* ========== 项目切换 ========== */
+.proj-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s;
 }
+.proj-btn:hover { border-color: var(--text-muted); }
+.proj-text { flex: 1; min-width: 0; text-align: left; }
+.proj-text small { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.3; }
+.proj-text b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.3; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-caret { color: var(--text-muted); flex-shrink: 0; }
 
-.nav-item:hover .nav-icon :deep(svg) {
-  stroke-width: 2.2;
-}
-
-.nav-label {
-  font-size: 10px;
-  text-align: center;
+/* ========== 引擎状态 ========== */
+.engine-chip {
+  margin-top: 8px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: none;
+  background: none;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
   white-space: nowrap;
+  overflow: hidden;
 }
+.engine-chip:hover { background: var(--primary-soft); color: var(--text-primary); }
+.engine-text { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.engine-caret { color: var(--text-muted); flex-shrink: 0; }
 
-.nav-item:active {
-  transform: scale(0.96);
+.eng-pop { width: 224px; right: auto; }
+.svc {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 5px 8px;
 }
+.svc b { display: flex; align-items: center; gap: 6px; font-weight: 500; font-size: 11.5px; color: var(--text-primary); }
 
-.sidebar-footer {
+/* ========== 导航 ========== */
+.nav {
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  gap: 2px;
+  margin-top: 12px;
+}
+.nav2 {
+  margin-top: auto;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-item:hover { background: var(--hover); color: var(--text-primary); }
+.nav-item.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.nav-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.sidebar-footer .nav-item:hover {
-  background: rgba(99, 102, 241, 0.05);
-  color: var(--primary);
+.ct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--primary);
+  color: #fff;
+  flex-shrink: 0;
+}
+.ct.run { background: var(--warning-soft); color: var(--warning); }
+.ct.warm { background: var(--warning-soft); color: var(--warning); }
+
+.beta-tag {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  flex-shrink: 0;
 }
 
-.footer-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 4px 8px;
+/* ========== 底部 ========== */
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 2px 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
 }
+.foot-sp { flex: 1; }
+.foot-link {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.foot-link:hover { background: var(--hover); color: var(--text-primary); }
 </style>

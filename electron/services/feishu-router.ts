@@ -387,30 +387,6 @@ export function takePendingBody(chatId: string): string | null {
   return v.text;
 }
 
-// ========== 上一条消息记忆（供卡片「换个项目重跑」用） ==========
-// 记录本会话最近一次实际执行的正文。用户点结果卡片上的「换个项目重跑」时，
-// 用它在新项目里重放同一条消息，而不是让用户重新打字。
-const lastBodies = new Map<string, { text: string; at: number }>();
-
-/** 记住本会话最近一次执行的正文 */
-export function rememberLastBody(chatId: string, text: string): void {
-  if (!chatId || !text) return;
-  const now = Date.now();
-  for (const [k, v] of lastBodies) {
-    if (now - v.at > PENDING_BODY_TTL) lastBodies.delete(k);
-  }
-  lastBodies.set(chatId, { text, at: now });
-}
-
-/** 取回本会话最近一次执行的正文；没有或已过期返回 null */
-export function recallLastBody(chatId: string): string | null {
-  if (!chatId) return null;
-  const v = lastBodies.get(chatId);
-  if (!v) return null;
-  if (Date.now() - v.at > PENDING_BODY_TTL) { lastBodies.delete(chatId); return null; }
-  return v.text;
-}
-
 /** 查某会话当前绑定的项目 id；没有绑定返回 null */
 export function boundProjectId(db: any, chatId: string): number | null {
   if (!chatId || !db || !db.feishuContext) return null;
@@ -420,30 +396,57 @@ export function boundProjectId(db: any, chatId: string): number | null {
   } catch { return null; }
 }
 
+// ========== 「接着问」续聊模式（结果卡片 → 同一会话继续对话） ==========
+// 点结果卡片的「💬 接着问」后记下那条对话的 sessionId；此后本会话的普通消息不再
+// 每条新开会话，而是接在该 sessionId 后面继续对话（滑动 30 分钟窗口：续聊一次刷新一次）。
+// 命令（/ 开头）与卡片选项目是显式的新话题动作，会退出该模式。
+const pendingFollowups = new Map<string, { sid: string; at: number }>();
+
+/** 进入/刷新某会话的「接着问」模式（记下要续聊的 sessionId） */
+export function stashPendingFollowup(chatId: string, sessionId: string): void {
+  if (!chatId || !sessionId) return;
+  const now = Date.now();
+  for (const [k, v] of pendingFollowups) {
+    if (now - v.at > PENDING_BODY_TTL) pendingFollowups.delete(k);
+  }
+  pendingFollowups.set(chatId, { sid: sessionId, at: now });
+}
+
+/** 查看某会话「接着问」的目标 sessionId；没有或已过期返回 null（不消费） */
+export function peekPendingFollowup(chatId: string): string | null {
+  if (!chatId) return null;
+  const v = pendingFollowups.get(chatId);
+  if (!v) return null;
+  if (Date.now() - v.at > PENDING_BODY_TTL) { pendingFollowups.delete(chatId); return null; }
+  return v.sid;
+}
+
+/** 退出「接着问」模式 */
+export function clearPendingFollowup(chatId: string): void {
+  if (chatId) pendingFollowups.delete(chatId);
+}
+
 /**
  * 生成项目选择按钮组。按钮 value 携带动作类型与项目 id，
  * 点击后由 card.action.trigger 回调接管（需要飞书后台订阅卡片回调事件）。
  *
- * opts.excludeId：排除某个项目（重跑场景不必再给「当前项目」按钮）。
- * opts.keepLabel：为 true 时第一个按钮是「继续上下文对话」（用于选择卡片）。
+ * opts.keepLabel：设置时第一个按钮是「继续上下文对话」（用于选择卡片，沿用会话绑定的项目）。
  */
 export function buildProjectButtons(
   projects: any[],
-  opts: { rerun?: boolean; excludeId?: number | null; keepLabel?: string; keepId?: number | null } = {},
+  opts: { keepLabel?: string; keepId?: number | null } = {},
 ): Array<{ text: string; value: any; type?: 'default' | 'primary' | 'danger' }> {
-  const list = (projects || []).filter((p: any) => !opts.excludeId || p.id !== opts.excludeId);
-  const buttons: Array<{ text: string; value: any; type?: 'default' | 'primary' | 'danger' }> = list.map((p: any, i: number) => ({
-    // 重跑模式加 ↻ 前缀，和「选择项目」区分开：重跑会把这条消息再执行一遍
-    text: opts.rerun ? `↻ ${i + 1}. ${p.name}` : `${i + 1}. ${p.name}`,
+  const buttons: Array<{ text: string; value: any; type?: 'default' | 'primary' | 'danger' }> = (projects || []).map((p: any, i: number) => ({
+    text: `${i + 1}. ${p.name}`,
     type: 'default',
-    value: { act: 'pick_project', pid: p.id, seq: i + 1, rerun: !!opts.rerun },
+    value: { act: 'pick_project', pid: p.id, seq: i + 1 },
   }));
   // 「继续上下文对话」放在最前，语义上就是「沿用当前会话绑定的项目」
   if (opts.keepLabel && opts.keepId) {
     buttons.unshift({
       text: opts.keepLabel,
       type: 'primary',
-      value: { act: 'pick_project', pid: opts.keepId, seq: 0, rerun: !!opts.rerun },
+      value: { act: 'pick_project', pid: opts.keepId, seq: 0 },
     });
   }
   return buttons;

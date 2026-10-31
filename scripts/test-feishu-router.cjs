@@ -1,7 +1,7 @@
 /**
  * feishu 链路回归测试。
  * 覆盖：显式指令 / 行内标记 / 开头项目名 / 会话绑定 / 数字 id 防误判 / 单项目 / 多项目歧义 /
- *       待指派暂存 / 卡片按钮与重跑记忆 / 交互卡片 JSON 结构。
+ *       待指派暂存 / 卡片按钮与「接着问」续聊模式 / 交互卡片 JSON 结构。
  *
  * 运行：npm run compile:electron && npm run test:router
  */
@@ -147,44 +147,49 @@ check('@机器人提及 + 指令', rr('@启航编程AI /项目 2').projectId, 8)
 check('@机器人提及 + 指令 + 正文', rr('@启航编程AI /项目 2 帮我查库存').cleanText, '帮我查库存');
 check('@机器人提及不影响普通消息', rr('@启航编程AI 帮我查库存').needChoice, true);
 
-console.log('\n[9] 卡片按钮与重跑记忆');
+console.log('\n[9] 卡片按钮与「接着问」续聊模式');
 // 按钮组：序号与卡片文字里的列表序号一致
 const btns = router.buildProjectButtons(PROJECTS);
 check('按钮数量 = 项目数', btns.length, 3);
 check('按钮文本带序号', btns[0].text, '1. 金箔雲项目');
-check('按钮 value 带项目 id', btns[1].value, { act: 'pick_project', pid: 2, seq: 2, rerun: false });
-check('重跑模式加 ↻ 前缀', router.buildProjectButtons(PROJECTS, { rerun: true })[0].text, '↻ 1. 金箔雲项目');
-check('重跑模式排除当前项目', router.buildProjectButtons(PROJECTS, { rerun: true, excludeId: 2 }).map(b => b.value.pid), [1, 3]);
-check('排除后序号仍连续', router.buildProjectButtons(PROJECTS, { rerun: true, excludeId: 2 }).map(b => b.text), ['↻ 1. 金箔雲项目', '↻ 2. 618大促']);
+check('按钮 value 带项目 id', btns[1].value, { act: 'pick_project', pid: 2, seq: 2 });
 check('有绑定时首个按钮是继续上下文对话', router.buildProjectButtons(PROJECTS, { keepLabel: '继续上下文对话（金箔雲项目）', keepId: 1 })[0].text, '继续上下文对话（金箔雲项目）');
 check('继续上下文按钮带绑定项目 id', router.buildProjectButtons(PROJECTS, { keepLabel: 'x', keepId: 1 })[0].value.pid, 1);
 check('无绑定时不加继续上下文按钮', router.buildProjectButtons(PROJECTS)[0].text, '1. 金箔雲项目');
 
-// 上一条消息记忆：供「换个项目重跑」取回正文
-check('初始没有上一条消息', router.recallLastBody('cm1'), null);
-router.rememberLastBody('cm1', '帮我查库存');
-check('记住后可取回', router.recallLastBody('cm1'), '帮我查库存');
-check('取回不消费记忆', router.recallLastBody('cm1'), '帮我查库存');
-router.rememberLastBody('cm2', '别的会话');
-check('不同会话互不干扰', router.recallLastBody('cm1'), '帮我查库存');
+// 「接着问」续聊模式：stash 记录 sessionId，peek 只看不消费，clear 退出
+check('初始没有接着问目标', router.peekPendingFollowup('fm1'), null);
+router.stashPendingFollowup('fm1', 'feishu_aaaa');
+check('进入续聊模式后可查到 sessionId', router.peekPendingFollowup('fm1'), 'feishu_aaaa');
+check('peek 不消费', router.peekPendingFollowup('fm1'), 'feishu_aaaa');
+router.stashPendingFollowup('fm1', 'feishu_bbbb');
+check('重复进入会覆盖为新 sessionId', router.peekPendingFollowup('fm1'), 'feishu_bbbb');
+router.stashPendingFollowup('fm2', 'feishu_cccc');
+check('不同会话互不干扰', router.peekPendingFollowup('fm1'), 'feishu_bbbb');
+router.stashPendingFollowup('fm3', '');
+check('空 sessionId 不进入续聊模式', router.peekPendingFollowup('fm3'), null);
+router.clearPendingFollowup('fm1');
+check('clear 后退出续聊模式', router.peekPendingFollowup('fm1'), null);
+
+// 会话绑定查询（选择卡片的「继续上下文对话」用）
 check('会话绑定查询', router.boundProjectId(db, 'cb1'), null);
 db.feishuContext.set('cb1', 'group', 2);
 check('已绑定会话能查到项目 id', router.boundProjectId(db, 'cb1'), 2);
 
 console.log('\n[10] 交互卡片 JSON 结构');
 const els = feishu.buildCardElements('正文内容', {
-  note: '本条发到：笔记库',
-  buttons: [{ text: '↻ 1. 金箔雲项目', type: 'default', value: { act: 'pick_project', pid: 1, seq: 1, rerun: true } }],
+  note: '本条已发到「笔记库」',
+  buttons: [{ text: '💬 接着问', type: 'primary', value: { act: 'continue_task', sid: 'feishu_aaaa' } }],
 });
 check('元素数量 = 正文+note+action', els.length, 3);
 check('首个是 markdown', els[0].tag, 'markdown');
 check('正文内容正确', els[0].content, '正文内容');
-check('note 元素结构', els[1].elements[0].content, '本条发到：笔记库');
+check('note 元素结构', els[1].elements[0].content, '本条已发到「笔记库」');
 check('action 元素', els[2].tag, 'action');
 check('按钮数量', els[2].actions.length, 1);
-check('按钮文案', els[2].actions[0].text.content, '↻ 1. 金箔雲项目');
-check('按钮类型', els[2].actions[0].type, 'default');
-check('按钮 value 带动作与项目', els[2].actions[0].value, { act: 'pick_project', pid: 1, seq: 1, rerun: true });
+check('按钮文案', els[2].actions[0].text.content, '💬 接着问');
+check('按钮类型', els[2].actions[0].type, 'primary');
+check('按钮 value 带动作与会话', els[2].actions[0].value, { act: 'continue_task', sid: 'feishu_aaaa' });
 check('无按钮时不产生 action 元素', feishu.buildCardElements('x').length, 1);
 check('无 note 时不产生 note 元素', feishu.buildCardElements('x', { buttons: [{ text: 'b', value: {} }] })[1].tag, 'action');
 
