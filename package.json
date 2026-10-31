@@ -1,6 +1,6 @@
 {
   "name": "qihang-ai-desktop",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "启航AI工作台",
   "main": "dist-electron/electron/main.js",
   "scripts": {
