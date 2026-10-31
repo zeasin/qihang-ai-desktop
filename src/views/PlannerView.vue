@@ -6,7 +6,7 @@
     <!-- ========== 笔记任务视图 ========== -->
     <div v-if="!notesLoaded || projectOptions.length" class="planner-body">
       <!-- 左：任务列表 -->
-      <div class="task-list-pane">
+      <div class="task-list-pane as-flyout" :class="{ open: taskListOpen }" @click.stop>
         <div class="list-pane-header">
           <span class="list-pane-title">任务列表</span>
           <div class="list-pane-actions">
@@ -44,10 +44,16 @@
       <div class="task-detail-pane">
         <div v-if="!selectedTask" class="detail-empty">
           <div class="empty-icon">🗂️</div>
-          <div class="empty-text">选择左侧任务查看详情</div>
+          <div class="empty-text">选择任务查看详情</div>
+          <button class="btn btn-sm btn-secondary empty-open-btn" @click.stop="toggleTaskList()">浏览任务列表</button>
         </div>
         <template v-else>
           <div class="detail-header">
+            <button class="flyout-toggle" title="任务列表" @click.stop="toggleTaskList()">
+              <AppIcon name="list-checks" :size="14" />
+              <span>任务</span>
+              <AppIcon name="chevron-down" :size="12" />
+            </button>
             <div class="detail-title-wrap">
               <h2 class="detail-title">{{ selectedTask.title }}</h2>
               <div class="detail-badges">
@@ -275,7 +281,7 @@
             <button class="btn btn-secondary" @click="showDeleteModal = false">✕</button>
           </div>
           <div class="modal-body">
-            <p style="color:#94a3b8;font-size:13px;">确定要删除{{ deletingTask ? '任务' : '项目' }}「{{ deletingTask?.title || deletingProject?.name }}」吗？此操作不可撤销。</p>
+            <p style="color:var(--text-muted);font-size:13px;">确定要删除{{ deletingTask ? '任务' : '项目' }}「{{ deletingTask?.title || deletingProject?.name }}」吗？此操作不可撤销。</p>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="showDeleteModal = false">取消</button>
@@ -291,6 +297,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const API = window.electronAPI;
 
@@ -348,7 +355,25 @@ const selectedTask = computed(() => {
   return tasks.value.find(t => t.id === selectedTaskId.value) || null;
 });
 
+// 任务列表浮层（不再常驻第三栏）：记忆开合状态，点击外部 / Esc 关闭
+const taskListOpen = ref(localStorage.getItem('qihang-planner-list') === '1');
+function toggleTaskList() {
+  taskListOpen.value = !taskListOpen.value;
+  localStorage.setItem('qihang-planner-list', taskListOpen.value ? '1' : '0');
+}
+function onGlobalClickTaskList() { taskListOpen.value = false; }
+function onEscTaskList(e: KeyboardEvent) { if (e.key === 'Escape') taskListOpen.value = false; }
+onMounted(() => {
+  document.addEventListener('click', onGlobalClickTaskList);
+  document.addEventListener('keydown', onEscTaskList);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onGlobalClickTaskList);
+  document.removeEventListener('keydown', onEscTaskList);
+});
+
 function selectTask(t: AiTask) {
+  taskListOpen.value = false;
   selectedTaskId.value = t.id;
   if (t.followupText === undefined) t.followupText = '';
   if (t.followupReply === undefined) t.followupReply = '';
@@ -650,17 +675,51 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
-/* ========== 左：任务列表 ========== */
-.task-list-pane {
-  width: 320px;
-  min-width: 320px;
-  background: white;
-  border-right: 1px solid var(--border);
-  display: flex;
+/* ========== 左：任务列表（浮层模式，不再常驻第三栏） ========== */
+.task-list-pane.as-flyout {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: 344px;
+  min-width: 0;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  display: none;
   flex-direction: column;
+  overflow: hidden;
 }
+
+.task-list-pane.as-flyout.open { display: flex; }
+
+.flyout-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.flyout-toggle:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.empty-open-btn { margin-top: 6px; }
 
 .list-pane-header {
   padding: 12px 16px;
@@ -692,7 +751,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   font-size: 12px;
   outline: none;
-  background: white;
+  background: var(--surface);
   cursor: pointer;
   color: var(--text-secondary);
 }
@@ -719,8 +778,8 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
 }
 
-.list-item:hover { background: rgba(99,102,241,0.05); }
-.list-item.active { background: rgba(99,102,241,0.1); border-color: rgba(99,102,241,0.25); }
+.list-item:hover { background: rgba(var(--primary-rgb),0.05); }
+.list-item.active { background: rgba(var(--primary-rgb),0.1); border-color: rgba(var(--primary-rgb),0.25); }
 .list-item.running { border-color: var(--primary); }
 
 .list-item-head {
@@ -758,7 +817,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #f8fafc;
+  background: var(--bg-main);
 }
 
 .detail-empty {
@@ -776,9 +835,9 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-shrink: 0;
-  background: white;
+  background: var(--surface);
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -806,7 +865,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 
 .detail-scroll {
   flex: 1;
@@ -824,7 +883,7 @@ onBeforeUnmount(() => {
 }
 
 .detail-section {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
@@ -844,7 +903,7 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   line-height: 1.6;
@@ -863,7 +922,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #f1f5f9;
+  background: var(--hover);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -871,7 +930,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.message.user .message-avatar { background: rgba(99, 102, 241, 0.1); }
+.message.user .message-avatar { background: rgba(var(--primary-rgb), 0.1); }
 .message.assistant .message-avatar { background: rgba(34, 197, 94, 0.1); }
 
 .message-body { flex: 1; min-width: 0; }
@@ -883,12 +942,12 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   line-height: 1.6;
   padding: 10px 14px;
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   word-break: break-word;
 }
 
-.message.assistant .message-content { background: #f0fdf4; }
+.message.assistant .message-content { background: var(--success-soft); }
 
 /* ========== 执行记录 ========== */
 .execution-card {
@@ -910,7 +969,7 @@ onBeforeUnmount(() => {
 
 .exec-error {
   font-size: 13px;
-  color: #ef4444;
+  color: var(--danger);
   margin-bottom: 8px;
   white-space: pre-wrap;
   word-break: break-all;
@@ -919,7 +978,7 @@ onBeforeUnmount(() => {
 .exec-result {
   font-size: 13px;
   color: var(--text-secondary);
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   max-height: 400px;
@@ -931,7 +990,7 @@ onBeforeUnmount(() => {
 .followup-reply {
   font-size: 13px;
   color: var(--text-secondary);
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   margin-bottom: 10px;
@@ -951,14 +1010,14 @@ onBeforeUnmount(() => {
 .followup-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; resize: vertical; font-family: inherit; }
 .followup-input:focus { border-color: var(--primary); }
 .followup-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-.followup-toolbar .model-selector { font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; color: var(--text-primary); max-width: 180px; outline: none; cursor: pointer; transition: all 0.2s; }
+.followup-toolbar .model-selector { font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-main); color: var(--text-primary); max-width: 180px; outline: none; cursor: pointer; transition: all 0.2s; }
 
 /* ========== 通用 ========== */
 .btn-xs { padding: 4px 10px; font-size: 12px; }
 
 .running-dot {
   width: 8px; height: 8px; border-radius: 50%;
-  background: #3b82f6; animation: pulse 1s infinite;
+  background: var(--primary); animation: pulse 1s infinite;
   flex-shrink: 0;
 }
 
@@ -972,12 +1031,12 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.status-pending { background: rgba(251, 146, 60, 0.1); color: #fb923c; }
-.status-in_progress { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
-.status-done { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-.status-SUCCESS { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-.status-FAILED { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-.status-RUNNING { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+.status-pending { background: rgba(251, 146, 60, 0.1); color: var(--warning); }
+.status-in_progress { background: rgba(59, 130, 246, 0.1); color: var(--primary); }
+.status-done { background: rgba(34, 197, 94, 0.1); color: var(--success); }
+.status-SUCCESS { background: rgba(34, 197, 94, 0.1); color: var(--success); }
+.status-FAILED { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+.status-RUNNING { background: rgba(59, 130, 246, 0.1); color: var(--primary); }
 
 /* ========== 模态框 ========== */
 .modal-overlay {
@@ -985,7 +1044,7 @@ onBeforeUnmount(() => {
   background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000;
 }
 .modal-box {
-  background: white; border-radius: var(--radius-md); box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: 0 10px 25px rgba(0,0,0,0.1);
   max-width: 90%; max-height: 90vh; overflow-y: auto; width: 520px;
 }
 .modal-box-lg { width: 640px; }
@@ -996,8 +1055,8 @@ onBeforeUnmount(() => {
 
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
-.form-control { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; outline: none; background: white; }
-.form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+.form-control { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; outline: none; background: var(--surface); }
+.form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(var(--primary-rgb),0.1); }
 .form-row { display: flex; gap: 12px; }
 .form-row .form-group { flex: 1; }
 textarea.form-control { resize: vertical; min-height: 80px; }
@@ -1012,10 +1071,10 @@ select.form-control { cursor: pointer; }
 :deep(.markdown-body p:last-child) { margin-bottom: 0; }
 :deep(.markdown-body ul), :deep(.markdown-body ol) { padding-left: 20px; margin: 4px 0; }
 :deep(.markdown-body li) { margin: 2px 0; }
-:deep(.markdown-body code) { background: #e8e8e8; padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
-:deep(.markdown-body pre) { background: #1e293b; color: #e2e8f0; padding: 12px 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+:deep(.markdown-body code) { background: var(--hover); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
+:deep(.markdown-body pre) { background: var(--code-bg); color: var(--code-fg); padding: 12px 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
 :deep(.markdown-body pre code) { background: none; padding: 0; color: inherit; }
-:deep(.markdown-body blockquote) { border-left: 3px solid var(--primary); padding-left: 12px; color: #64748b; margin: 8px 0; }
+:deep(.markdown-body blockquote) { border-left: 3px solid var(--primary); padding-left: 12px; color: var(--text-secondary); margin: 8px 0; }
 :deep(.markdown-body strong) { font-weight: 600; }
 :deep(.markdown-body a) { color: var(--primary); text-decoration: none; }
 :deep(.markdown-body a:hover) { text-decoration: underline; }
@@ -1024,7 +1083,7 @@ select.form-control { cursor: pointer; }
 :deep(.markdown-body h2) { font-size: 1.15em; }
 :deep(.markdown-body h3) { font-size: 1.05em; }
 :deep(.markdown-body table) { border-collapse: collapse; margin: 8px 0; width: 100%; }
-:deep(.markdown-body th), :deep(.markdown-body td) { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; font-size: 13px; }
-:deep(.markdown-body th) { background: #f8fafc; font-weight: 600; }
+:deep(.markdown-body th), :deep(.markdown-body td) { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 13px; }
+:deep(.markdown-body th) { background: var(--bg-main); font-weight: 600; }
 :deep(.markdown-body hr) { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 </style>

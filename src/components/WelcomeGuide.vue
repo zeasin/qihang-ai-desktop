@@ -157,7 +157,7 @@ onMounted(async () => {
   width: 640px;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 48px);
-  background: white;
+  background: var(--surface);
   border-radius: 20px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
   display: flex;
@@ -174,7 +174,7 @@ onMounted(async () => {
 .welcome-header {
   text-align: center;
   padding: 28px 32px 20px;
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
   color: white;
   flex-shrink: 0;
 }
@@ -233,7 +233,7 @@ onMounted(async () => {
 }
 
 .guide-step.done .step-index {
-  background: #16a34a;
+  background: var(--success);
 }
 
 .step-content {
@@ -254,9 +254,9 @@ onMounted(async () => {
 .step-status {
   font-size: 11px;
   font-weight: 500;
-  color: #16a34a;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  color: var(--success);
+  background: var(--success-soft);
+  border: 1px solid var(--success-soft);
   padding: 1px 8px;
   border-radius: 20px;
 }
@@ -270,7 +270,7 @@ onMounted(async () => {
 
 .step-desc code {
   font-size: 11px;
-  background: #f5f5f7;
+  background: var(--hover);
   padding: 1px 6px;
   border-radius: 4px;
 }
@@ -315,7 +315,7 @@ onMounted(async () => {
 
 .page-item:hover {
   border-color: var(--primary);
-  background: rgba(99, 102, 241, 0.06);
+  background: rgba(var(--primary-rgb), 0.06);
   color: var(--primary);
 }
 
@@ -336,7 +336,7 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
-  background: #fafbfc;
+  background: var(--surface-2);
 }
 
 .welcome-hint {

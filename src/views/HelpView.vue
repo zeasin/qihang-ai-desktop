@@ -36,16 +36,16 @@
           <li><strong>推送</strong>：定时提醒、每日 AI 日报自动汇总，通过飞书推送到你的群和联系人</li>
         </ol>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
-          <div style="flex:1;min-width:140px;padding:10px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;font-size:12px;line-height:1.5;">
-            <strong style="color:#16a34a;">🔒 数据安全</strong><br>
+          <div style="flex:1;min-width:140px;padding:10px;background:var(--success-soft);border-radius:8px;border:1px solid var(--success-soft);font-size:12px;line-height:1.5;">
+            <strong style="color:var(--success);">🔒 数据安全</strong><br>
             <span class="text-muted">笔记、对话、待办、数据全部存在本机，不上传云端</span>
           </div>
-          <div style="flex:1;min-width:140px;padding:10px;background:#f0f7ff;border-radius:8px;border:1px solid #b3d4f7;font-size:12px;line-height:1.5;">
+          <div style="flex:1;min-width:140px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid #b3d4f7;font-size:12px;line-height:1.5;">
             <strong style="color:#2563eb;">🧠 模型自由</strong><br>
             <span class="text-muted">DeepSeek、OpenAI 兼容、Ollama 本地模型，配置多个随时切换</span>
           </div>
           <div style="flex:1;min-width:140px;padding:10px;background:#fefce8;border-radius:8px;border:1px solid #fde68a;font-size:12px;line-height:1.5;">
-            <strong style="color:#d97706;">🚀 持续进化</strong><br>
+            <strong style="color:var(--warning);">🚀 持续进化</strong><br>
             <span class="text-muted">超过能力自动升级，无需手动安装任何终端工具</span>
           </div>
         </div>
@@ -208,7 +208,7 @@
         <table class="help-table">
           <thead><tr><th>卡片</th><th>何时出现</th><th>怎么用</th></tr></thead>
           <tbody>
-          <tr><td>📂 请选择项目</td><td>消息未指明项目且项目数 &gt; 1（包括之前选过项目的情况）</td><td>点项目按钮直接派活；之前选过项目时，第一个按钮是「继续上下文对话（当前项目）」</td></tr>
+          <tr><td>📂 请选择项目</td><td>消息未指明项目且项目数 &gt; 1（包括之前选过项目的情况）</td><td>点项目按钮直接派活；之前选过项目时，第一个按钮是「就用当前项目「X」」（沿用绑定的项目执行这条消息）</td></tr>
           <tr><td>🤖 AI 结果卡片</td><td>任务执行完成</td><td>底部标注「本条已发到「X」」；点「💬 接着问」后直接回复，可接在那条对话后面继续问（30 分钟内有效），不用每条消息重新派活</td></tr>
           <tr><td>状态卡片</td><td>全程反馈</td><td>已接单、项目已切换、处理出错、工作单已记录等</td></tr>
           </tbody>
@@ -336,7 +336,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
-  background: white;
+  background: var(--surface);
 }
 
 .content-title {
@@ -359,12 +359,12 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 500;
   color: var(--primary);
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: rgba(var(--primary-rgb), 0.1);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
 }
 
 .card {
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 20px;
@@ -416,7 +416,7 @@ onMounted(async () => {
 
 .help-table code {
   font-size: 12px;
-  background: #f5f5f7;
+  background: var(--hover);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -435,7 +435,7 @@ onMounted(async () => {
 .tip {
   font-size: 12px;
   color: var(--primary);
-  background: #f5f3ff;
+  background: var(--primary-soft);
   padding: 8px 12px;
   border-radius: 6px;
   margin-top: 8px;
@@ -461,12 +461,12 @@ onMounted(async () => {
 
 .card-prereq {
   border-color: var(--primary);
-  background: linear-gradient(135deg, #fafaff 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, var(--surface-2) 0%, var(--primary-soft) 100%);
 }
 
 .card-index {
-  border-color: rgba(99, 102, 241, 0.3);
-  background: linear-gradient(135deg, #fafaff 0%, #f5f3ff 100%);
+  border-color: rgba(var(--primary-rgb), 0.3);
+  background: linear-gradient(135deg, var(--surface-2) 0%, var(--primary-soft) 100%);
 }
 
 .index-grid {
@@ -482,7 +482,7 @@ onMounted(async () => {
   padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: white;
+  background: var(--surface);
   cursor: pointer;
   font-size: 13px;
   color: var(--text-primary);
@@ -493,7 +493,7 @@ onMounted(async () => {
 .index-item:hover {
   border-color: var(--primary);
   color: var(--primary);
-  background: rgba(99, 102, 241, 0.06);
+  background: rgba(var(--primary-rgb), 0.06);
   transform: translateY(-1px);
 }
 
@@ -503,7 +503,7 @@ onMounted(async () => {
 
 .card-feishu {
   border-color: #bbd7fb;
-  background: linear-gradient(135deg, #f8fbff 0%, #f0f7ff 100%);
+  background: linear-gradient(135deg, #f8fbff 0%, var(--surface-2) 100%);
 }
 
 .prereq-item {

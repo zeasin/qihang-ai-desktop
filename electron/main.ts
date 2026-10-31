@@ -317,7 +317,7 @@ feishu.setCardActionHandler(async (action: any) => {
     const chatId = String(action.chatId || '');
     if (!chatId) return;
 
-    // 「1. 项目名」/「继续上下文对话」按钮：按项目 id 派活
+    // 「1. 项目名」/「就用当前项目」按钮：按项目 id 派活
     if (v.act === 'pick_project') {
       const pid = Number(v.pid);
       const proj = Number.isFinite(pid) ? db.project.get(pid) : null;
@@ -394,6 +394,8 @@ const feishuMessageHandler = async (msg) => {
       // 先入集合再发起：后台 IIFE 在微任务里启动，onDone/onError 都会移除；
       // 若会话不存在（返回 false）则立刻移除，保证集合状态与真实执行一致
       feishuRunningSessions.add(sid);
+      // 飞书续聊的问题也要在桌面正在看的会话里即时出气泡（chat:done 会整段重拉兜底）
+      sendToRenderer('chat:remote', { sessionId: sid, title: lastSession.title || '', text: question });
       const ok = await followUpFeishuSession(sid, question, db, {
         onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: sid, text: delta }),
         onDone: (text, meta) => {
@@ -489,6 +491,8 @@ const feishuMessageHandler = async (msg) => {
           return;
         }
         feishuRunningSessions.add(followupSid);
+        // 飞书续聊的问题也要在桌面正在看的会话里即时出气泡（chat:done 会整段重拉兜底）
+        sendToRenderer('chat:remote', { sessionId: followupSid, title: followSession.title || '', text: cmd });
         emitChatEvent('chat:status', { sessionId: followupSid, text: '飞书追加追问' });
         const ok = await followUpFeishuSession(followupSid, cmd, db, {
           onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: followupSid, text: delta }),
@@ -531,7 +535,9 @@ const feishuMessageHandler = async (msg) => {
 
     if (needsProjectChoice(target, allProjects.length)) {
       // 统一先问：正文暂存 → 用户点按钮或回序号 → 自动执行挂起的那条消息。
-      // 会话绑定不再静默执行，而是变成卡片上的默认选项「继续上下文对话」。
+      // 会话绑定不再静默执行，而是变成卡片上的默认选项「就用当前项目」。
+      // 注意措辞不是「继续对话」：点它只是沿用绑定的项目执行本条消息，仍会新开会话；
+      // 真正接着原会话聊的是结果卡片的「💬 接着问」按钮（continue_task）。
       const pendingBody = String(target.cleanText || '').trim();
       if (pendingBody && !/^\d{1,4}$/.test(pendingBody)) stashPendingBody(msg.chatId, pendingBody);
       markAskedChoice(msg.chatId);
@@ -542,7 +548,7 @@ const feishuMessageHandler = async (msg) => {
         : (target.isCommand ? '' : '这条消息里没有识别出项目，为避免落错地方，需要你指定一下：');
       feishu.replyCard(msg, buildProjectChoiceText(allProjects, hint), '📂 请选择项目', {
         buttons: buildProjectButtons(allProjects, {
-          keepLabel: boundProj ? `继续上下文对话（${boundProj.name}）` : '',
+          keepLabel: boundProj ? `就用当前项目「${boundProj.name}」` : '',
           keepId: boundProj ? boundProj.id : null,
         }),
         note: '点按钮直接选中；也可回复序号或「/项目 名称」',

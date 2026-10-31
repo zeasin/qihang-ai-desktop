@@ -22,12 +22,12 @@
             <button v-if="!lib.isDefault" class="text-btn" @click="setDefaultLib(lib)">设为默认</button>
             <button class="text-btn" @click="renameLib(lib)">重命名</button>
             <button class="text-btn" @click="changeLibDir(lib)">换目录</button>
-            <button class="text-btn" style="color:#ef4444;" @click="removeLib(lib)">删除</button>
+            <button class="text-btn" style="color:var(--danger);" @click="removeLib(lib)">删除</button>
           </div>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
           <button class="btn btn-primary" @click="addLib">➕ 添加项目</button>
-          <span v-if="notesDirStatus" class="text-muted" :style="{ color: notesDirStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ notesDirStatus }}</span>
+          <span v-if="notesDirStatus" class="text-muted" :style="{ color: notesDirStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ notesDirStatus }}</span>
         </div>
       </div>
 
@@ -71,7 +71,7 @@
           </div>
         </div>
 
-        <div v-if="llmStatus" class="text-muted" :style="{ color: llmStatus.startsWith('✅') ? '#22c55e' : llmStatus.startsWith('⏳') ? '#f59e0b' : '#ef4444' }" style="margin-top:8px;display:block;">{{ llmStatus }}</div>
+        <div v-if="llmStatus" class="text-muted" :style="{ color: llmStatus.startsWith('✅') ? 'var(--success)' : llmStatus.startsWith('⏳') ? 'var(--warning)' : 'var(--danger)' }" style="margin-top:8px;display:block;">{{ llmStatus }}</div>
 
         <div class="text-muted" style="font-size:12px;margin-top:12px;">⚡ 快速配置：选择供应商，填写对应字段后点击「添加并生效」</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:4px;">
@@ -137,7 +137,7 @@
         </div>
         <div class="flex" style="gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-secondary" @click="loadAgentVersions" :disabled="versionsLoading">{{ versionsLoading ? '检测中…' : '重新检测' }}</button>
-          <span v-if="versionsError" class="text-muted" style="font-size:12px;color:#ef4444;">{{ versionsError }}</span>
+          <span v-if="versionsError" class="text-muted" style="font-size:12px;color:var(--danger);">{{ versionsError }}</span>
         </div>
       </div>
 
@@ -161,7 +161,7 @@
           <button class="btn btn-primary" @click="saveSearchConfig" style="margin-bottom:12px;">保存</button>
           <button class="btn btn-secondary" @click="testSearchConfig" style="margin-bottom:12px;" :disabled="searchTesting">{{ searchTesting ? '测试中...' : '测试' }}</button>
         </div>
-        <span v-if="searchStatus" class="text-muted" :style="{ color: searchStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }" style="display:block;margin-top:8px;">{{ searchStatus }}</span>
+        <span v-if="searchStatus" class="text-muted" :style="{ color: searchStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="display:block;margin-top:8px;">{{ searchStatus }}</span>
       </div>
 
       <!-- Provider Edit Modal -->
@@ -264,7 +264,7 @@
           <button class="btn btn-primary" @click="saveWebhook" style="margin-bottom:12px;">保存</button>
           <button class="btn btn-secondary" @click="testWebhook" style="margin-bottom:12px;">测试</button>
         </div>
-        <span v-if="webhookStatus" class="text-muted" :style="{ color: webhookStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ webhookStatus }}</span>
+        <span v-if="webhookStatus" class="text-muted" :style="{ color: webhookStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ webhookStatus }}</span>
 
         <hr class="mobile-divider">
 
@@ -288,7 +288,7 @@
           <span v-if="feishuRunning" class="badge badge-success">● 运行中</span>
           <span v-else class="badge badge-gray">○ 已停止</span>
         </div>
-        <span v-if="feishuStatus" class="text-muted" :style="{ color: feishuStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ feishuStatus }}</span>
+        <span v-if="feishuStatus" class="text-muted" :style="{ color: feishuStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ feishuStatus }}</span>
 
         <hr class="mobile-divider">
 
@@ -324,7 +324,7 @@
           <span class="text-muted" style="font-size:12px;">设备名：{{ relayDevice.name || '—' }}</span>
         </div>
         <div v-if="relayStatus" class="text-muted" style="font-size:12px;margin-top:6px;"
-             :style="{ color: relayStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }">{{ relayStatus }}</div>
+             :style="{ color: relayStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ relayStatus }}</div>
         <div v-if="relayClients.length" style="margin-top:12px;">
           <div class="text-muted" style="font-size:12px;margin-bottom:6px;">已接入的客户端（{{ relayClients.length }}）</div>
           <div v-for="c in relayClients" :key="c.sessionId" class="flex" style="gap:8px;align-items:center;font-size:13px;margin-bottom:6px;">
@@ -364,7 +364,7 @@
             <input v-model="backupRetention" type="number" min="1" max="365" class="form-control" style="width:80px;" @change="saveAutoBackup">
           </div>
         </div>
-        <span v-if="backupStatus" class="text-muted" :style="{ color: backupStatus.startsWith('✅') ? '#22c55e' : backupStatus.startsWith('⏳') ? '#f59e0b' : '#ef4444' }">{{ backupStatus }}</span>
+        <span v-if="backupStatus" class="text-muted" :style="{ color: backupStatus.startsWith('✅') ? 'var(--success)' : backupStatus.startsWith('⏳') ? 'var(--warning)' : 'var(--danger)' }">{{ backupStatus }}</span>
         <div v-if="backupList.length" class="backup-list">
           <div class="backup-item" v-for="b in backupList" :key="b.path">
             <span class="backup-name">{{ b.name }}</span>
@@ -387,7 +387,7 @@
           </div>
           <button class="btn btn-primary" @click="saveReportSettings">保存</button>
         </div>
-        <span v-if="reportSettingsStatus" class="text-muted" :style="{ color: reportSettingsStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }" style="margin-top:8px;display:block;">{{ reportSettingsStatus }}</span>
+        <span v-if="reportSettingsStatus" class="text-muted" :style="{ color: reportSettingsStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="margin-top:8px;display:block;">{{ reportSettingsStatus }}</span>
       </div>
 
       <!-- Report Template Editor -->
@@ -396,7 +396,7 @@
         <div class="text-muted mb-2">
           编辑下方提示词（Prompt），AI 会据此生成日报的格式和内容。
         </div>
-        <div class="info-box" style="background:#f0f7ff;border:1px solid #b3d4f7;border-radius:6px;padding:12px;margin-bottom:12px;font-size:13px;line-height:1.6;">
+        <div class="info-box" style="background:var(--surface-2);border:1px solid #b3d4f7;border-radius:6px;padding:12px;margin-bottom:12px;font-size:13px;line-height:1.6;">
           <strong>💡 提示词分两级：</strong><br>
           <strong>系统级</strong>（不可修改）：工具定义、执行步骤 — AI 会自动调用工具查询待办、对话、笔记等数据<br>
           <strong>用户级</strong>（下方编辑）：日报格式要求、展示方式、注意事项 — 按你的偏好定制
@@ -421,7 +421,7 @@
         <div class="flex" style="gap:8px;margin-top:8px;">
           <button class="btn btn-primary" @click="saveReportTemplate">保存提示词</button>
           <button class="btn btn-secondary" @click="resetReportTemplate">恢复默认</button>
-          <span v-if="templateStatus" class="text-muted" :style="{ color: templateStatus.startsWith('✅') ? '#22c55e' : '#ef4444' }" style="margin-left:8px;">{{ templateStatus }}</span>
+          <span v-if="templateStatus" class="text-muted" :style="{ color: templateStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="margin-left:8px;">{{ templateStatus }}</span>
         </div>
       </div>
 
@@ -1317,10 +1317,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .config-view { display: flex; flex-direction: column; height: 100%; }
-.content-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; background: white; }
+.content-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; background: var(--surface); }
 .content-title { font-size: 18px; font-weight: 600; color: var(--text-primary); }
 .content-body { flex: 1; overflow-y: auto; padding: 24px; }
-.card { background: white; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 20px; margin-bottom: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 20px; margin-bottom: 16px; }
 
 .template-help {
   padding: 6px 10px;
@@ -1342,13 +1342,13 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--surface-2);
 }
 
 .vars-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .vars-table th { text-align: left; padding: 6px 10px; background: var(--hover); font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
 .vars-table td { padding: 4px 10px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
-.vars-table code { font-size: 11px; background: #f1f5f9; padding: 1px 4px; border-radius: 3px; color: var(--primary); }
+.vars-table code { font-size: 11px; background: var(--hover); padding: 1px 4px; border-radius: 3px; color: var(--primary); }
 .code-editor {
   width: 100%;
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
@@ -1357,14 +1357,14 @@ onBeforeUnmount(() => {
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #1e293b;
-  color: #e2e8f0;
+  background: var(--code-bg);
+  color: var(--code-fg);
   resize: vertical;
   min-height: 200px;
   tab-size: 2;
 }
 .code-editor:focus { outline: none; border-color: var(--primary); }
-.code-editor::placeholder { color: #64748b; }
+.code-editor::placeholder { color: var(--text-secondary); }
 .card h2 { font-size: 16px; font-weight: 600; margin: 0 0 8px; color: var(--text-primary); }
 .card h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; color: var(--text-primary); }
 .mobile-divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
@@ -1396,20 +1396,20 @@ onBeforeUnmount(() => {
 .config-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
 .config-table th, .config-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
 .config-table th { background: var(--hover); font-weight: 600; color: var(--text-secondary); font-size: 12px; }
-.config-table td code { font-size: 12px; background: #f5f5f7; padding: 2px 6px; border-radius: 4px; }
+.config-table td code { font-size: 12px; background: var(--hover); padding: 2px 6px; border-radius: 4px; }
 .config-table .task-project-name { font-size: 12px; color: var(--text-secondary); }
 .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 12px; font-weight: 500; margin-right: 6px; }
-.badge-gray { background: #f5f5f7; color: #909296; }
-.badge-primary { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
+.badge-gray { background: var(--hover); color: var(--text-muted); }
+.badge-primary { background: rgba(var(--primary-rgb), 0.1); color: var(--primary); }
 .badge-success { background: rgba(34, 197, 94, 0.1); color: var(--success); }
 .badge-warning { background: rgba(251, 146, 60, 0.1); color: var(--warning); }
-.badge-danger { background: rgba(220, 38, 38, 0.1); color: #dc2626; }
+.badge-danger { background: rgba(220, 38, 38, 0.1); color: var(--danger); }
 
 /* Agent grid */
 .agent-grid { display: flex; gap: 12px; }
 .agent-card { flex: 1; display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 10px; border: 1px solid var(--border); }
-.agent-card.installed { background: #f0fdf4; border-color: #bbf7d0; }
-.agent-card.missing { background: #fef2f2; border-color: #fecaca; }
+.agent-card.installed { background: var(--success-soft); border-color: var(--success-soft); }
+.agent-card.missing { background: var(--danger-soft); border-color: var(--danger-soft); }
 .agent-icon { font-size: 28px; }
 .agent-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .agent-version { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
@@ -1417,7 +1417,7 @@ onBeforeUnmount(() => {
 
 /* Modal */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal { background: white; border-radius: 12px; width: 520px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.15); max-height: 80vh; display: flex; flex-direction: column; }
+.modal { background: var(--surface); border-radius: 12px; width: 520px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.15); max-height: 80vh; display: flex; flex-direction: column; }
 .modal-header { padding: 20px 24px 0; }
 .modal-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
 .modal-body { padding: 16px 24px; overflow-y: auto; }
@@ -1425,21 +1425,21 @@ onBeforeUnmount(() => {
 .help-section { margin-bottom: 20px; }
 .help-section h4 { font-size: 14px; font-weight: 600; margin: 0 0 6px; color: var(--text-primary); }
 .help-section p { font-size: 13px; color: var(--text-muted); margin: 0 0 8px; line-height: 1.5; }
-.help-code { background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 8px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
+.help-code { background: var(--code-bg); color: var(--code-fg); padding: 10px 14px; border-radius: 8px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
 
-.btn { padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; cursor: pointer; background: white; color: var(--text-primary); }
+.btn { padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; cursor: pointer; background: var(--surface); color: var(--text-primary); }
 .btn-sm { padding: 2px 8px; font-size: 12px; }
 .btn-primary { background: var(--primary); color: white; border-color: var(--primary); }
-.btn-secondary { background: #f5f5f7; }
-.btn-danger { background: #fef2f2; border-color: #fecaca; color: #dc2626; }
-.btn-outline { background: white; border: 1px solid #e5e7eb; color: var(--text-secondary); }
-.btn-outline:hover { background: rgba(99,102,241,0.05); border-color: rgba(99,102,241,0.3); color: var(--primary); }
+.btn-secondary { background: var(--hover); }
+.btn-danger { background: var(--danger-soft); border-color: var(--danger-soft); color: var(--danger); }
+.btn-outline { background: var(--surface); border: 1px solid #e5e7eb; color: var(--text-secondary); }
+.btn-outline:hover { background: rgba(var(--primary-rgb),0.05); border-color: rgba(var(--primary-rgb),0.3); color: var(--primary); }
 
 /* Toggle switch */
 .toggle { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
 .toggle input { opacity: 0; width: 0; height: 0; }
 .toggle .slider { position: absolute; inset: 0; background: #d1d5db; border-radius: 20px; transition: 0.2s; }
-.toggle .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.2s; }
+.toggle .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 2px; bottom: 2px; background: var(--surface); border-radius: 50%; transition: 0.2s; }
 .toggle input:checked + .slider { background: var(--primary); }
 .toggle input:checked + .slider::before { transform: translateX(16px); }
 
@@ -1458,7 +1458,7 @@ onBeforeUnmount(() => {
 .kb-lib-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border-color, #2a2f3a); border-radius: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .kb-lib-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .kb-lib-name { font-weight: 600; font-size: 13px; }
-.kb-lib-badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: rgba(34,197,94,.15); color: #22c55e; }
+.kb-lib-badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: rgba(34,197,94,.15); color: var(--success); }
 .kb-lib-dir { font-size: 11px; word-break: break-all; }
 .kb-lib-count { font-size: 11px; white-space: nowrap; }
 .kb-lib-actions { display: flex; gap: 8px; flex-shrink: 0; }
@@ -1485,7 +1485,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .llm-provider-row:last-child { border-bottom: none; }
-.llm-provider-row:hover { background: rgba(99,102,241,0.03); }
+.llm-provider-row:hover { background: rgba(var(--primary-rgb),0.03); }
 .llm-prov-name { font-weight: 500; color: var(--text-primary); }
 .llm-prov-url { color: var(--text-muted); font-family: monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .llm-prov-type { color: var(--text-secondary); font-size: 12px; }
@@ -1496,6 +1496,6 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 8px;
-  background: #fafbfc;
+  background: var(--surface-2);
 }
 </style>

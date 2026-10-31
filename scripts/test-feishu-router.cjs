@@ -153,9 +153,9 @@ const btns = router.buildProjectButtons(PROJECTS);
 check('按钮数量 = 项目数', btns.length, 3);
 check('按钮文本带序号', btns[0].text, '1. 金箔雲项目');
 check('按钮 value 带项目 id', btns[1].value, { act: 'pick_project', pid: 2, seq: 2 });
-check('有绑定时首个按钮是继续上下文对话', router.buildProjectButtons(PROJECTS, { keepLabel: '继续上下文对话（金箔雲项目）', keepId: 1 })[0].text, '继续上下文对话（金箔雲项目）');
-check('继续上下文按钮带绑定项目 id', router.buildProjectButtons(PROJECTS, { keepLabel: 'x', keepId: 1 })[0].value.pid, 1);
-check('无绑定时不加继续上下文按钮', router.buildProjectButtons(PROJECTS)[0].text, '1. 金箔雲项目');
+check('有绑定时首个按钮是就用当前项目', router.buildProjectButtons(PROJECTS, { keepLabel: '就用当前项目「金箔雲项目」', keepId: 1 })[0].text, '就用当前项目「金箔雲项目」');
+check('就用当前项目按钮带绑定项目 id', router.buildProjectButtons(PROJECTS, { keepLabel: 'x', keepId: 1 })[0].value.pid, 1);
+check('无绑定时不加就用当前项目按钮', router.buildProjectButtons(PROJECTS)[0].text, '1. 金箔雲项目');
 
 // 「接着问」续聊模式：stash 记录 sessionId，peek 只看不消费，clear 退出
 check('初始没有接着问目标', router.peekPendingFollowup('fm1'), null);
@@ -171,7 +171,7 @@ check('空 sessionId 不进入续聊模式', router.peekPendingFollowup('fm3'), 
 router.clearPendingFollowup('fm1');
 check('clear 后退出续聊模式', router.peekPendingFollowup('fm1'), null);
 
-// 会话绑定查询（选择卡片的「继续上下文对话」用）
+// 会话绑定查询（选择卡片的「就用当前项目」按钮用）
 check('会话绑定查询', router.boundProjectId(db, 'cb1'), null);
 db.feishuContext.set('cb1', 'group', 2);
 check('已绑定会话能查到项目 id', router.boundProjectId(db, 'cb1'), 2);

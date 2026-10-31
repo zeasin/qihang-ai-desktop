@@ -609,7 +609,7 @@ const saveImgConfig = async () => {
   width: 200px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  background: white;
+  background: var(--surface);
   overflow-y: auto;
   padding: 16px 0;
 }
@@ -641,7 +641,7 @@ const saveImgConfig = async () => {
 }
 
 .tool-item:hover {
-  background: var(--bg-hover, #f5f5f5);
+  background: var(--bg-hover, var(--hover));
 }
 
 .tool-item.active {
@@ -726,7 +726,7 @@ const saveImgConfig = async () => {
   border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--text-primary);
-  background: white;
+  background: var(--surface);
   outline: none;
   transition: border-color 0.2s;
 }
@@ -801,7 +801,7 @@ const saveImgConfig = async () => {
 }
 
 .output-text {
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 16px;
@@ -816,7 +816,7 @@ const saveImgConfig = async () => {
 }
 
 .output-error {
-  color: #dc2626;
+  color: var(--danger);
   font-size: 13px;
   margin-top: 10px;
   white-space: pre-wrap;
@@ -865,7 +865,7 @@ const saveImgConfig = async () => {
 }
 
 .btn-secondary {
-  background: white;
+  background: var(--surface);
   border-color: var(--border);
   color: var(--text-primary);
 }
@@ -917,7 +917,7 @@ const saveImgConfig = async () => {
 .history-list {
   width: 260px;
   flex-shrink: 0;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow-y: auto;
@@ -936,7 +936,7 @@ const saveImgConfig = async () => {
 }
 
 .history-item:hover {
-  background: var(--bg-hover, #f5f5f5);
+  background: var(--bg-hover, var(--hover));
 }
 
 .history-item.active {
@@ -976,7 +976,7 @@ const saveImgConfig = async () => {
 }
 
 .history-content {
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 16px 20px;
@@ -1021,7 +1021,7 @@ const saveImgConfig = async () => {
 }
 
 .history-content :deep(code) {
-  background: #f1f5f9;
+  background: var(--hover);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
@@ -1029,8 +1029,8 @@ const saveImgConfig = async () => {
 }
 
 .history-content :deep(pre) {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--text-primary);
+  color: var(--code-fg);
   padding: 12px;
   border-radius: 6px;
   overflow-x: auto;
@@ -1047,8 +1047,8 @@ const saveImgConfig = async () => {
   border-left: 3px solid var(--primary);
   margin: 8px 0;
   padding: 4px 12px;
-  background: #f8fafc;
-  color: #475569;
+  background: var(--bg-main);
+  color: var(--text-secondary);
   border-radius: 4px;
 }
 

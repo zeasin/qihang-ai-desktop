@@ -104,7 +104,7 @@ function handleClick() {
   background: var(--hover);
 }
 .tree-row.active {
-  background: rgba(99, 102, 241, 0.08);
+  background: rgba(var(--primary-rgb), 0.08);
   color: var(--primary);
 }
 

@@ -3,9 +3,9 @@
     <!-- ========== 对话视图 ========== -->
     <div class="chat-body">
     <!-- ========== 左栏：对话列表 ========== -->
-    <div class="chat-sidebar">
+    <div v-show="sessionsOpen" class="chat-sidebar session-flyout" @click.stop>
       <div class="sidebar-header">
-        <h3 class="sidebar-title">对话</h3>
+        <h3 class="sidebar-title">会话记录</h3>
         <button class="btn btn-sm btn-primary" @click="newSession()">+ 新对话</button>
       </div>
 
@@ -86,6 +86,7 @@
                   <option :value="NEW_PROJECT">＋ 新建项目…</option>
                 </select>
                 <button class="btn btn-primary" @click="newSession()">💬 开始对话</button>
+                <button class="btn btn-secondary" @click.stop="sessionsOpen = !sessionsOpen"><AppIcon name="list-checks" :size="13" />历史会话</button>
               </div>
             </div>
           </div>
@@ -111,6 +112,11 @@
       <template v-else>
         <div class="chat-header">
           <div class="chat-header-left">
+            <button class="sessions-toggle" title="会话记录" @click.stop="sessionsOpen = !sessionsOpen">
+              <AppIcon name="list-checks" :size="14" />
+              <span>会话</span>
+              <AppIcon name="chevron-down" :size="12" />
+            </button>
             <h3 class="chat-title">{{ currentSession?.title || '对话' }}</h3>
             <span
               v-if="currentSession?.source === 'feishu'"
@@ -240,6 +246,7 @@ import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 // 配置 marked 以启用换行和 GFM
 marked.setOptions({
@@ -252,8 +259,21 @@ const route = useRoute();
 
 // ========== 状态 ==========
 const sessions = ref<any[]>([]);
+const sessionsOpen = ref(false);
 const currentSessionId = ref('');
 const currentSession = ref<any>(null);
+
+// 会话浮层：点击外部 / Esc 关闭
+function onGlobalClickCloseSessions() { sessionsOpen.value = false; }
+function onEscCloseSessions(e: KeyboardEvent) { if (e.key === 'Escape') sessionsOpen.value = false; }
+onMounted(() => {
+  document.addEventListener('click', onGlobalClickCloseSessions);
+  document.addEventListener('keydown', onEscCloseSessions);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onGlobalClickCloseSessions);
+  document.removeEventListener('keydown', onEscCloseSessions);
+});
 const messages = ref<any[]>([]);
 const inputText = ref('');
 const composing = ref(false);
@@ -510,6 +530,7 @@ async function selectSession(session: any) {
   currentSession.value = session;
   syncProjectFromSession();
   await loadMessages(sid);
+  sessionsOpen.value = false;
   saveState();
 }
 
@@ -528,6 +549,7 @@ async function newSession(projectId?: number | null) {
     messages.value = [];
     inputText.value = '';
     await loadSessions();
+    sessionsOpen.value = false;
     saveState();
     scrollToActiveConversation();
     nextTick(() => inputRef.value?.focus());
@@ -912,27 +934,55 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
-/* ========== 左栏 ========== */
-.chat-sidebar {
-  width: 280px;
-  min-width: 280px;
-  background: #f8fafc;
-  border-right: 1px solid #e8ecf1;
+/* ========== 会话浮层（从对话页头部唤出，不再常驻三栏） ========== */
+.session-flyout {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 348px;
+  max-height: calc(100% - 24px);
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.sessions-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
   flex-shrink: 0;
+}
+.sessions-toggle:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
 }
 
 .sidebar-header {
   padding: 16px;
-  border-bottom: 1px solid #e8ecf1;
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
-  background: white;
+  background: var(--surface);
 }
 
 .sidebar-title {
@@ -960,7 +1010,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   cursor: pointer;
   user-select: none;
-  color: #475569;
+  color: var(--text-secondary);
   transition: background 0.15s;
 }
 
@@ -976,7 +1026,7 @@ onBeforeUnmount(() => {
   font-size: 10px;
   width: 12px;
   text-align: center;
-  color: #94a3b8;
+  color: var(--text-muted);
   transition: transform 0.15s;
 }
 
@@ -1000,8 +1050,8 @@ onBeforeUnmount(() => {
 
 .group-count {
   font-size: 10px;
-  color: #94a3b8;
-  background: #f1f5f9;
+  color: var(--text-muted);
+  background: var(--hover);
   border-radius: 8px;
   padding: 1px 6px;
 }
@@ -1009,7 +1059,7 @@ onBeforeUnmount(() => {
 .group-add {
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 14px;
   line-height: 1;
   padding: 2px 4px;
@@ -1024,7 +1074,7 @@ onBeforeUnmount(() => {
 
 .group-add:hover {
   color: var(--primary);
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(var(--primary-rgb), 0.1);
 }
 
 .conversation-list {
@@ -1049,15 +1099,15 @@ onBeforeUnmount(() => {
 }
 
 .conversation-item:hover {
-  background: white;
+  background: var(--surface);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   transform: translateX(2px);
 }
 
 .conversation-item.active {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.08));
+  background: linear-gradient(135deg, rgba(var(--primary-rgb), 0.12), rgba(139, 92, 246, 0.08));
   border-left: 3px solid var(--primary);
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 2px 8px rgba(var(--primary-rgb), 0.1);
 }
 
 .conv-icon {
@@ -1068,7 +1118,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(var(--primary-rgb), 0.1);
   border-radius: 6px;
 }
 
@@ -1172,7 +1222,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .chat-empty {
@@ -1184,7 +1234,7 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 60px 20px;
   gap: 16px;
-  background: linear-gradient(135deg, #fafbfc 0%, #ffffff 50%, #f8fafc 100%);
+  background: linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 50%, var(--bg-main) 100%);
 }
 
 .chat-empty .empty-icon {
@@ -1211,22 +1261,22 @@ onBeforeUnmount(() => {
   padding: 12px 28px;
   font-size: 15px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  box-shadow: 0 4px 12px rgba(var(--primary-rgb), 0.3);
   transition: all 0.2s;
 }
 
 .btn-lg:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 6px 16px rgba(var(--primary-rgb), 0.4);
 }
 
 /* ========== 空状态引导卡 ========== */
 .guide-card {
   width: 520px;
   max-width: 100%;
-  background: white;
-  border: 1px solid #e8ecf1;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 8px 24px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
@@ -1237,7 +1287,7 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 14px;
   padding: 16px 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--hover);
 }
 
 .guide-step:last-child {
@@ -1248,7 +1298,7 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
   color: white;
   font-size: 14px;
   font-weight: 700;
@@ -1260,7 +1310,7 @@ onBeforeUnmount(() => {
 }
 
 .guide-step.done .step-index {
-  background: #16a34a;
+  background: var(--success);
 }
 
 .step-content {
@@ -1298,8 +1348,8 @@ onBeforeUnmount(() => {
 .guide-link {
   font-size: 12px;
   color: var(--primary);
-  background: rgba(99, 102, 241, 0.08);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: rgba(var(--primary-rgb), 0.08);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
   padding: 5px 12px;
   border-radius: 20px;
   text-decoration: none;
@@ -1318,8 +1368,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 0 20px;
   height: 48px;
-  border-bottom: 1px solid #e8ecf1;
-  background: #fafbfc;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
   flex-shrink: 0;
 }
 
@@ -1333,7 +1383,7 @@ onBeforeUnmount(() => {
 .chat-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-primary);
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1342,9 +1392,9 @@ onBeforeUnmount(() => {
 
 .chat-project-badge {
   font-size: 11px;
-  color: #4f46e5;
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  color: var(--primary-dark);
+  background: rgba(var(--primary-rgb), 0.1);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
   border-radius: 6px;
   padding: 2px 8px;
   max-width: 220px;
@@ -1363,7 +1413,7 @@ onBeforeUnmount(() => {
 
 .agent-state {
   font-size: 11px;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .agent-status-dot {
@@ -1374,7 +1424,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-status-dot.ready {
-  background: #22c55e;
+  background: var(--success);
 }
 
 .agent-status-dot.busy {
@@ -1425,12 +1475,12 @@ onBeforeUnmount(() => {
 }
 
 .msg.user .msg-avatar {
-  background: #6366f1;
+  background: var(--primary);
   color: white;
 }
 
 .msg.assistant .msg-avatar {
-  background: #f1f5f9;
+  background: var(--hover);
 }
 
 .msg.tool .msg-avatar,
@@ -1452,7 +1502,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   font-size: 11px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .msg.user .msg-author {
@@ -1466,7 +1516,7 @@ onBeforeUnmount(() => {
 .msg-time {
   font-size: 10px;
   font-weight: 400;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .msg-flag {
@@ -1478,10 +1528,10 @@ onBeforeUnmount(() => {
 }
 
 .msg-copy {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
-  color: #94a3b8;
+  background: var(--surface);
+  color: var(--text-muted);
   font-size: 10px;
   padding: 0 6px;
   cursor: pointer;
@@ -1489,12 +1539,12 @@ onBeforeUnmount(() => {
 
 .msg-copy:hover {
   border-color: #c7d2fe;
-  color: #4f46e5;
+  color: var(--primary-dark);
 }
 
 .msg-copy.ok {
-  border-color: #bbf7d0;
-  color: #16a34a;
+  border-color: var(--success-soft);
+  color: var(--success);
 }
 
 .msg-content {
@@ -1506,34 +1556,34 @@ onBeforeUnmount(() => {
 }
 
 .msg.user .msg-content {
-  background: #eef2ff;
-  color: #1e293b;
+  background: var(--primary-soft);
+  color: var(--text-primary);
   border: 1px solid #e0e7ff;
   border-bottom-right-radius: 4px;
 }
 
 .msg.assistant .msg-content {
   background: transparent;
-  color: #1e293b;
-  border: 1px solid #e2e8f0;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
 }
 
 .msg.tool .msg-content,
 .msg.system .msg-content {
-  background: #f8fafc;
+  background: var(--bg-main);
   color: #334155;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
 }
 
 /* 思考过程：默认折叠，生成中也能点开看全文 */
 .msg-thinking {
   background: transparent;
-  border: 1px dashed #cbd5e1;
+  border: 1px dashed var(--border);
   border-radius: 10px;
   padding: 6px 10px;
   font-size: 11px;
-  color: #64748b;
+  color: var(--text-secondary);
 }
 
 .msg-thinking summary {
@@ -1549,7 +1599,7 @@ onBeforeUnmount(() => {
   font-family: inherit;
   font-size: 11px;
   line-height: 1.55;
-  color: #475569;
+  color: var(--text-secondary);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -1565,7 +1615,7 @@ onBeforeUnmount(() => {
   max-width: 200px;
   max-height: 200px;
   border-radius: 8px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   object-fit: contain;
 }
 
@@ -1576,8 +1626,8 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 6px 12px;
   font-size: 11px;
-  color: #6366f1;
-  background: #eef2ff;
+  color: var(--primary);
+  background: var(--primary-soft);
   border-radius: 8px;
   align-self: flex-start;
 }
@@ -1595,24 +1645,24 @@ onBeforeUnmount(() => {
 /* ========== 输入区 ========== */
 .chat-input-area {
   padding: 16px 24px 20px;
-  border-top: 1px solid #e8ecf1;
-  background: linear-gradient(to top, #ffffff, #fafbfc);
+  border-top: 1px solid var(--border);
+  background: linear-gradient(to top, var(--surface), var(--surface-2));
   flex-shrink: 0;
 }
 
 .input-wrapper {
   max-width: 900px;
   margin: 0 auto;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: white;
+  background: var(--surface);
   padding: 10px 14px;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .input-wrapper:focus-within {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.1);
 }
 
 .chat-input {
@@ -1702,16 +1752,16 @@ onBeforeUnmount(() => {
 
 .toolbar-btn:hover {
   color: var(--primary);
-  background: rgba(99, 102, 241, 0.08);
+  background: rgba(var(--primary-rgb), 0.08);
   transform: scale(1.05);
 }
 
 .model-selector {
   font-size: 12px;
   padding: 5px 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-main);
   color: var(--text-primary);
   max-width: 180px;
   outline: none;
@@ -1721,7 +1771,7 @@ onBeforeUnmount(() => {
 
 .model-selector:hover {
   border-color: var(--primary);
-  background: white;
+  background: var(--surface);
 }
 
 .input-hint {
@@ -1731,7 +1781,7 @@ onBeforeUnmount(() => {
 
 .send-btn {
   border: none;
-  background: #6366f1;
+  background: var(--primary);
   color: white;
   width: 32px;
   height: 32px;
@@ -1745,11 +1795,11 @@ onBeforeUnmount(() => {
 }
 
 .send-btn:hover:not(:disabled) {
-  background: #4f46e5;
+  background: var(--primary-dark);
 }
 
 .send-btn:disabled {
-  background: #cbd5e1;
+  background: var(--border);
   cursor: not-allowed;
 }
 </style>

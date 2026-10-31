@@ -71,7 +71,7 @@ function goConfig() {
   width: 100%;
   max-width: 480px;
   text-align: center;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 36px 32px 26px;

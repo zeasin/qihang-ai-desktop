@@ -219,7 +219,7 @@
           <button class="btn btn-secondary" @click="showDeleteModal = false">✕</button>
         </div>
         <div class="modal-body">
-          <p style="color:#94a3b8;font-size:13px;">确定要删除任务「{{ task?.title }}」吗？此操作不可撤销。</p>
+          <p style="color:var(--text-muted);font-size:13px;">确定要删除任务「{{ task?.title }}」吗？此操作不可撤销。</p>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="showDeleteModal = false">取消</button>
@@ -505,7 +505,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
-  background: white;
+  background: var(--surface);
 }
 
 .header-actions {
@@ -530,7 +530,7 @@ onBeforeUnmount(() => {
 }
 
 .detail-section {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
@@ -585,7 +585,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #f1f5f9;
+  background: var(--hover);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -594,7 +594,7 @@ onBeforeUnmount(() => {
 }
 
 .message.user .message-avatar {
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(var(--primary-rgb), 0.1);
 }
 
 .message.assistant .message-avatar {
@@ -621,13 +621,13 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   line-height: 1.6;
   padding: 10px 14px;
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   word-break: break-word;
 }
 
 .message.assistant .message-content {
-  background: #f0fdf4;
+  background: var(--success-soft);
 }
 
 /* ========== 执行记录 ========== */
@@ -653,7 +653,7 @@ onBeforeUnmount(() => {
 
 .exec-error {
   font-size: 13px;
-  color: #ef4444;
+  color: var(--danger);
   margin-bottom: 8px;
   white-space: pre-wrap;
   word-break: break-all;
@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
 .exec-result {
   font-size: 13px;
   color: var(--text-secondary);
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   max-height: 400px;
@@ -674,7 +674,7 @@ onBeforeUnmount(() => {
 .followup-reply {
   font-size: 13px;
   color: var(--text-secondary);
-  background: #f8fafc;
+  background: var(--bg-main);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   margin-bottom: 10px;
@@ -706,7 +706,7 @@ onBeforeUnmount(() => {
   padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--bg-main);
   color: var(--text-primary);
   max-width: 180px;
   outline: none;
@@ -743,12 +743,12 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.status-pending { background: rgba(251, 146, 60, 0.1); color: #fb923c; }
-.status-in_progress { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
-.status-done { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-.status-SUCCESS { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-.status-FAILED { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-.status-RUNNING { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+.status-pending { background: rgba(251, 146, 60, 0.1); color: var(--warning); }
+.status-in_progress { background: rgba(59, 130, 246, 0.1); color: var(--primary); }
+.status-done { background: rgba(34, 197, 94, 0.1); color: var(--success); }
+.status-SUCCESS { background: rgba(34, 197, 94, 0.1); color: var(--success); }
+.status-FAILED { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+.status-RUNNING { background: rgba(59, 130, 246, 0.1); color: var(--primary); }
 
 /* 模态框 */
 .modal-overlay {
@@ -765,7 +765,7 @@ onBeforeUnmount(() => {
 }
 
 .modal-box {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius-md);
   box-shadow: 0 10px 25px rgba(0,0,0,0.1);
   max-width: 90%;
@@ -823,12 +823,12 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   font-size: 14px;
   outline: none;
-  background: white;
+  background: var(--surface);
 }
 
 .form-control:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+  box-shadow: 0 0 0 3px rgba(var(--primary-rgb),0.1);
 }
 
 .form-row {
@@ -887,10 +887,10 @@ select.form-control {
 :deep(.markdown-body p:last-child) { margin-bottom: 0; }
 :deep(.markdown-body ul), :deep(.markdown-body ol) { padding-left: 20px; margin: 4px 0; }
 :deep(.markdown-body li) { margin: 2px 0; }
-:deep(.markdown-body code) { background: #e8e8e8; padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
-:deep(.markdown-body pre) { background: #1e293b; color: #e2e8f0; padding: 12px 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+:deep(.markdown-body code) { background: var(--hover); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
+:deep(.markdown-body pre) { background: var(--code-bg); color: var(--code-fg); padding: 12px 16px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
 :deep(.markdown-body pre code) { background: none; padding: 0; color: inherit; }
-:deep(.markdown-body blockquote) { border-left: 3px solid var(--primary); padding-left: 12px; color: #64748b; margin: 8px 0; }
+:deep(.markdown-body blockquote) { border-left: 3px solid var(--primary); padding-left: 12px; color: var(--text-secondary); margin: 8px 0; }
 :deep(.markdown-body strong) { font-weight: 600; }
 :deep(.markdown-body a) { color: var(--primary); text-decoration: none; }
 :deep(.markdown-body a:hover) { text-decoration: underline; }
@@ -899,7 +899,7 @@ select.form-control {
 :deep(.markdown-body h2) { font-size: 1.15em; }
 :deep(.markdown-body h3) { font-size: 1.05em; }
 :deep(.markdown-body table) { border-collapse: collapse; margin: 8px 0; width: 100%; }
-:deep(.markdown-body th), :deep(.markdown-body td) { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; font-size: 13px; }
-:deep(.markdown-body th) { background: #f8fafc; font-weight: 600; }
+:deep(.markdown-body th), :deep(.markdown-body td) { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 13px; }
+:deep(.markdown-body th) { background: var(--bg-main); font-weight: 600; }
 :deep(.markdown-body hr) { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 </style>

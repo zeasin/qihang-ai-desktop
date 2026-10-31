@@ -5,11 +5,11 @@
     </div>
     <div class="content-body">
       <div class="stats-grid">
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(139,92,246,0.1);color:#8b5cf6;">📦</div><div class="stat-num">{{ stats.projectCount }}</div><div class="stat-label">项目</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:#22c55e;">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:#ef4444;">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(99,102,241,0.1);color:#6366f1;">💬</div><div class="stat-num">{{ stats.totalChats }}</div><div class="stat-label">对话</div></div>
-        <div class="stat-card"><div class="stat-icon" style="background:rgba(251,146,60,0.1);color:#fb923c;">📊</div><div class="stat-num">{{ stats.todayDataRecords }}</div><div class="stat-label">今日数据</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(139,92,246,0.1);color:var(--primary-light);">📦</div><div class="stat-num">{{ stats.projectCount }}</div><div class="stat-label">项目</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(34,197,94,0.1);color:var(--success);">✅</div><div class="stat-num">{{ stats.todoPending }}</div><div class="stat-label">待办 {{ stats.todoOverdue ? '(' + stats.todoOverdue + ' 逾期)' : '' }}</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.1);color:var(--danger);">🔔</div><div class="stat-num">{{ stats.remindersActive }}</div><div class="stat-label">提醒</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(var(--primary-rgb),0.1);color:var(--primary);">💬</div><div class="stat-num">{{ stats.totalChats }}</div><div class="stat-label">对话</div></div>
+        <div class="stat-card"><div class="stat-icon" style="background:rgba(251,146,60,0.1);color:var(--warning);">📊</div><div class="stat-num">{{ stats.todayDataRecords }}</div><div class="stat-label">今日数据</div></div>
       </div>
 
       <!-- 项目文件（实时扫盘统计） -->
@@ -22,14 +22,14 @@
           <div class="index-lib-list">
             <div v-for="p in indexProjects" :key="p.id" class="index-lib-section">
               <div class="index-lib-header">
-                <span class="index-lib-name">{{ p.name }}<span v-if="p.isDefault" style="font-size:11px;color:#6366f1;margin-left:4px;">默认</span></span>
+                <span class="index-lib-name">{{ p.name }}<span v-if="p.isDefault" style="font-size:11px;color:var(--primary);margin-left:4px;">默认</span></span>
                 <div class="index-lib-header-actions">
                   <span class="index-lib-dir text-muted">{{ p.dir }}</span>
                 </div>
               </div>
               <div class="index-lib-summary">
-                <div class="index-stat-card"><div class="index-stat-icon" style="background:rgba(59,130,246,0.1);color:#3b82f6;">📄</div><div class="index-stat-lib-num">{{ libStats(p.id)?.docCount || 0 }}</div><div class="index-stat-lib-label">笔记文件</div></div>
-                <div class="index-stat-card"><div class="index-stat-icon" style="background:rgba(251,146,60,0.1);color:#fb923c;">🕒</div><div class="index-stat-lib-num">{{ libStats(p.id)?.todayModified || 0 }}</div><div class="index-stat-lib-label">今日更新</div></div>
+                <div class="index-stat-card"><div class="index-stat-icon" style="background:rgba(59,130,246,0.1);color:var(--primary);">📄</div><div class="index-stat-lib-num">{{ libStats(p.id)?.docCount || 0 }}</div><div class="index-stat-lib-label">笔记文件</div></div>
+                <div class="index-stat-card"><div class="index-stat-icon" style="background:rgba(251,146,60,0.1);color:var(--warning);">🕒</div><div class="index-stat-lib-num">{{ libStats(p.id)?.todayModified || 0 }}</div><div class="index-stat-lib-label">今日更新</div></div>
               </div>
             </div>
           </div>
@@ -139,7 +139,7 @@
             <div class="empty-title">未找到相关结果</div>
           </div>
           <div v-for="result in searchResults" :key="result.id" class="search-result-item" @click="openResult(result)">
-            <div class="result-title"><span v-if="result.libName" style="color:#6366f1;font-weight:400;font-size:12px;">[{{ result.libName }}]</span> {{ result.title }}</div>
+            <div class="result-title"><span v-if="result.libName" style="color:var(--primary);font-weight:400;font-size:12px;">[{{ result.libName }}]</span> {{ result.title }}</div>
             <div class="result-path">{{ result.path }}</div>
             <div class="result-preview">{{ result.preview }}</div>
             <div class="result-score">{{ result.score }}</div>
@@ -217,7 +217,7 @@ const renderMarkdown = (text: string) => {
         .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
         .replace(/`(.+?)`/g,'<code>$1</code>')
         .replace(/\[(.+?)\]\((.+?)\)/g,'<a href="$2">$1</a>');
-      out.push('<blockquote style="border-left:3px solid #6366f1;padding:6px 12px;margin:8px 0;background:#f8fafc;border-radius:4px;color:#475569">' + cnt + '</blockquote>');
+      out.push('<blockquote style="border-left:3px solid var(--primary);padding:6px 12px;margin:8px 0;background:var(--bg-main);border-radius:4px;color:var(--text-secondary)">' + cnt + '</blockquote>');
       continue;
     }
     if (/^\|/.test(line)) {
@@ -229,7 +229,7 @@ const renderMarkdown = (text: string) => {
         const hcells = trows[0].split('|').filter(c => c.trim() !== '');
         for (const hc of hcells) {
           const hv = hc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          thtml += '<th style="padding:6px 10px;border:1px solid #d0d5dd;background:#f0f0f5;font-weight:600;text-align:left;font-size:13px">' + hv + '</th>';
+          thtml += '<th style="padding:6px 10px;border:1px solid var(--border);background:var(--hover);font-weight:600;text-align:left;font-size:13px">' + hv + '</th>';
         }
         thtml += '</tr></thead><tbody>';
         for (let tj = 2; tj < trows.length; tj++) {
@@ -237,7 +237,7 @@ const renderMarkdown = (text: string) => {
           thtml += '<tr>';
           for (const dc of dcells) {
             const dv = dc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            thtml += '<td style="padding:6px 10px;border:1px solid #d0d5dd;font-size:13px">' + dv + '</td>';
+            thtml += '<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px">' + dv + '</td>';
           }
           thtml += '</tr>';
         }
@@ -249,7 +249,7 @@ const renderMarkdown = (text: string) => {
           thtml += '<tr>';
           for (const dc of dcells) {
             const dv = dc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            thtml += '<td style="padding:6px 10px;border:1px solid #d0d5dd;font-size:13px">' + dv + '</td>';
+            thtml += '<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px">' + dv + '</td>';
           }
           thtml += '</tr>';
         }
@@ -268,21 +268,21 @@ const renderMarkdown = (text: string) => {
     if (/^# /.test(line)) { out.push('<h1 style="font-size:18px;margin:16px 0 8px">' + esc.slice(2) + '</h1>'); continue; }
     if (/^---$/.test(line)) { out.push('<hr>'); continue; }
     if (/^☀️ /.test(line)) { out.push('<div style="font-size:20px;font-weight:700;margin:16px 0 8px">' + esc + '</div>'); continue; }
-    if (/^📅 /.test(line)) { out.push('<div style="font-size:14px;color:#64748b;margin-bottom:16px">' + esc + '</div>'); continue; }
-    if (/^✅ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:#16a34a">' + esc + '</div>'); continue; }
-    if (/^⚠️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:#ef4444">' + esc + '</div>'); continue; }
+    if (/^📅 /.test(line)) { out.push('<div style="font-size:14px;color:var(--text-secondary);margin-bottom:16px">' + esc + '</div>'); continue; }
+    if (/^✅ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:var(--success)">' + esc + '</div>'); continue; }
+    if (/^⚠️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:var(--danger)">' + esc + '</div>'); continue; }
     if (/^📋 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
     if (/^⏰ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
     if (/^💬 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
     if (/^📝 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
     if (/^🗂️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
     if (/^📊 /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^🌅 /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^🌤️ /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^🌇 /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^🌙 /.test(line)) { out.push('<div style="font-size:14px;color:#6366f1;margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^💡 /.test(line)) { out.push('<div style="font-size:13px;color:#94a3b8;margin-top:8px">' + esc + '</div>'); continue; }
-    if (/^  - 🔴 /.test(line)) { out.push('<div style="padding:2px 0 2px 16px;color:#ef4444">' + esc.slice(6) + '</div>'); continue; }
+    if (/^🌅 /.test(line)) { out.push('<div style="font-size:14px;color:var(--primary);margin:8px 0">' + esc + '</div>'); continue; }
+    if (/^🌤️ /.test(line)) { out.push('<div style="font-size:14px;color:var(--primary);margin:8px 0">' + esc + '</div>'); continue; }
+    if (/^🌇 /.test(line)) { out.push('<div style="font-size:14px;color:var(--primary);margin:8px 0">' + esc + '</div>'); continue; }
+    if (/^🌙 /.test(line)) { out.push('<div style="font-size:14px;color:var(--primary);margin:8px 0">' + esc + '</div>'); continue; }
+    if (/^💡 /.test(line)) { out.push('<div style="font-size:13px;color:var(--text-muted);margin-top:8px">' + esc + '</div>'); continue; }
+    if (/^  - 🔴 /.test(line)) { out.push('<div style="padding:2px 0 2px 16px;color:var(--danger)">' + esc.slice(6) + '</div>'); continue; }
     if (/^  - /.test(line)) { out.push('<div style="padding:2px 0 2px 16px">' + esc.slice(4) + '</div>'); continue; }
     if (line === '') { out.push('<br>'); continue; }
     out.push('<div>' + esc + '</div>');
@@ -422,24 +422,24 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .insights-view { display: flex; flex-direction: column; height: 100%; }
-.content-header { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; background: white; }
+.content-header { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; background: var(--surface); }
 .content-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .content-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
 
 /* stats 卡片网格 */
 .stats-grid { display: flex; gap: 8px; margin-bottom: 14px; }
-.stat-card { flex: 1; min-width: 0; background: white; border-radius: var(--radius-sm); border: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; transition: 0.15s; }
+.stat-card { flex: 1; min-width: 0; background: var(--surface); border-radius: var(--radius-sm); border: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; transition: 0.15s; }
 .stat-icon { width: 28px; height: 28px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 14px; }
 .stat-num { font-size: 18px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
 .stat-label { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
 
-.card { background: white; border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: var(--shadow-sm); padding: 20px; margin-bottom: 16px; }
+.card { background: var(--surface); border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: var(--shadow-sm); padding: 20px; margin-bottom: 16px; }
 .card-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
 
 /* 项目文件统计卡片（实时扫盘） */
 .index-card { margin-bottom: 14px; }
 .index-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.index-stat-card { background: white; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; }
+.index-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; }
 .index-stat-icon { width: 32px; height: 32px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 16px; }
 .index-lib-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .index-lib-section { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
@@ -458,12 +458,12 @@ onBeforeUnmount(() => {
 .index-empty-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5; }
 
 /* 搜索栏 */
-.search-card { background: white; border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: var(--shadow-sm); padding: 12px 16px; margin-bottom: 12px; }
+.search-card { background: var(--surface); border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: var(--shadow-sm); padding: 12px 16px; margin-bottom: 12px; }
 .search-bar { display: flex; gap: 8px; align-items: center; }
-.search-kb-select { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; background: white; color: var(--text-primary); cursor: pointer; flex-shrink: 0; max-width: 140px; }
+.search-kb-select { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; background: var(--surface); color: var(--text-primary); cursor: pointer; flex-shrink: 0; max-width: 140px; }
 .search-kb-select:focus { border-color: var(--primary); }
-.search-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; background: white; }
-.search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,0.1); }
+.search-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; background: var(--surface); }
+.search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(var(--primary-rgb),0.1); }
 .search-btn { padding: 8px 16px; background: var(--primary); color: white; border: none; border-radius: var(--radius-sm); font-size: 13px; cursor: pointer; transition: 0.15s; white-space: nowrap; }
 .search-btn:hover { background: var(--primary-dark); }
 
@@ -477,13 +477,13 @@ onBeforeUnmount(() => {
 /* 待办列表 */
 .todo-list { display: flex; flex-direction: column; gap: 4px; }
 .todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); transition: 0.15s; }
-.todo-item.overdue { border-color: #fca5a5; background: #fef2f2; }
+.todo-item.overdue { border-color: var(--danger); background: var(--danger-soft); }
 .todo-item:hover { border-color: var(--primary); }
 .todo-priority { flex-shrink: 0; font-size: 12px; }
 .todo-body { flex: 1; min-width: 0; }
 .todo-title { font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .todo-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.todo-done-btn { flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 50%; background: white; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); transition: 0.15s; }
+.todo-done-btn { flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); transition: 0.15s; }
 .todo-done-btn:hover { border-color: var(--primary); color: var(--primary); }
 
 /* 提醒列表 */
@@ -505,7 +505,7 @@ onBeforeUnmount(() => {
 .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.35); z-index: 1000; align-items: flex-start; justify-content: center; padding-top: 60px; }
 .modal-overlay.active { display: flex; }
 .modal-overlay.visible { display: flex; }
-.modal { background: white; border-radius: var(--radius-lg); width: 90%; max-width: 800px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+.modal { background: var(--surface); border-radius: var(--radius-lg); width: 90%; max-width: 800px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .modal-title { font-size: 15px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
 .report-list { display: flex; flex-direction: column; gap: 4px; }
 .report-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: 0.15s; }
 .report-item:hover { border-color: var(--primary); }
-.report-item.active { border-color: var(--primary); background: rgba(99,102,241,0.03); }
+.report-item.active { border-color: var(--primary); background: rgba(var(--primary-rgb),0.03); }
 .report-header { display: flex; align-items: center; justify-content: space-between; }
 .report-date { font-size: 13px; font-weight: 600; color: var(--primary); }
 .report-toggle { font-size: 11px; color: var(--text-muted); }
@@ -543,7 +543,7 @@ onBeforeUnmount(() => {
 .report-detail .preview { font-size: 13px; line-height: 1.7; }
 
 /* 新建笔记库名称输入弹窗 */
-.prompt-box { background: white; border-radius: var(--radius-lg); padding: 24px; width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 12px; margin-top: 80px; }
+.prompt-box { background: var(--surface); border-radius: var(--radius-lg); padding: 24px; width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 12px; margin-top: 80px; }
 .prompt-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .prompt-input { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; outline: none; }
 .prompt-input:focus { border-color: var(--primary); }

@@ -1,52 +1,93 @@
 <template>
-  <div class="reminders-view">
-    <div class="content-header">
-      <h1 class="content-title">提醒</h1>
-      <button class="btn btn-primary btn-sm" @click="createReminder">新建提醒</button>
+  <div class="page todo-view">
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">待办</h1>
+        <p class="page-sub">需要你动手的事：本地待办与定时提醒都在这里，也可交给引擎执行。</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-sm btn-secondary" @click="toggleDoneShow">{{ showDone ? '隐藏已完成' : '显示已完成' }}</button>
+        <button class="btn btn-primary btn-sm" @click="createReminder"><AppIcon name="bell" :size="13" />新建提醒</button>
+      </div>
+    </header>
+
+    <!-- ========== 快速添加待办 ========== -->
+    <div class="quick-add panel">
+      <AppIcon name="plus" :size="14" />
+      <input
+        v-model="newTodoTitle"
+        class="quick-input"
+        type="text"
+        placeholder="添加待办，回车确认（会同步写入笔记）"
+        @keyup.enter="addTodo"
+      >
+      <input v-model="newTodoDate" class="quick-date" type="date" title="截止日期（可选）">
+      <button class="btn btn-primary btn-sm" :disabled="!newTodoTitle.trim()" @click="addTodo">添加</button>
     </div>
 
-    <div class="content-body">
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">全部提醒</h3>
-          <span class="card-subtitle">已启用 {{ enabledCount }} / {{ reminders.length }} 条</span>
+    <!-- ========== 待办清单 ========== -->
+    <div class="sec-label"><AppIcon name="list-checks" :size="13" />待办清单<em>{{ openTodoCount }} 项未完成</em></div>
+    <section class="panel">
+      <template v-for="sec in todoSections" :key="sec.key">
+        <div class="sec-row" :class="{ warm: sec.key === 'overdue' }">
+          <AppIcon :name="sec.key === 'overdue' ? 'clock' : 'list-checks'" :size="12" />{{ sec.label }}
+          <span class="sec-count">{{ sec.items.length }}</span>
         </div>
-
-        <div v-if="reminders.length === 0" class="empty-state">
-          <div class="empty-icon">⏰</div>
-          <div class="empty-text">还没有提醒，点击右上角「新建提醒」创建一条</div>
+        <div v-for="t in sec.items" :key="t.id" class="todo-row" :class="{ done: t.status === 'done', overdue: sec.key === 'overdue' }">
+          <button class="todo-box" :title="t.status === 'done' ? '标记为未完成' : '标记完成'" @click="toggleTodo(t)">
+            <AppIcon v-if="t.status === 'done'" name="check" :size="11" />
+          </button>
+          <span class="prio" :class="t.priority"></span>
+          <span class="todo-tx">{{ t.title }}</span>
+          <span v-if="todoDue(t)" class="todo-dt" :class="{ warm: sec.key === 'overdue' }">{{ todoDue(t) }}</span>
+          <button class="row-del" title="删除待办" @click="removeTodo(t)"><AppIcon name="trash-2" :size="13" /></button>
         </div>
+        <div v-if="!sec.items.length" class="empty-row">{{ sec.empty }}</div>
+      </template>
+    </section>
 
-        <div v-else class="reminder-grid">
-          <div
-            v-for="reminder in reminders"
-            :key="reminder.id"
-            class="reminder-card"
-            :class="{ disabled: !reminder.enabled }"
-            @click="editReminder(reminder)"
-          >
-            <div class="reminder-header">
-              <span class="reminder-name">{{ reminder.name }}</span>
-              <div
-                class="reminder-toggle"
-                :class="{ on: reminder.enabled }"
-                @click.stop="toggleReminder(reminder)"
-              ></div>
-            </div>
-            <div class="reminder-message">{{ reminder.message }}</div>
-            <div class="reminder-schedule">⏰ {{ getScheduleText(reminder) }}</div>
+    <!-- ========== 定时提醒 ========== -->
+    <div class="sec-label"><AppIcon name="bell" :size="13" />定时提醒<em>已启用 {{ enabledCount }} / {{ reminders.length }} 条</em></div>
+    <section class="reminder-grid-wrap">
+      <div v-if="reminders.length === 0" class="panel empty-panel">
+        <AppIcon name="bell" :size="26" />
+        <p>还没有提醒。新建一条，到点会通过系统通知和飞书提醒你。</p>
+      </div>
+      <div v-else class="reminder-grid">
+        <div
+          v-for="reminder in reminders"
+          :key="reminder.id"
+          class="panel reminder-card"
+          :class="{ disabled: !reminder.enabled }"
+          @click="editReminder(reminder)"
+        >
+          <div class="reminder-header">
+            <span class="reminder-name">{{ reminder.name }}</span>
+            <div
+              class="reminder-toggle"
+              :class="{ on: reminder.enabled }"
+              title="启用 / 停用"
+              @click.stop="toggleReminder(reminder)"
+            ></div>
+          </div>
+          <div class="reminder-message">{{ reminder.message || '（无备注）' }}</div>
+          <div class="reminder-schedule">
+            <AppIcon name="clock" :size="12" />{{ getScheduleText(reminder) }}
+          </div>
+          <div class="reminder-ops">
             <button class="btn btn-secondary btn-xs test-btn" @click.stop="testReminder(reminder)">测试触发</button>
+            <button class="row-del" title="删除提醒" @click.stop="openDeleteModal(reminder.id)"><AppIcon name="trash-2" :size="13" /></button>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- 提醒编辑模态框 -->
     <div v-if="showReminderModal" class="modal-overlay" @click="showReminderModal = false">
       <div class="modal-box" @click.stop>
         <div class="modal-header">
           <h3>{{ isEditingReminder ? '编辑提醒' : '新建提醒' }}</h3>
-          <button class="btn btn-secondary" @click="showReminderModal = false">✕</button>
+          <button class="icon-btn" @click="showReminderModal = false"><AppIcon name="x" :size="14" /></button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -60,11 +101,11 @@
           <div class="form-group">
             <label>提醒类型 *</label>
             <select class="form-control" v-model="editingReminder.type">
-              <option value="daily">📅 每天 - 每天定时提醒</option>
-              <option value="once">🔔 一次 - 指定日期提醒</option>
-              <option value="weekly">📆 每周 - 每周特定星期几提醒</option>
-              <option value="monthly">📅 每月 - 每月特定几号提醒</option>
-              <option value="yearly">🎂 每年 - 每年特定日期提醒</option>
+              <option value="daily">每天 - 每天定时提醒</option>
+              <option value="once">一次 - 指定日期提醒</option>
+              <option value="weekly">每周 - 每周特定星期几提醒</option>
+              <option value="monthly">每月 - 每月特定几号提醒</option>
+              <option value="yearly">每年 - 每年特定日期提醒</option>
             </select>
           </div>
           <div class="form-row">
@@ -96,7 +137,7 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="showReminderModal = false">取消</button>
-          <button class="btn btn-danger" v-if="isEditingReminder" @click="openDeleteModal(editingReminder.id)">🗑️ 删除</button>
+          <button class="btn btn-danger" v-if="isEditingReminder" @click="openDeleteModal(editingReminder.id)">删除</button>
           <button class="btn btn-primary" @click="saveReminder">保存</button>
         </div>
       </div>
@@ -107,10 +148,10 @@
       <div class="modal-box" style="width:400px;" @click.stop>
         <div class="modal-header">
           <h3>确认删除</h3>
-          <button class="btn btn-secondary" @click="showDeleteModal = false">✕</button>
+          <button class="icon-btn" @click="showDeleteModal = false"><AppIcon name="x" :size="14" /></button>
         </div>
         <div class="modal-body">
-          <p style="color:#94a3b8;font-size:13px;">确定要删除吗？此操作不可撤销。</p>
+          <p class="del-tip">确定要删除吗？此操作不可撤销。</p>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="showDeleteModal = false">取消</button>
@@ -123,6 +164,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const API = window.electronAPI;
 
@@ -140,8 +182,92 @@ interface Reminder {
   created_at: string;
 }
 
+// ========== 提醒 ==========
 const reminders = ref<Reminder[]>([]);
 const enabledCount = computed(() => reminders.value.filter(r => r.enabled).length);
+
+// ========== 待办 ==========
+interface Todo {
+  id: number;
+  title: string;
+  status: string;
+  priority: string;
+  due_date?: string;
+  scheduled_start?: string;
+}
+const todos = ref<Todo[]>([]);
+const newTodoTitle = ref('');
+const newTodoDate = ref('');
+const showDone = ref(false);
+const todayStr = (() => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+})();
+
+function todoDue(t: Todo): string {
+  return (t.due_date || (t.scheduled_start || '').slice(0, 10) || '').trim();
+}
+
+const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'));
+const openTodoCount = computed(() => openTodos.value.length);
+
+const todoSections = computed(() => {
+  const pool = showDone.value ? todos.value : openTodos.value;
+  const overdue: Todo[] = [];
+  const today: Todo[] = [];
+  const later: Todo[] = [];
+  const done: Todo[] = [];
+  for (const t of pool) {
+    if (t.status === 'done') { done.push(t); continue; }
+    const due = todoDue(t);
+    if (due && due < todayStr) overdue.push(t);
+    else if (due && due === todayStr) today.push(t);
+    else later.push(t);
+  }
+  const secs = [
+    { key: 'overdue', label: '逾期', items: overdue, empty: '没有逾期事项' },
+    { key: 'today', label: '今天', items: today, empty: '今天没有到期事项' },
+    { key: 'later', label: '稍后', items: later, empty: '没有待办，用上方输入框添加一条' },
+  ];
+  if (showDone.value) secs.push({ key: 'done', label: '已完成', items: done, empty: '暂无已完成' });
+  return secs;
+});
+
+async function loadTodos() {
+  try { todos.value = await API.todo.list(); } catch { todos.value = []; }
+}
+
+async function addTodo() {
+  const title = newTodoTitle.value.trim();
+  if (!title) return;
+  try {
+    await API.todo.add({
+      title,
+      status: 'pending',
+      priority: 'mid',
+      scheduled_start: newTodoDate.value ? newTodoDate.value + ' 09:00' : '',
+    });
+    newTodoTitle.value = '';
+    newTodoDate.value = '';
+    await loadTodos();
+  } catch (e: any) { alert('添加失败: ' + (e?.message || e)); }
+}
+
+async function toggleTodo(t: Todo) {
+  const next = t.status === 'done' ? 'pending' : 'done';
+  try {
+    await API.todo.update(t.id, { status: next });
+    t.status = next;
+  } catch {}
+}
+
+async function removeTodo(t: Todo) {
+  if (!confirm('删除待办「' + t.title + '」？')) return;
+  try {
+    await API.todo.remove(t.id);
+    await loadTodos();
+  } catch {}
+}
 
 // ========== 模态框状态 ==========
 const showReminderModal = ref(false);
@@ -235,199 +361,216 @@ function getScheduleText(reminder: Reminder): string {
   switch (reminder.type) {
     case 'daily': return '每天 ' + time;
     case 'once': return '一次 ' + (reminder.date || '') + ' ' + time;
-    case 'weekly':
+    case 'weekly': {
       const days = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
       return '每周' + (days[reminder.day_of_week] || '周一') + ' ' + time;
+    }
     case 'monthly': return '每月' + (reminder.day_of_month || 1) + '号 ' + time;
     case 'yearly': return '每年 ' + (reminder.month_day || '1月1日') + ' ' + time;
     default: return time;
   }
 }
 
-onMounted(loadReminders);
+function toggleDoneShow() {
+  showDone.value = !showDone.value;
+}
+
+onMounted(() => {
+  loadReminders();
+  loadTodos();
+});
 </script>
 
 <style scoped>
-.reminders-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.content-header {
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
+/* ========== 快速添加 ========== */
+.quick-add {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  background: white;
+  gap: 10px;
+  padding: 9px 14px;
+  margin-bottom: 4px;
 }
-
-.content-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.content-body {
+.quick-add > svg { color: var(--text-muted); flex-shrink: 0; }
+.quick-input {
   flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-}
-
-.card {
-  background: white;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-  padding: 24px;
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.card-title {
-  font-size: 16px;
-  font-weight: 600;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
   color: var(--text-primary);
 }
-
-.card-subtitle {
+.quick-input::placeholder { color: var(--text-muted); }
+.quick-date {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font: inherit;
   font-size: 12px;
+  padding: 5px 8px;
+}
+
+/* ========== 待办清单 ========== */
+.sec-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
   color: var(--text-muted);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
 }
-
-.empty-state {
-  text-align: center;
-  padding: 48px 0;
+.sec-row:first-child { border-top: none; }
+.sec-row.warm { color: var(--warning); }
+.sec-count { margin-left: auto; font-weight: 400; }
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
 }
-
-.empty-icon {
-  font-size: 40px;
-  margin-bottom: 12px;
+.todo-row:hover { background: var(--primary-soft); }
+.todo-row:first-of-type { border-top: none; }
+.todo-row.done .todo-tx { color: var(--text-muted); text-decoration: line-through; }
+.todo-row.overdue { background: var(--danger-soft); }
+.todo-box {
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  padding: 0;
 }
-
-.empty-text {
-  font-size: 14px;
+.todo-box:hover { border-color: var(--primary); }
+.todo-row.done .todo-box { background: var(--primary); border-color: var(--primary); }
+.prio { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); opacity: 0.6; }
+.prio.high { background: var(--danger); opacity: 1; }
+.prio.mid { background: var(--warning); opacity: 1; }
+.prio.low { background: var(--success); opacity: 1; }
+.todo-tx { flex: 1; min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-dt { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.todo-dt.warm { color: var(--warning); font-weight: 600; }
+.row-del {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  border-radius: 6px;
   color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
+.todo-row:hover .row-del, .reminder-card:hover .row-del { opacity: 1; }
+.row-del:hover { color: var(--danger); background: var(--danger-soft); }
+.empty-row { font-size: 12px; color: var(--text-muted); padding: 13px 14px; text-align: center; }
 
+/* ========== 提醒卡片 ========== */
+.reminder-grid-wrap { min-height: 120px; }
 .reminder-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
 }
-
 .reminder-card {
-  background: white;
-  border-radius: var(--radius-md);
-  padding: 16px;
-  border: 1px solid var(--border);
+  padding: 14px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
-
-.reminder-card:hover {
-  box-shadow: var(--shadow-md);
-}
-
-.reminder-card.disabled {
-  opacity: 0.55;
-}
-
+.reminder-card:hover { box-shadow: var(--shadow-md); border-color: var(--text-muted); }
+.reminder-card.disabled { opacity: 0.55; }
 .reminder-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
 }
-
-.reminder-name {
-  font-size: 14px;
-  font-weight: 600;
-}
-
+.reminder-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
 .reminder-toggle {
-  width: 40px;
-  height: 22px;
+  width: 36px;
+  height: 20px;
   border-radius: 11px;
-  background: #e2e8f0;
+  background: var(--border);
   cursor: pointer;
   position: relative;
   transition: all 0.2s;
   flex-shrink: 0;
 }
-
-.reminder-toggle.on {
-  background: var(--primary);
-}
-
+.reminder-toggle.on { background: var(--primary); }
 .reminder-toggle::after {
   content: '';
   position: absolute;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: white;
+  background: var(--surface);
   top: 2px;
   left: 2px;
   transition: all 0.2s;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
-
-.reminder-toggle.on::after {
-  left: 20px;
-}
-
+.reminder-toggle.on::after { left: 18px; }
 .reminder-message {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-secondary);
   margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 .reminder-schedule {
   font-size: 12px;
   color: var(--text-muted);
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 12px;
+  gap: 5px;
+  margin-bottom: 10px;
 }
-
-.test-btn {
-  padding: 4px 10px;
-  font-size: 12px;
+.reminder-ops { display: flex; align-items: center; justify-content: space-between; }
+.test-btn { padding: 4px 10px; font-size: 12px; }
+.empty-panel {
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--text-muted);
 }
+.empty-panel svg { color: var(--text-muted); opacity: 0.6; }
+.empty-panel p { font-size: 13px; margin-top: 10px; }
 
-/* 模态框 */
+/* ========== 模态框 ========== */
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.5);
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 1000;
 }
-
 .modal-box {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius-md);
-  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow-lg);
   max-width: 90%;
   max-height: 90vh;
   overflow-y: auto;
   width: 520px;
 }
-
 .modal-header {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
@@ -435,16 +578,8 @@ onMounted(loadReminders);
   align-items: center;
   justify-content: space-between;
 }
-
-.modal-header h3 {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.modal-body {
-  padding: 20px;
-}
-
+.modal-header h3 { font-size: 16px; font-weight: 600; }
+.modal-body { padding: 20px; }
 .modal-footer {
   padding: 16px 20px;
   border-top: 1px solid var(--border);
@@ -453,11 +588,8 @@ onMounted(loadReminders);
   justify-content: flex-end;
   gap: 8px;
 }
-
-.form-group {
-  margin-bottom: 16px;
-}
-
+.del-tip { color: var(--text-secondary); font-size: 13px; }
+.form-group { margin-bottom: 16px; }
 .form-group label {
   display: block;
   font-size: 13px;
@@ -465,37 +597,8 @@ onMounted(loadReminders);
   color: var(--text-secondary);
   margin-bottom: 6px;
 }
-
-.form-control {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  outline: none;
-  background: white;
-}
-
-.form-control:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-}
-
-.form-row {
-  display: flex;
-  gap: 12px;
-}
-
-.form-row .form-group {
-  flex: 1;
-}
-
-textarea.form-control {
-  resize: vertical;
-  min-height: 80px;
-}
-
-select.form-control {
-  cursor: pointer;
-}
+.form-row { display: flex; gap: 12px; }
+.form-row .form-group { flex: 1; }
+textarea.form-control { resize: vertical; min-height: 80px; }
+select.form-control { cursor: pointer; }
 </style>
