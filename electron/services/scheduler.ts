@@ -926,13 +926,12 @@ async function runTask(task: any, triggerType: string) {
   db.task.update(task.id, { status: 'in_progress', last_run_at: start, last_status: 'RUNNING' });
   notifyUI();
   try {
-    const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs } = require('./tools');
+    const { buildReportToolDefs, buildDataToolDefs } = require('./tools');
     const customTools: any[] = [];
 
-    // 笔记/知识任务：笔记库目录 + 笔记工具集
+    // 笔记/知识任务：笔记库目录 + 数据集/报告工具集
     customTools.push(...(await buildReportToolDefs(undefined)));
     customTools.push(...(await buildDataToolDefs(notesDir)));
-    if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id)));
 
     const piAgent = require('./pi-agent');
     const sessionId = 'task_' + task.id;

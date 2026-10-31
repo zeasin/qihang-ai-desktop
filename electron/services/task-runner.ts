@@ -4,9 +4,10 @@
  * 飞书消息落库为 plan_tasks（task_type 'note'），追问复用原 pi 会话在笔记库中
  * 继续执行，流式进度以 task:followup:* 事件回传桌面端。
  */
-import { runPi } from './pi-agent';
+import { runPi, SILENT_RUN_TIMEOUT_MS } from './pi-agent';
 import logger from './logger';
 import * as appConfig from './app-config';
+import { projectDirOf } from './feishu-router';
 
 function nowString(): string {
   const d = new Date(Date.now() + 8 * 3600 * 1000);
@@ -63,11 +64,10 @@ function emitFollowup(type: string, payload: any) {
  * 任务追问：复用任务的原始会话继续对话。
  * opts.model：显式模型 pattern。
  * 结果以 task:followup:delta / done / error 事件流式回传。
- * opts.stage：传入后笔记写入类工具（写/编辑/删除）改为落暂存区，等待用户确认落地。
  */
 export async function followUpTask(
   taskId: number, question: string, db: any,
-  opts: { stage?: { taskId: number }; model?: string; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
+  opts: { model?: string; onDone?: (text: string) => void; onError?: (err: string) => void } = {},
 ): Promise<boolean> {
   const task = db.task.get(taskId);
   if (!task) return false;
@@ -102,9 +102,10 @@ export async function followUpTask(
 
   (async () => {
     try {
-      // 项目口径：任务所属项目优先；无项目任务（含飞书旧任务）回落默认项目指针
+      // 项目口径：与飞书首条消息同一套路由结果（任务已记录 project_id），
+      // 避免「首条跑项目 A、追问跑项目 B」；无项目任务（含飞书旧任务）回落默认项目。
       const noteProj: any = project || db.qOne("SELECT * FROM prj_projects ORDER BY is_default DESC, id ASC LIMIT 1");
-      const notesDir = (project && project.dir) || appConfig.getConfig('notesDir') || (noteProj && noteProj.dir) || '';
+      const notesDir = projectDirOf(project) || (noteProj && noteProj.dir) || appConfig.getConfig('notesDir') || '';
 
       let reply = '';
       const onDelta = (delta: string) => {
@@ -126,12 +127,18 @@ export async function followUpTask(
         try { opts.onError && opts.onError(String(err)); } catch (e: any) { logger.warn('[Followup] onError callback failed: %s', e?.message); }
       };
 
-      const { buildReportToolDefs, buildDataToolDefs, buildNoteToolDefs } = require('./tools');
+      const { buildReportToolDefs, buildDataToolDefs } = require('./tools');
       const customTools: any[] = [];
       customTools.push(...(await buildReportToolDefs(undefined)));
       if (notesDir) customTools.push(...(await buildDataToolDefs(notesDir)));
-      if (noteProj) customTools.push(...(await buildNoteToolDefs(noteProj.id, { stage: opts.stage })));
-      const prompt = `以下是项目「${(noteProj && noteProj.name) || '默认项目'}」的笔记目录，请用笔记工具自行搜索相关文件后回答：\n项目路径：${notesDir || '（未配置）'}\n\n原始任务：${task.prompt || task.title || ''}\n用户追问：${question}`;
+      const prompt = `以下是项目「${(noteProj && noteProj.name) || '默认项目'}」的项目库目录，请直接检索该目录下的文件后回答：
+项目路径：${notesDir || '（未配置）'}
+
+检索方式：用 bash 在该目录下自行搜索定位文件（如 rg --glob "*.md" "关键词"），再用 read 读取完整内容；需要目录结构时用 ls 或 find。
+该项目根目录的 AGENTS.md 已随会话一并加载，其中的规则必须遵守。
+需要往项目库写内容时，直接用 write / edit 工具写进项目目录。
+原始任务：${task.prompt || task.title || ''}
+用户追问：${question}`;
 
       await runPi({
         prompt,
@@ -139,6 +146,8 @@ export async function followUpTask(
         cwd: notesDir || undefined,
         modelPattern: opts.model || undefined,
         customTools,
+        // 追问同样是「等结果」：模型限流时必须有上限，否则一直挂着不回复
+        timeoutMs: SILENT_RUN_TIMEOUT_MS,
         onDelta, onTool, onDone, onError,
       });
     } catch (e: any) {

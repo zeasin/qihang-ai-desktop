@@ -35,16 +35,16 @@ try {
 import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
+import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession, SILENT_RUN_TIMEOUT_MS } from './services/pi-agent';
 import { agentVersions } from './services/agent-versions';
-import { buildNoteToolDefs, buildDataToolDefs, appendTodoNote } from './services/tools';
+import { buildDataToolDefs, appendTodoNote } from './services/tools';
 import { recordFeishuTask, followUpTask } from './services/task-runner';
-import * as pending from './services/pending';
 import * as aitool from './services/ai-tools';
 import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './services/builtin-datasets';
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
 import * as backup from './services/backup';
 import * as feishu from './services/feishu';
+import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice } from './services/feishu-router';
 import * as scheduler from './services/scheduler';
 import * as indexer from './services/indexer';
 import logger from './services/logger';
@@ -254,60 +254,12 @@ function sendToRenderer(channel, data) {
   }
 }
 
-// ========== Feishu message handler (shared) ==========
+// ========== 飞书消息 → 项目路由 ==========
+// 统一走 services/feishu-router.ts 的 resolveFeishuTarget：
+// 显式指令 > 行内标记 > 开头项目名 > 会话绑定 > 单一项目 > 询问用户。
+// 多项目且无线索时返回 needChoice，绝不静默落到默认项目。
 
-function parseFeishuContext(text, db) {
-  const projects = db.project.list();
-  let cleanText = text;
-  const projectIds: any[] = [];
-  let explicit = false;
-
-  const bracketMatch = text.match(/\[笔记库\s*[：:]\s*([^\]]+)\]/);
-  if (bracketMatch) {
-    const projectName = bracketMatch[1].trim();
-    const found = projects.find(p => p.name.includes(projectName) || projectName.includes(p.name));
-    if (found) { projectIds.push(found.id); explicit = true; }
-    cleanText = cleanText.replace(bracketMatch[0], '').trim();
-  }
-
-  const colonMatch = cleanText.match(/笔记库\s*[：:]\s*(\S+)/);
-  if (colonMatch && projectIds.length === 0) {
-    const projectName = colonMatch[1];
-    const found = projects.find(p => p.name.includes(projectName) || projectName.includes(p.name));
-    if (found) { projectIds.push(found.id); explicit = true; }
-    cleanText = cleanText.replace(colonMatch[0], '').trim();
-  }
-
-  if (!explicit) {
-    const idMatch = text.match(/^(\d+)\b/);
-    if (idMatch) {
-      const numId = parseInt(idMatch[1], 10);
-      const found = projects.find(p => p.id === numId);
-      if (found) {
-        projectIds.push(found.id);
-        explicit = true;
-        cleanText = cleanText.replace(idMatch[1], '').trim();
-      }
-    }
-  }
-
-  if (!explicit) {
-    for (const p of projects) {
-      if (text.startsWith(p.name)) {
-        projectIds.push(p.id);
-        explicit = true;
-        cleanText = cleanText.replace(p.name, '').trim();
-        break;
-      }
-    }
-  }
-
-  return { projectIds, cleanText: cleanText || text, explicit };
-}
-
-// ========== 工单记录路由（确定性落库，不依赖 AI 自主行为） ==========
-
-/** 识别 "帮我记录：金箔雲项目工单 1、... / 帮我记录：金箔雲项目需求 ..." 等指令 */
+/** 工单记录指令 → 确定性写入"项目工单"数据集（不经过 AI，保证落库） */
 function parseWorkOrderRecord(text: string) {
   const m = text.match(/帮我记录\s*[：:]\s*([^\s，。；;]+?)(?:项目)?(工单|需求|BUG|bug)/)
     || text.match(/(?:帮我|请)记录\s*([^\s，。；;]+?)项目(工单|需求)/);
@@ -353,49 +305,10 @@ const feishuMessageHandler = async (msg) => {
   let feishuTaskId: any = null;
   let feishuExecId: any = null;
 
-  // ===== 工作流指令：确认落地 / 放弃暂存 / 继续追问 =====
+  // ===== 工作流指令：继续追问 =====
   const cmd = String(msg.text || '').trim();
 
-  // 「确认」：把最新暂存产物写入笔记库
-  if (/^(确认|确认落地|确认写入|确定)$/.test(cmd)) {
-    const stage = pending.latestPendingStage();
-    if (!stage) {
-      feishu.replyCard(msg, '当前没有待确认的暂存产物。', '📥 暂存区为空');
-      return;
-    }
-    // 落地根 = 任务所属项目，无项目时回落默认项目指针
-    const stageTask: any = db.task.get(stage.taskId);
-    const stageProj: any = stageTask && stageTask.project_id && Number.isFinite(Number(stageTask.project_id)) ? db.project.get(Number(stageTask.project_id)) : null;
-    const stageRoot = (stageProj && stageProj.dir) || appConfig.getConfig('notesDir') || '';
-    const r = pending.applyStage(stage.taskId, stageRoot);
-    if (r.ok) {
-      const lines = [...r.written.map(p => '✍️ ' + p), ...r.deleted.map(p => '🗑️ ' + p)];
-      const more = pending.latestPendingStage();
-      feishu.replyCard(msg,
-        `已将暂存产物写入笔记库（任务：${stage.taskTitle || stage.taskId}）：\n\n${lines.join('\n') || '（无文件变更）'}` +
-        (more ? `\n\n仍有其他暂存待确认（任务：${more.taskTitle || more.taskId}），可再次回复「确认」。` : ''),
-        '✅ 已确认落地');
-    } else {
-      feishu.replyCard(msg, `落地失败：${r.error || '未知错误'}`, '❌ 确认失败');
-    }
-    fNotifyUI();
-    return;
-  }
-
-  // 「放弃」：丢弃最新暂存产物，笔记库不受影响
-  if (/^(放弃|丢弃|取消)$/.test(cmd)) {
-    const stage = pending.latestPendingStage();
-    if (!stage) {
-      feishu.replyCard(msg, '当前没有待确认的暂存产物。', '📥 暂存区为空');
-      return;
-    }
-    const n = pending.discardStage(stage.taskId);
-    feishu.replyCard(msg, `已放弃暂存产物（任务：${stage.taskTitle || stage.taskId}，共 ${n} 项变更），笔记库未做任何修改。`, '🗑️ 已放弃');
-    fNotifyUI();
-    return;
-  }
-
-  // 「继续 <内容>」：对最近的飞书任务追问，产物继续进暂存区
+  // 「继续 <内容>」：对最近的飞书任务追问
   const cont = cmd.match(/^继续\s*[:：]?\s*([\s\S]*)$/);
   if (cont) {
     const question = (cont[1] || '').trim();
@@ -409,15 +322,9 @@ const feishuMessageHandler = async (msg) => {
       return;
     }
     try {
-      pending.ensureStage(lastTask.id, lastTask.title || '');
       const ok = await followUpTask(lastTask.id, question, db, {
-        stage: { taskId: lastTask.id },
         onDone: (text) => {
-          const ops = pending.listOps(lastTask.id);
-          const hint = ops.length
-            ? `\n\n📥 本次产物已暂存 ${ops.length} 项（尚未写入笔记库）：\n${ops.map(o => (o.op === 'delete' ? '🗑️ ' : '✍️ ') + o.path).join('\n')}\n\n回复「确认」写入笔记库，回复「放弃」丢弃。`
-            : '';
-          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）') + hint, '🤖 启航AI');
+          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）'), '🤖 启航AI');
         },
         onError: (err) => feishu.replyCard(msg, `处理出错: ${err}`, '❌ 错误'),
       });
@@ -458,7 +365,12 @@ const feishuMessageHandler = async (msg) => {
           if (r) inserted.push(r.id);
         }
         const summary = `✅ 已向「${ds.name}」数据集写入 ${inserted.length} 条工单（项目：${wo.project}）\n\n${items.map((it, i) => `${i + 1}. ${it.slice(0, 60)}${it.length > 60 ? '…' : ''}`).join('\n')}\n\n可在「数据中心 → 项目工单」中查看与编辑。`;
-        const noteProj = db.project.list().find(p => p.dir === (appConfig.getConfig('notesDir') || '')) || db.project.list()[0] || null;
+        // 工单本身点名了项目（「…金箔雲项目工单…」）→ 落到该项目；
+        // 认不出来时退回默认项目，不阻断工单记录（工单里已单独存了项目字段）。
+        const woTarget = resolveFeishuTarget({ text: `项目：${wo.project}`, chatId: msg.chatId, chatType: msg.chatType, db });
+        const noteProj = woTarget.project
+          || db.project.list().find(p => p.dir === (appConfig.getConfig('notesDir') || ''))
+          || db.project.list()[0] || null;
         const r2 = recordFeishuTask(db, noteProj, msg.text, '', 'note');
         feishuTaskId = r2.taskId;
         feishuExecId = r2.execId;
@@ -481,48 +393,65 @@ const feishuMessageHandler = async (msg) => {
   }
 
   try {
-    const context = parseFeishuContext(msg.text, db);
+    // ===== 项目路由：统一走 feishu-router；多项目且无线索时先问，绝不静默落默认项目 =====
+    // awaitingChoice：机器人刚问过「落哪个项目」→ 允许只回一个裸数字
+    const awaitingChoice = isAwaitingChoice(msg.chatId);
+    const target = resolveFeishuTarget({ text: msg.text, chatId: msg.chatId, chatType: msg.chatType, db, awaitingChoice });
+    const allProjects = db.project.list();
 
-    // ===== 项目前置检查：AI 功能门禁（飞书派活需先配置项目目录） =====
-    const notesDir = appConfig.getConfig('notesDir') || '';
-    if (!notesDir) {
+    if (!allProjects.length) {
       feishu.replyCard(msg, '⚠️ 请先在「设置 → 项目」中添加项目目录，配置完成后即可通过飞书派活。', '⚠️ 项目未配置');
       return;
     }
 
-    let feishuProjectId: any = null;
-    if (context.projectIds.length > 0) {
-      feishuProjectId = context.projectIds[0];
-    }
-    if (!feishuProjectId) {
-      const projects = db.project.list();
-      const byDir = projects.find(p => p.dir === notesDir);
-      if (byDir) {
-        feishuProjectId = byDir.id;
-        context.projectIds = [byDir.id];
-      } else {
-        feishuProjectId = 'notesdir';
-      }
+    if (target.needChoice || !target.project) {
+      // 把原消息正文挂起：用户回复「/项目 2」后自动执行它，而不是只切一次项目
+      // 纯数字是「在回答上一个问题」，不是新请求，不挂起
+      const pendingBody = String(target.cleanText || '').trim();
+      if (pendingBody && !/^\d{1,4}$/.test(pendingBody)) stashPendingBody(msg.chatId, pendingBody);
+      markAskedChoice(msg.chatId);
+      const hint = target.isCommand ? '' : '这条消息里没有识别出项目，为避免落错地方，需要你指定一下：';
+      feishu.replyCard(msg, buildProjectChoiceText(allProjects, hint), '📂 请选择项目');
+      return;
     }
 
-    feishu.replyMessage(msg, '已接单，执行中…');
+    const feishuProject = target.project;
+    const feishuProjectId = feishuProject.id;
+    const projectDir = String(feishuProject.dir || '');
+    clearAskedChoice(msg.chatId);   // 项目已确定，不再处于「等待选择」状态
+
+    // 正文：命令里带了正文就用它；只给了「/项目 N」则执行上一条被挂起的消息
+    const stashedBody = msg.chatId ? takePendingBody(msg.chatId) : null;
+    let bodyText = String(target.cleanText || '').trim();
+    if (!bodyText) bodyText = stashedBody || '';
+    if (!bodyText) {
+      // 纯项目切换命令且没有待执行正文 → 回一句确认绑定结果即可
+      feishu.replyCard(
+        msg,
+        `✅ 当前会话已绑定项目「${feishuProject.name}」，接下来的消息都会落到这个项目。`,
+        '📂 项目已切换'
+      );
+      return;
+    }
+
+    // 显式指令选定项目 → 绑定该会话（群/私聊），后续消息自动落到同一项目
+    if (target.explicit && target.isCommand && msg.chatId) {
+      bindChatToProject(db, msg.chatId, msg.chatType, feishuProjectId);
+      logger.info('[Feishu] session bound: chatId=%s project=%s', msg.chatId, feishuProject.name);
+    }
+
+    feishu.replyMessage(msg, `已接单（项目：${feishuProject.name}），执行中…`);
 
     // 先落任务记录，再按任务 id 创建独立 session
-    const feishuProject = feishuProjectId !== 'notesdir' && Number.isFinite(Number(feishuProjectId))
-      ? db.project.get(Number(feishuProjectId)) : null;
-    const r = recordFeishuTask(db, feishuProject, msg.text, '', 'note');
+    const r = recordFeishuTask(db, feishuProject, bodyText, '', 'note');
     feishuTaskId = r.taskId;
     feishuExecId = r.execId;
 
-    // 即时派活的笔记写入先落暂存区，用户回复「确认」后才写入笔记库
-    const stageOpt = feishuTaskId != null ? { taskId: feishuTaskId } : null;
-    if (stageOpt) pending.ensureStage(feishuTaskId, msg.text.slice(0, 60));
-
     const sessionId = 'task_' + feishuTaskId;
     if (feishuTaskId != null) db.task.update(feishuTaskId, { session_id: sessionId });
-    db.chat.createSession(sessionId, feishuProjectId, msg.text.slice(0, 30), 'feishu', 'pi', 'feishu');
-    db.chat.addMessage(sessionId, 'user', msg.text, 'general');
-    logger.info(' SessionId: %s', sessionId);
+    db.chat.createSession(sessionId, feishuProjectId, bodyText.slice(0, 30), 'feishu', 'pi', 'feishu');
+    db.chat.addMessage(sessionId, 'user', bodyText, 'general');
+    logger.info(' SessionId: %s | project: %s (%s)', sessionId, feishuProject.name, feishuProjectId);
 
     const setMode = (mode) => { try { db.run("UPDATE prj_sessions SET mode = ?, updated_at = datetime('now', '+8 hours') WHERE session_id = ?", mode,sessionId); } catch {} };
     const updateTaskFailed = (err: string) => {
@@ -530,29 +459,37 @@ const feishuMessageHandler = async (msg) => {
       if (feishuTaskId != null) db.task.update(feishuTaskId, { last_status: 'FAILED', last_run_at: fTs(), status: 'pending' });
     };
 
-    const recordHint = /(记录|登记|新建).{0,16}(工单|需求|BUG)/.test(context.cleanText)
+    const recordHint = /(记录|登记|新建).{0,16}(工单|需求|BUG)/.test(bodyText)
       ? '\n\n【记录要求】用户要求"记录/登记/新建 工单/需求/BUG"时，必须调用 insert_dataset_record 工具写入"项目工单"数据集（字段：项目、端、详细、优先级；一条工单一条记录），不要只写入笔记文件。'
       : '';
-    const prompt = `以下是项目笔记目录，请用笔记工具自行搜索相关文件后回答：\n项目路径：${notesDir}\n\n用户问题：${context.cleanText}` + recordHint;
+    // 检索由 agent 自己跑：用 bash（rg/find/grep）搜、用 read 读，直接对着项目目录操作，
+    // 不依赖工作台自带的检索工具；同时点明 AGENTS.md 已被会话加载，其规则必须遵守。
+    const prompt = `以下是项目「${feishuProject.name}」的项目库目录，请直接检索该目录下的文件后回答：
+项目路径：${projectDir}
+
+检索方式：用 bash 在该目录下自行搜索定位文件（如 rg --glob "*.md" "关键词"），再用 read 读取完整内容；需要目录结构时用 ls 或 find。
+该项目根目录的 AGENTS.md 已随会话一并加载，其中的规则（只以 .md 为内容源、目录结构、记忆契约与启动协议等）必须遵守；若 AGENTS.md 要求先读取用户记忆或项目进度，请先调用相应工具再作答。
+需要往项目库写内容时，直接用 write / edit 工具写进项目目录。
+
+用户问题：${bodyText}` + recordHint;
     setMode('kb');
     const toolDefs: any[] = [];
-    const noteProj = db.project.list().find(p => p.dir === notesDir);
-    if (noteProj) toolDefs.push(...(await buildNoteToolDefs(noteProj.id, stageOpt ? { stage: stageOpt } : {})));
-    toolDefs.push(...(await buildDataToolDefs(notesDir)));
+    // 数据集工具按目标项目目录绑定、cwd 也用目标项目目录，两者必须与落库的 project_id 同源，
+    // 否则会出现「会话记在项目 B、AI 却读写项目 A 目录」的跨项目错位。
+    toolDefs.push(...(await buildDataToolDefs(projectDir)));
     await runPi({
       prompt,
       sessionId,
-      cwd: notesDir || undefined,
+      cwd: projectDir || undefined,
       customTools: toolDefs,
+      // 飞书只有一句「执行中…」，没有流式进度：必须设超时，
+      // 否则模型限流(429)时 SDK 无限退避重试，用户永远收不到任何回应。
+      timeoutMs: SILENT_RUN_TIMEOUT_MS,
       onDone: (text) => {
         logger.info('[Feishu] Sending card reply: "%s"', (text || '').slice(0, 200));
-        const ops = feishuTaskId != null ? pending.listOps(feishuTaskId) : [];
-        const hint = ops.length
-          ? `\n\n📥 本次产物已暂存 ${ops.length} 项（尚未写入笔记库）：\n${ops.map(o => (o.op === 'delete' ? '🗑️ ' : '✍️ ') + o.path).join('\n')}\n\n回复「确认」写入笔记库，回复「放弃」丢弃。`
-          : '';
-        if (text || hint) {
+        if (text) {
           db.chat.addMessage(sessionId, 'assistant', text || '', 'general');
-          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）') + hint, '🤖 启航AI');
+          feishu.replyCard(msg, convertMarkdownForFeishu(text || '（无输出）'), '🤖 启航AI');
         }
         const end = fTs();
         if (feishuExecId != null) db.taskExecution.update(feishuExecId, { status: 'SUCCESS', end_time: end, result_text: text || '' });
@@ -1033,8 +970,8 @@ ipcMain.handle('ds:pendingRecords', () => {
  * 移动端发起的轮次双播（既回中继，也让桌面窗口当场演出来）。
  */
 async function runChatTurn(
-  { question, sessionId, projectDir, kbIds, images, agent, modelName }:
-    { question: string; sessionId?: string; projectDir?: string; kbIds?: any[]; images?: any[]; agent?: string; modelName?: string },
+  { question, sessionId, projectDir, images, agent, modelName }:
+    { question: string; sessionId?: string; projectDir?: string; images?: any[]; agent?: string; modelName?: string },
   emit: (channel: string, data: any) => void,
 ) {
   const sid = sessionId || 'session_' + Date.now();
@@ -1096,20 +1033,10 @@ async function runChatTurn(
     };
 
     // pi agent 引擎
-    // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文），项目笔记读写（按会话所选项目，去重）
+    // 注入本地工具：数据集查询/项目文件读取/外网搜索（按会话上下文）
     const toolDefs: any[] = [];
-    const noteIds = new Set<number>();
     if (projectDir) {
       toolDefs.push(...(await buildDataToolDefs(projectDir)));
-      const projByDir = db.project.list().find(p => p.dir === projectDir);
-      if (projByDir) noteIds.add(projByDir.id);
-    }
-    if (kbIds && kbIds.length) {
-      for (const kid of kbIds) if (kid) noteIds.add(Number(kid));
-    }
-    for (const id of noteIds) {
-      const p: any = db.project.get(id);
-      if (p && p.dir) toolDefs.push(...(await buildNoteToolDefs(p.id)));
     }
 
     const modelPattern = piModelPattern(modelName);
@@ -1968,7 +1895,7 @@ ipcMain.handle("embedding:test", async (_, { model, host, apiKey }) => {
 
 ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name, params }) => {
   try {
-    const { buildReportToolDefs, buildNoteToolDefs, buildDataToolDefs } = require('./services/tools');
+    const { buildReportToolDefs, buildDataToolDefs } = require('./services/tools');
     let customTools: any[] | undefined;
 
     // 笔记库工具：PPT / 周报日报 基于所有项目内容（后端直接读取笔记内容注入 prompt，AI 有真实素材）
@@ -1982,7 +1909,6 @@ ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name,
           ? `以下是 ${libs.length} 个项目中的文件内容（共 ${fileCount} 个文件，内容来自你的真实笔记，创作时请引用其中具体的项目、数据、名称）：\n\n${notesText}\n\n`
           : '';
         const kbTools: any[] = [];
-        for (const lp of libs) kbTools.push(...(await buildNoteToolDefs(lp.id)));
         kbTools.push(...(await buildDataToolDefs(appConfig.getNotesDir() || libs[0].dir, { noWeb: true })));
         if (tool === 'report') kbTools.unshift(...(await buildReportToolDefs(undefined)));
         customTools = kbTools;
@@ -2149,12 +2075,16 @@ app.whenReady().then(async () => {
     logger.error('upgradeBuiltinSchemas error: %s', e);
   }
 
-  // 暂存区清理：超过 7 天未确认的飞书派活产物自动删除
+  // 旧版飞书写入暂存区（~/.qihang-ai-desktop/pending）已随笔记工具下线而废弃：
+  // 写入不再需要「确认后落盘」，残留目录直接清掉，避免留下永远无法落地的产物。
   try {
-    const n = pending.cleanupStages(7);
-    if (n > 0) logger.info('[Pending] 已清理 %d 个过期暂存目录', n);
+    const legacyPending = path.join(require('os').homedir(), '.qihang-ai-desktop', 'pending');
+    if (fs.existsSync(legacyPending)) {
+      fs.rmSync(legacyPending, { recursive: true, force: true });
+      logger.info('[Pending] 已清理废弃的飞书暂存区目录');
+    }
   } catch (e) {
-    logger.error('cleanupStages error: %s', e);
+    logger.error('cleanup legacy pending dir error: %s', e);
   }
 
   // 默认模型自愈：settings.json 的默认模型若指向已删除的接入点（或缺失），

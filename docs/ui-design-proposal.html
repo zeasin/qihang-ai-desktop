@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>启航AI工作台 · 全新界面方向提案</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============ 报告页基座 ============ */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --cream:#f7f5f0;
+  --card:#ffffff;
+  --line:#e9e3d6;
+  --line-soft:#f0ece3;
+  --ink:#14171e;
+  --ink2:#3a4256;
+  --ink3:#7c7a72;
+  --accent:#2f6f5e;
+  --accent2:#c97b3f;
+  --serif:'DM Serif Display','Source Han Serif SC','Noto Serif SC','Songti SC',Georgia,serif;
+  --sans:'Outfit','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif;
+  --mono:'JetBrains Mono','SF Mono',Consolas,monospace;
+}
+html{scroll-behavior:smooth}
+body{
+  background:var(--cream);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:15px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:80px;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(900px 420px at 88% -8%, rgba(201,123,63,.055), transparent 70%),
+    radial-gradient(700px 380px at 4% 4%, rgba(47,111,94,.05), transparent 70%);
+}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 32px}
+
+/* ============ 标题区 ============ */
+.hero{padding:64px 0 40px}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--accent);margin-bottom:18px;
+}
+h1{
+  font-family:var(--serif);font-weight:400;font-size:38px;line-height:1.24;
+  letter-spacing:-.005em;max-width:20ch;
+}
+.lede{
+  margin-top:20px;max-width:66ch;color:var(--ink2);font-size:16px;line-height:1.65;
+}
+.hero-meta{
+  margin-top:26px;display:flex;flex-wrap:wrap;gap:8px 10px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink3);
+}
+.hero-meta span{border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:rgba(255,255,255,.6)}
+
+/* ============ 章节 ============ */
+.wrap > section{padding:48px 0 8px}
+.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+.sec-num{
+  font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--accent2);
+  border:1px solid rgba(201,123,63,.32);border-radius:5px;padding:3px 8px;flex:none;
+}
+h2{font-family:var(--serif);font-weight:400;font-size:27px;letter-spacing:-.004em}
+.sec-sub{margin:6px 0 26px;color:var(--ink2);max-width:70ch;font-size:15px}
+
+/* ============ 诊断 ============ */
+.audit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.92fr);gap:30px;align-items:start}
+.audit-visual{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:18px;box-shadow:0 4px 16px -2px rgba(16,24,40,.06);
+}
+.av-title{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px}
+.av-stage{display:flex;gap:14px;background:#f4f6f9;border-radius:10px;padding:14px}
+.av-rail{
+  width:62px;background:#fff;border:1px solid #e2e8f0;border-radius:7px;padding:8px 4px;
+  display:flex;flex-direction:column;align-items:center;gap:9px;flex:none;
+}
+.av-rail span{font-size:17px;line-height:1}
+.av-rail b{font-size:9px;font-weight:400;color:#94a3b8;margin-top:-5px}
+.av-rail .on{background:rgba(99,102,241,.1);border-radius:6px;padding:5px 3px 3px;margin:-5px -3px 0}
+.av-rail .on b{color:#6366f1}
+.av-main{flex:1;min-width:0}
+.av-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.av-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:9px 6px;text-align:center}
+.av-kpi b{display:block;font-size:17px;font-weight:600;color:#1e293b}
+.av-kpi i{font-style:normal;font-size:9.5px;color:#94a3b8}
+.av-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:7px}
+.av-col{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px}
+.av-col h6{font-size:10px;font-weight:600;color:#64748b;margin-bottom:6px}
+.av-line{font-size:9.5px;color:#94a3b8;height:13px;overflow:hidden;white-space:nowrap}
+.av-call{
+  margin-top:12px;border-left:2px solid var(--accent2);padding:2px 0 2px 11px;
+  font-size:12.5px;color:var(--ink2);
+}
+.av-call b{color:var(--ink);font-weight:600}
+
+.problems{display:flex;flex-direction:column;gap:0}
+.prob{padding:14px 0;border-top:1px solid var(--line)}
+.prob:first-child{border-top:none;padding-top:0}
+.prob h5{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:9px;margin-bottom:5px}
+.prob h5 span{
+  font-family:var(--mono);font-size:10px;color:#fff;background:var(--accent2);
+  width:18px;height:18px;border-radius:5px;display:grid;place-items:center;flex:none;font-weight:500;
+}
+.prob p{font-size:13.5px;color:var(--ink2);line-height:1.6}
+.prob code{
+  font-family:var(--mono);font-size:11.5px;background:var(--line-soft);
+  padding:1px 5px;border-radius:4px;color:var(--ink);
+}
+
+/* ============ 底线规则 ============ */
+.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.rule{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.rule b{display:block;font-size:14px;font-weight:600;margin-bottom:5px}
+.rule p{font-size:13px;color:var(--ink2);line-height:1.55}
+
+/* ============ 方向块 ============ */
+.dir{margin-top:38px;padding-top:30px;border-top:1px solid var(--line)}
+.dir-head{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;margin-bottom:18px}
+.dir-badge{
+  font-family:var(--mono);font-size:12px;font-weight:500;color:#fff;
+  width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex:none;
+}
+.dir-title h3{font-family:var(--serif);font-weight:400;font-size:24px;letter-spacing:-.003em}
+.dir-title p{color:var(--ink2);font-size:14px;margin-top:3px;max-width:64ch}
+.dir-grid{display:flex;flex-direction:column;gap:14px}
+
+/* 模拟器通用 */
+.mock-wrap{border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 10px 40px -14px rgba(16,24,40,.2);background:#fff}
+.mock-scroll{overflow-x:auto}
+.mock{min-width:840px}
+.win{--mbg:#fff;--mp:#fff;--mp2:#f6f7f9;--ml:#e6e9ef;--mt:#101828;--mt2:#4a5567;--mt3:#8a94a6;
+     --ma:#17796b;--ma2:#c4623f;--mc:#fff;--mside:#fff;--mshadow:none;--mr:10px;--mrr:8px;
+     --mfont:'Outfit','PingFang SC','Microsoft YaHei',sans-serif;--mactivebg:#eef4f2;--mactivet:#17796b}
+.win-chrome{
+  height:32px;display:flex;align-items:center;gap:7px;padding:0 11px;
+  background:var(--mp2);border-bottom:1px solid var(--ml);
+}
+.win-chrome .dt{width:9px;height:9px;border-radius:50%}
+.win-chrome .r{background:#e6a0a0}.win-chrome .y{background:#e5c98d}.win-chrome .g{background:#a8cfa8}
+.win-title{font-size:11px;color:var(--mt3);margin-left:6px;font-family:var(--mfont)}
+.win-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.win-right .k{font-family:var(--mono);font-size:9.5px;color:var(--mt3);border:1px solid var(--ml);border-radius:4px;padding:2px 5px}
+.win-body{display:flex;height:396px}
+
+/* 侧栏 */
+.side{width:186px;flex:none;background:var(--mside);border-right:1px solid var(--ml);display:flex;flex-direction:column;padding:12px 10px}
+.side-brand{display:flex;align-items:center;gap:8px;padding:2px 6px 12px}
+.brand-mark{width:24px;height:24px;border-radius:7px;background:var(--ma);display:grid;place-items:center;flex:none}
+.brand-mark svg{width:14px;height:14px;color:#fff}
+.brand-txt b{display:block;font-size:12.5px;font-weight:600;color:var(--mt);line-height:1.2}
+.brand-txt i{font-style:normal;font-size:8.5px;letter-spacing:.14em;color:var(--mt3);font-family:var(--mono)}
+.side-label{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--mt3);padding:10px 7px 5px;font-family:var(--mfont)}
+.side-nav{display:flex;flex-direction:column;gap:1px}
+.nav-i{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--mrr);font-size:12px;color:var(--mt2);line-height:1;white-space:nowrap}
+.nav-i svg{width:15px;height:15px;flex:none;opacity:.82}
+.nav-i.on{background:var(--mactivebg);color:var(--mactivet);font-weight:500}
+.nav-i.on svg{opacity:1}
+.nav-i .tag{margin-left:auto;font-family:var(--mono);font-size:8.5px;padding:1px 5px;border-radius:4px;background:var(--ma);color:#fff}
+.side-foot{margin-top:auto;border-top:1px solid var(--ml);padding-top:9px}
+.side-user{display:flex;align-items:center;gap:7px;padding:3px 7px}
+.side-user .av{width:20px;height:20px;border-radius:6px;background:var(--mp2);border:1px solid var(--ml);display:grid;place-items:center;font-size:10px;color:var(--mt2)}
+.side-user small{font-size:10.5px;color:var(--mt3);white-space:nowrap}
+
+/* 主区 */
+.main{flex:1;min-width:0;background:var(--mbg);display:flex;flex-direction:column}
+.main-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 20px 13px}
+.crumb{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--mt3);margin-bottom:4px;white-space:nowrap}
+.main-head h4{font-size:18px;font-weight:600;color:var(--mt);line-height:1.2;white-space:nowrap}
+.head-sub{font-size:11px;color:var(--mt3);margin-top:3px;white-space:nowrap}
+.head-actions{display:flex;align-items:center;gap:8px;flex:none}
+.pill{font-size:10px;color:var(--mt2);border:1px solid var(--ml);border-radius:999px;padding:4px 10px;background:var(--mc);white-space:nowrap}
+.pill::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ma);margin-right:6px;vertical-align:1px}
+.mbtn{font-size:11px;background:var(--ma);color:#fff;border:none;border-radius:var(--mrr);padding:6px 12px;font-family:var(--mfont);font-weight:500;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;padding:0 20px 14px}
+.kpi{background:var(--mp);border:1px solid var(--ml);border-radius:var(--mr);padding:11px 13px}
+.kpi b{display:block;font-size:22px;font-weight:600;color:var(--mt);line-height:1.1}
+.kpi i{font-style:normal;font-size:10.5px;color:var(--mt3);white-space:nowrap}
+.kpi.acc b{color:var(--ma)}
+.kpi.warn b{color:var(--ma2)}
+.cols{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:9px;padding:0 20px 18px;min-height:0}
+.col{background:var(--mp);border:1px solid var(--ml);border-radius:var(--mr);overflow:hidden;display:flex;flex-direction:column;min-height:0;padding:0}
+.col-h{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid var(--ml);font-size:11.5px;font-weight:600;color:var(--mt);white-space:nowrap}
+.col-h em{font-style:normal;margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--mt3);font-weight:400}
+.col-b{padding:9px 12px;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+.row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--mt2);line-height:1.35}
+.row .mk{width:12px;height:12px;border-radius:4px;border:1.5px solid var(--mt3);flex:none;display:grid;place-items:center;font-size:8px;color:var(--ma2)}
+.row .mk.f{border-color:var(--ma);background:var(--ma);color:#fff}
+.row .tx{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.row .ln{font-family:var(--mono);font-size:9px;color:var(--mt3);flex:none}
+.logrow{display:flex;flex-direction:column;gap:2px;padding:5px 0;border-bottom:1px dashed var(--ml)}
+.logrow b{font-size:10.5px;color:var(--mt);font-weight:500}
+.logrow span{font-size:10px;color:var(--mt3);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+
+/* 右侧数据栏 */
+.rail{width:166px;flex:none;background:var(--mp2);border-left:1px solid var(--ml);padding:13px 12px;display:none}
+.tele-h{font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--mt3);margin-bottom:9px}
+.tele{border:1px solid var(--ml);border-radius:6px;padding:8px 9px;margin-bottom:7px;background:var(--mp)}
+.tele b{display:block;font-family:var(--mono);font-size:15px;color:var(--mt);font-weight:500}
+.tele i{font-style:normal;font-size:9px;color:var(--mt3);font-family:var(--mono)}
+.bar{height:3px;background:var(--ml);border-radius:2px;margin-top:6px;overflow:hidden}
+.bar span{display:block;height:100%;background:var(--ma);border-radius:2px}
+.logstream{font-family:var(--mono);font-size:8.5px;line-height:1.75;color:var(--mt3);margin-top:9px}
+.logstream b{color:var(--ma);font-weight:400}
+
+/* ---- 方向 A：航海舱 ---- */
+.t-a{--mbg:#0d1725;--mp:#131f33;--mp2:#101a2b;--ml:#22334e;--mt:#e6ecf6;--mt2:#93a4c0;--mt3:#64769a;
+     --ma:#d9a441;--ma2:#45b8a6;--mc:#131f33;--mside:#0a1220;--mshadow:0 8px 26px rgba(0,0,0,.4);
+     --mr:8px;--mrr:6px;--mactivebg:rgba(217,164,65,.12);--mactivet:#e9c47c;
+     --mfont:'Outfit','PingFang SC','Microsoft YaHei',sans-serif}
+.t-a .win-chrome{background:#0a1220}
+.t-a .brand-mark{background:linear-gradient(140deg,#d9a441,#b8822c)}
+.t-a .nav-i .tag{background:#d9a441;color:#0d1725}
+.t-a .main-head h4{font-weight:500;letter-spacing:.01em}
+.t-a .kpi b{font-family:'DM Serif Display',serif;font-weight:400;font-size:26px}
+.t-a .col-h{letter-spacing:.05em}
+.t-a .kpi{box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.t-a .rail{display:block}
+
+/* ---- 方向 B：纸墨 ---- */
+.t-b{--mbg:#f7f3ea;--mp:#fffdf8;--mp2:#f1ebdf;--ml:#e3dac8;--mt:#1f1d18;--mt2:#5d584c;--mt3:#918a79;
+     --ma:#b4462f;--ma2:#2e4a62;--mc:#fffdf8;--mside:#f1ebdf;--mshadow:none;
+     --mr:3px;--mrr:3px;--mactivebg:rgba(180,70,47,.09);--mactivet:#9c3b27;
+     --mfont:'Outfit','PingFang SC','Microsoft YaHei',sans-serif}
+.t-b .win{background:var(--mbg);background-image:radial-gradient(rgba(120,100,70,.055) 1px,transparent 1px);background-size:3px 3px}
+.t-b .win-chrome{background:#efe7d9}
+.t-b .side{background:#f1ebdf}
+.t-b .side-nav{border-left:1px solid #ddd3bf;margin-left:9px;padding-left:5px}
+.t-b .nav-i{border-radius:2px}
+.t-b .brand-mark{background:#b4462f}
+.t-b .nav-i .tag{background:#2e4a62;color:#fffdf8}
+.t-b .main-head h4{font-family:'Source Han Serif SC','Noto Serif SC','Songti SC',serif;font-weight:600;font-size:20px}
+.t-b .kpi{border-radius:2px}
+.t-b .kpi b{font-family:'DM Serif Display','Songti SC',serif;font-weight:400;font-size:25px}
+.t-b .col{border-radius:2px}
+.t-b .col-h{font-weight:600;border-bottom-color:#ddd3bf}
+.t-b .row .mk{border-radius:1px}
+.t-b .col-b{line-height:1.6}
+
+/* ---- 方向 C：深空控制台 ---- */
+.t-c{--mbg:#080a0d;--mp:#0e1218;--mp2:#0b0f14;--ml:#1e2732;--mt:#d6e2e4;--mt2:#7f9098;--mt3:#55636b;
+     --ma:#5be9b9;--ma2:#56d8ff;--mc:#0e1218;--mside:#070a0d;--mshadow:0 8px 30px rgba(0,0,0,.6);
+     --mr:2px;--mrr:2px;--mactivebg:rgba(91,233,185,.1);--mactivet:#7df0c8;
+     --mfont:'JetBrains Mono','SF Mono',Consolas,'Microsoft YaHei',monospace}
+.t-c .win{background:var(--mbg);background-image:linear-gradient(rgba(91,233,185,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(91,233,185,.035) 1px,transparent 1px);background-size:26px 26px}
+.t-c .win-chrome{background:#070a0d}
+.t-c .side{width:162px}
+.t-c .side-brand,.t-c .brand-txt i,.t-c .main-head h4,.t-c .nav-i,.t-c .col-h,.t-c .row,.t-c .kpi b,.t-c .kpi i{font-family:'JetBrains Mono','SF Mono',Consolas,'Microsoft YaHei',monospace}
+.t-c .brand-mark{background:#5be9b9}
+.t-c .brand-mark svg{color:#080a0d}
+.t-c .nav-i .tag{background:#5be9b9;color:#080a0d}
+.t-c .main-head h4{font-size:15px;color:#5be9b9;letter-spacing:.04em}
+.t-c .crumb{color:#5be9b9;opacity:.7}
+.t-c .kpi b{font-size:20px}
+.t-c .rail{display:block;background:#060809}
+
+/* ---- 方向 D：温柔仪表盘 ---- */
+.t-d{--mbg:#f7f8fa;--mp:#fff;--mp2:#f9fafb;--ml:#e6e9ef;--mt:#101828;--mt2:#4a5567;--mt3:#8a94a6;
+     --ma:#17796b;--ma2:#c4623f;--mc:#fff;--mside:#fff;--mshadow:0 4px 16px -2px rgba(16,24,40,.06);
+     --mr:14px;--mrr:9px;--mactivebg:#eef4f2;--mactivet:#17796b;
+     --mfont:'Outfit','PingFang SC','Microsoft YaHei',sans-serif}
+.t-d .kpi{box-shadow:var(--mshadow)}
+.t-d .col{box-shadow:var(--mshadow)}
+.t-d .kpi b{font-size:25px}
+.t-d .main-head h4{font-size:19px;font-weight:600}
+
+/* ============ 规格卡 ============ */
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px}
+.spec-cell{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 17px;box-shadow:0 4px 16px -4px rgba(16,24,40,.05)}
+.spec-cell h6{font-family:var(--mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px}
+.spec-cell p{font-size:13px;color:var(--ink2);line-height:1.6}
+.spec-cell dl{display:grid;grid-template-columns:54px 1fr;gap:5px 10px;margin:0}
+.spec-cell dt{font-size:11.5px;color:var(--ink3);font-family:var(--mono)}
+.spec-cell dd{margin:0;font-size:12.5px;color:var(--ink2);line-height:1.5}
+.spec-cell dd b{color:var(--ink);font-weight:600}
+.sw-row{padding-bottom:18px}
+.swatches{display:flex;gap:7px}
+.sw{width:34px;height:34px;border-radius:8px;border:1px solid rgba(20,23,30,.08);position:relative}
+.sw span{position:absolute;bottom:-17px;left:0;font-family:var(--mono);font-size:8.5px;color:var(--ink3);white-space:nowrap}
+.cost{display:flex;gap:5px;align-items:center}
+.cost i{width:24px;height:5px;border-radius:3px;background:var(--line)}
+.cost i.on{background:var(--accent)}
+.cost span{font-size:11.5px;color:var(--ink3);margin-left:4px}
+.foot-row{display:grid;grid-template-columns:minmax(0,.5fr) minmax(0,1.5fr);gap:12px}
+.adv{background:rgba(47,111,94,.06);border:1px solid rgba(47,111,94,.22);border-radius:12px;padding:15px 17px;display:flex;gap:12px;align-items:flex-start}
+.adv .ic{width:22px;height:22px;border-radius:7px;background:var(--accent);color:#fff;display:grid;place-items:center;flex:none;margin-top:1px}
+.adv .ic svg{width:13px;height:13px}
+.adv b{font-size:12px;color:var(--accent);font-weight:600;display:block;margin-bottom:3px;letter-spacing:.02em}
+.adv p{font-size:13.5px;color:var(--ink2);line-height:1.55}
+
+/* ============ 对比表 ============ */
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+th,td{padding:12px 15px;text-align:left;font-size:13px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+th{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);font-weight:400;background:#fbfaf7}
+tr:last-child td{border-bottom:none}
+td b{font-weight:600;color:var(--ink)}
+td.name{font-weight:600;color:var(--ink);white-space:nowrap}
+.stars{color:var(--accent2);letter-spacing:1px}
+.stars .dim{color:var(--line)}
+
+/* ============ 建议 ============ */
+.rec{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px 28px;box-shadow:0 6px 24px -6px rgba(16,24,40,.08)}
+.rec-top{display:flex;gap:14px;align-items:flex-start;margin-bottom:18px}
+.rec-top .big{font-family:var(--serif);font-size:22px;line-height:1.3}
+.rec-top p{color:var(--ink2);font-size:14px;margin-top:5px}
+.rec h5{font-size:15px;font-weight:600;margin:20px 0 10px}
+.rec h5:first-of-type{margin-top:0}
+.mix{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:8px}
+.mix div{background:#fbfaf7;border:1px solid var(--line);border-radius:11px;padding:14px 15px}
+.mix b{display:block;font-size:13.5px;margin-bottom:4px}
+.mix span{font-size:12.5px;color:var(--ink2);line-height:1.5}
+.steps{list-style:none;counter-reset:s;display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
+.steps li{
+  counter-increment:s;position:relative;padding:12px 14px 12px 42px;
+  background:#fbfaf7;border:1px solid var(--line);border-radius:10px;font-size:13.5px;color:var(--ink2);
+}
+.steps li::before{
+  content:counter(s);position:absolute;left:13px;top:12px;width:20px;height:20px;border-radius:6px;
+  background:var(--accent);color:#fff;font-family:var(--mono);font-size:11px;display:grid;place-items:center;
+}
+.steps li b{color:var(--ink);font-weight:600}
+
+footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink3)}
+
+@media (max-width:900px){
+  .wrap{padding:0 20px}
+  h1{font-size:30px}
+  .audit,.foot-row,.mix,.steps{grid-template-columns:1fr}
+  .rules{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">UI DESIGN PROPOSAL · v0.1</div>
+  <h1>启航AI工作台<br>全新界面方向提案</h1>
+  <p class="lede">在改第一行代码之前，先把"新界面长什么样"变成可以看、可以比、可以否决的东西。下面四个方向都基于现有产品的真实结构（10 个页面、笔记库为中心、飞书手机指挥），不是脱离业务的概念图。</p>
+  <div class="hero-meta">
+    <span>4 个候选方向</span>
+    <span>基于 v0.9.0 现有实现</span>
+    <span>2026-10-31</span>
+  </div>
+</header>
+
+<!-- ========== 一、现状诊断 ========== -->
+<section id="audit">
+  <div class="sec-head"><span class="sec-num">01</span><h2>先说清楚现在的问题</h2></div>
+  <p class="sec-sub">不是要推翻重做。现有功能密度和信息组织是好的，问题几乎全在视觉语言与层级上——这也是最值得换掉的部分。</p>
+
+  <div class="audit">
+    <div class="audit-visual">
+      <div class="av-title">现状还原 · 侧栏 68px + 概览页</div>
+      <div class="av-stage">
+        <div class="av-rail">
+          <div class="on"><span>📊</span><b>概览</b></div>
+          <div><span>💬</span><b>对话</b></div>
+          <div><span>📋</span><b>任务</b></div>
+          <div><span>🗃️</span><b>数据</b></div>
+          <div><span>🔔</span><b>提醒</b></div>
+        </div>
+        <div class="av-main">
+          <div class="av-kpis">
+            <div class="av-kpi"><b>12</b><i>未勾待办</i></div>
+            <div class="av-kpi"><b>38</b><i>笔记已勾</i></div>
+            <div class="av-kpi"><b>5</b><i>待跟进</i></div>
+            <div class="av-kpi"><b>7</b><i>工作日志</i></div>
+            <div class="av-kpi"><b>24</b><i>笔记文件</i></div>
+          </div>
+          <div class="av-cols">
+            <div class="av-col"><h6>☐ 待办</h6><div class="av-line">整理竞品价格表</div><div class="av-line">补货：iPhone 15 Pro</div><div class="av-line">写本周复盘</div></div>
+            <div class="av-col"><h6>📌 跟进</h6><div class="av-line">等供应商回传</div><div class="av-line">确认物流时效</div><div class="av-line">对接活动报名</div></div>
+            <div class="av-col"><h6>🗓️ 工作日志</h6><div class="av-line">10-30 日报已归档</div><div class="av-line">10-29 日报已归档</div><div class="av-line">10-28 日报已归档</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="av-call"><b>图标用 emoji</b> · Windows 与 macOS 渲染不一致，且无法控制笔画粗细与对齐。</div>
+      <div class="av-call"><b>文字只有 10px</b> · 侧栏标签在 1080p 屏上几乎不可读，「10px」是 <code>AppSidebar.vue:156</code> 里的硬编码。</div>
+      <div class="av-call"><b>层级全平</b> · 5 个 KPI 权重完全相同，用户的眼睛找不到该先看哪里。</div>
+    </div>
+
+    <div class="problems">
+      <div class="prob">
+        <h5><span>1</span>视觉语言是「默认的」</h5>
+        <p>靛蓝 <code>#6366f1</code> + 石板灰 <code>#f8fafc</code> 是 Tailwind 默认配色。放眼同类 AI 工具，这套配色是最没有辨识度的一种。产品叫「启航」，界面里没有一点航海感。</p>
+      </div>
+      <div class="prob">
+        <h5><span>2</span>没有明暗模式</h5>
+        <p>全仓库搜不到 <code>prefers-color-scheme</code> 或 <code>data-theme</code>。而这个产品有「手机指挥电脑」的特性——用户大概率在晚上看日报、看任务结果。</p>
+      </div>
+      <div class="prob">
+        <h5><span>3</span>每个页面都是同一个模子</h5>
+        <p>顶栏 + 一堆白卡片浮在浅灰底上。10 个页面共用这一种布局，用户切换页面时得不到「空间在变化」的感觉，只能靠文字判断自己在哪。</p>
+      </div>
+      <div class="prob">
+        <h5><span>4</span>样式没有收口</h5>
+        <p><code>global.css</code> 里有变量，但各视图仍在硬编码色值：<code>global.css:79-83</code> 的 badge 一组浅灰、<code>NotesView.vue:421</code> 又写死 <code>--primary-dark</code>。ConfigView 单文件 74KB，改一个主色要跨十几个文件。</p>
+      </div>
+      <div class="prob">
+        <h5><span>5</span>图标是 emoji 而不是图标</h5>
+        <p>全篇 <code>📚💬🔧⚡📁🗨️⏳☐📌🗓️</code>。它们是插画不是图标：没有统一线宽、不能继承颜色状态、在小尺寸下糊成一团。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 二、底线 ========== -->
+<section id="rules">
+  <div class="sec-head"><span class="sec-num">02</span><h2>四个方向共同遵守的底线</h2></div>
+  <p class="sec-sub">不管选哪条，这些都不做。改版最容易失败的原因不是不好看，而是旧的毛病带进了新的皮。</p>
+  <div class="rules">
+    <div class="rule"><b>不重写业务</b><p>路由、IPC、10 个页面的功能逻辑全部保留。这是一次视觉与信息架构的重做，不是重构项目。</p></div>
+    <div class="rule"><b>一套可换肤的令牌</b><p>所有颜色、圆角、阴影、字号收敛到 CSS 变量，主色切换只需改一处。</p></div>
+    <div class="rule"><b>换掉全部 emoji</b><p>统一用 Lucide 线性图标（1.75px 描边），继承 currentColor。</p></div>
+    <div class="rule"><b>密度只增不减</b><p>侧栏从 68px 图标条升级为带文字的导航，但对话页仍保留双栏工作流。</p></div>
+    <div class="rule"><b>明暗双版本</b><p>每个方向都给出亮/暗两套配色，而不是把暗色当补丁。</p></div>
+    <div class="rule"><b>中文排版优先</b><p>正文行高 1.7–1.8，字号不小于 14px；数字用等宽字体对齐。</p></div>
+  </div>
+</section>
+
+<!-- ========== 三、四个方向 ========== -->
+<section id="directions">
+  <div class="sec-head"><span class="sec-num">03</span><h2>四个候选方向</h2></div>
+  <p class="sec-sub">每个方向都给出真实界面模拟、配色、字体、图标与结构策略。模拟图里的模块名与数据都取自现有应用。</p>
+
+  <!-- 方向 A -->
+  <div class="dir" id="dir-a">
+    <div class="dir-head">
+      <div class="dir-badge" style="background:#d9a441">A</div>
+      <div class="dir-title">
+        <h3>航海舱 · Nautical Deck</h3>
+        <p>把「启航」这个词当真：工作台不是网页，是一间驾驶舱。深夜模式为默认，深海蓝底、黄铜仪表、航图网格。</p>
+      </div>
+    </div>
+    <div class="dir-grid">
+      <div class="mock-wrap"><div class="mock-scroll" data-mock="a"></div></div>
+      <div class="specs">
+        <div class="spec-cell">
+          <h6>配色</h6>
+          <div class="sw-row"><div class="swatches">
+            <div class="sw" style="background:#0d1725"><span>深海底</span></div>
+            <div class="sw" style="background:#131f33"><span>面板</span></div>
+            <div class="sw" style="background:#d9a441"><span>黄铜</span></div>
+            <div class="sw" style="background:#45b8a6"><span>海水青</span></div>
+            <div class="sw" style="background:#e6ecf6"><span>主文字</span></div>
+          </div></div>
+          <p>暗色为默认，白昼模式反相一套。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>字体</h6>
+          <dl>
+            <dt>标题</dt><dd>DM Serif Display / 思源宋体 24–26px</dd>
+            <dt>正文</dt><dd>Outfit / 苹方 13–14px</dd>
+            <dt>读数</dt><dd>JetBrains Mono（仪表数字）</dd>
+          </dl>
+        </div>
+        <div class="spec-cell">
+          <h6>图标</h6>
+          <p>Lucide 线性图标 1.75px 描边；状态改用黄铜圆点，彻底替掉 emoji。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>结构</h6>
+          <p>左侧 186px 带文字导航（工作台 / 工具两段分组），右侧常驻 166px 数据栏：引擎状态、任务队列、实时日志流。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>概念映射</h6>
+          <dl>
+            <dt>笔记库</dt><dd>海图室</dd>
+            <dt>任务</dt><dd>航务清单</dd>
+            <dt>提醒</dt><dd>灯塔钟声</dd>
+            <dt>对话</dt><dd>通讯室</dd>
+            <dt>日志</dt><dd>航海日志</dd>
+            <dt>引擎</dt><dd>主机</dd>
+          </dl>
+        </div>
+      </div>
+      <div class="foot-row">
+        <div class="spec-cell">
+          <h6>落地成本</h6>
+          <div class="cost"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><span>较高</span></div>
+        </div>
+        <div class="adv">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.6H22l-6.2 4.6L18 22l-6-4-6 4 2.2-7.8L2 9.6h7.6z"/></svg></span>
+          <div><b>最大优势</b><p>辨识度。做电商运营的个人工作台里，没有第二家用这套语言——名字里的「启航」终于在界面里兑现了。</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方向 B -->
+  <div class="dir" id="dir-b">
+    <div class="dir-head">
+      <div class="dir-badge" style="background:#b4462f">B</div>
+      <div class="dir-title">
+        <h3>纸墨 · Paper &amp; Ink</h3>
+        <p>产品的灵魂是磁盘上的 Markdown。让界面本身就是纸：米白纸底、墨黑字、朱砂红印、宋体正文，几乎没有阴影。</p>
+      </div>
+    </div>
+    <div class="dir-grid">
+      <div class="mock-wrap"><div class="mock-scroll" data-mock="b"></div></div>
+      <div class="specs">
+        <div class="spec-cell">
+          <h6>配色</h6>
+          <div class="sw-row"><div class="swatches">
+            <div class="sw" style="background:#f7f3ea"><span>纸底</span></div>
+            <div class="sw" style="background:#fffdf8"><span>纸页</span></div>
+            <div class="sw" style="background:#1f1d18"><span>墨</span></div>
+            <div class="sw" style="background:#b4462f"><span>朱砂</span></div>
+            <div class="sw" style="background:#2e4a62"><span>靛</span></div>
+          </div></div>
+          <p>亮色为主，夜间用同一套降饱和的深墨版。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>字体</h6>
+          <dl>
+            <dt>标题</dt><dd>思源宋体 / Songti SC</dd>
+            <dt>正文</dt><dd>苹方 14px，行高 1.75</dd>
+            <dt>笔记</dt><dd>宋体 15px，行高 1.9</dd>
+          </dl>
+        </div>
+        <div class="spec-cell">
+          <h6>图标</h6>
+          <p>1.5px 更细的线稿，贴合纸墨气质；朱砂只用于「当前页」与关键动作，不做装饰。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>结构</h6>
+          <p>侧栏做成「目录」样式（左侧一条细竖线 + 缩进），对话正文收窄到 720px 阅读列，笔记预览走真正的书籍排版。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>气质</h6>
+          <p>中文用户对「纸感」有天然认同。它牺牲了一点数据看板的表现力，换来整页的沉静感。</p>
+        </div>
+      </div>
+      <div class="foot-row">
+        <div class="spec-cell">
+          <h6>落地成本</h6>
+          <div class="cost"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><span>中</span></div>
+        </div>
+        <div class="adv">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></span>
+          <div><b>最大优势</b><p>气质对。产品的本质是写和读，纸墨把「你在写笔记」这件事直接放到了界面层，长时间使用不累。</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方向 C -->
+  <div class="dir" id="dir-c">
+    <div class="dir-head">
+      <div class="dir-badge" style="background:#0e1218;color:#5be9b9">C</div>
+      <div class="dir-title">
+        <h3>深空控制台 · Deep Space Console</h3>
+        <p>单引擎 + MCP + 定时任务 + 中继服务，本质是一台跑在本地的小型计算机。界面就是它的仪表盘：磷光绿、等宽字体、遥测数据流。</p>
+      </div>
+    </div>
+    <div class="dir-grid">
+      <div class="mock-wrap"><div class="mock-scroll" data-mock="c"></div></div>
+      <div class="specs">
+        <div class="spec-cell">
+          <h6>配色</h6>
+          <div class="sw-row"><div class="swatches">
+            <div class="sw" style="background:#080a0d"><span>真空黑</span></div>
+            <div class="sw" style="background:#0e1218"><span>面板</span></div>
+            <div class="sw" style="background:#5be9b9"><span>磷光</span></div>
+            <div class="sw" style="background:#56d8ff"><span>数据蓝</span></div>
+            <div class="sw" style="background:#d6e2e4"><span>正文</span></div>
+          </div></div>
+          <p>深色唯一形态，浅色版会破坏它的说服力。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>字体</h6>
+          <dl>
+            <dt>全局</dt><dd>JetBrains Mono 等宽优先</dd>
+            <dt>中文</dt><dd>等宽回退思源黑体</dd>
+            <dt>读数</dt><dd>大号 mono，仪表感</dd>
+          </dl>
+        </div>
+        <div class="spec-cell">
+          <h6>图标</h6>
+          <p>极细线框终端图标；状态一律用色块与读数表达，文字压到最少。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>结构</h6>
+          <p>三栏：窄导航 + 主区 + 遥测栏（引擎负载、任务队列、实时日志）。顶部全局 ⌘K 命令面板，所有功能可键盘直达。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>交互</h6>
+          <p>键盘优先：⌘K 命令面板、对话流可全键盘操作，鼠标只是可选路径。</p>
+        </div>
+      </div>
+      <div class="foot-row">
+        <div class="spec-cell">
+          <h6>落地成本</h6>
+          <div class="cost"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><span>高</span></div>
+        </div>
+        <div class="adv">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg></span>
+          <div><b>最大优势 / 风险</b><p>把「本地引擎 + MCP」的技术感做成了卖点；但偏开发者，电商运营用户可能觉得冷、劝退——这条取决于你的用户构成。</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方向 D -->
+  <div class="dir" id="dir-d">
+    <div class="dir-head">
+      <div class="dir-badge" style="background:#17796b">D</div>
+      <div class="dir-title">
+        <h3>温柔仪表盘 · Soft Bento</h3>
+        <p>不冒险的那条路：把「像网页模板」彻底改掉，用大圆角、柔和阴影、清晰字号层级和 Bento 栅格，做一个耐看、专业的现代工作台。</p>
+      </div>
+    </div>
+    <div class="dir-grid">
+      <div class="mock-wrap"><div class="mock-scroll" data-mock="d"></div></div>
+      <div class="specs">
+        <div class="spec-cell">
+          <h6>配色</h6>
+          <div class="sw-row"><div class="swatches">
+            <div class="sw" style="background:#f7f8fa"><span>画布</span></div>
+            <div class="sw" style="background:#ffffff"><span>卡片</span></div>
+            <div class="sw" style="background:#17796b"><span>松绿</span></div>
+            <div class="sw" style="background:#c4623f"><span>陶土</span></div>
+            <div class="sw" style="background:#101828"><span>墨</span></div>
+          </div></div>
+          <p>松绿主色 + 陶土次色，避开了同类的紫蓝 AI 风。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>字体</h6>
+          <dl>
+            <dt>标题</dt><dd>Outfit 600，20–24px</dd>
+            <dt>正文</dt><dd>苹方 14px</dd>
+            <dt>数字</dt><dd>等宽数字对齐</dd>
+          </dl>
+        </div>
+        <div class="spec-cell">
+          <h6>图标</h6>
+          <p>Lucide 常规圆头 2px，统一放进 18px 尺寸容器，视觉重量一致。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>结构</h6>
+          <p>侧栏 186px 带文字与折叠分组；概览页改 Bento 栅格（重点卡片占 2×2），不再是五个等大数字；对话页三栏可折叠。</p>
+        </div>
+        <div class="spec-cell">
+          <h6>交互</h6>
+          <p>悬停微浮起 + 柔和阴影，所有空状态、加载态、错误态补齐成同一套组件。</p>
+        </div>
+      </div>
+      <div class="foot-row">
+        <div class="spec-cell">
+          <h6>落地成本</h6>
+          <div class="cost"><i class="on"></i><i class="on"></i><i></i><i></i><i></i><span>低</span></div>
+        </div>
+        <div class="adv">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></span>
+          <div><b>最大优势 / 风险</b><p>最稳、改动最小，品牌感仍有提升；但同类产品多，容易掉进「又一个 SaaS 模板」。</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 四、对比 ========== -->
+<section id="compare">
+  <div class="sec-head"><span class="sec-num">04</span><h2>横向对比</h2></div>
+  <p class="sec-sub">按真实决策标准排：辨识度是差异化最直接的来源，落地成本决定这轮能不能做完。</p>
+  <table>
+    <thead>
+      <tr><th>方向</th><th>气质关键词</th><th>辨识度</th><th>落地成本</th><th>最合适的场景</th><th>主要风险</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">A 航海舱</td>
+        <td>专业 · 克制 · 有故事</td>
+        <td><span class="stars">★★★★★</span></td>
+        <td>较高（令牌重写 + 导航重构 + 双主题）</td>
+        <td>想让产品一眼被认出来，愿意投一周做视觉</td>
+        <td>暗色为默认，白天办公场景要单独调校</td>
+      </tr>
+      <tr>
+        <td class="name">B 纸墨</td>
+        <td>温暖 · 沉静 · 中文友好</td>
+        <td><span class="stars">★★★★<span class="dim">★</span></span></td>
+        <td>中（主要改排版与间距）</td>
+        <td>长时间写笔记、读日报，办公与阅读场景为主</td>
+        <td>数据看板表现力偏弱，偏「温和」不够「锋利」</td>
+      </tr>
+      <tr>
+        <td class="name">C 深空控制台</td>
+        <td>硬核 · 高效 · 极客</td>
+        <td><span class="stars">★★★★<span class="dim">★</span></span></td>
+        <td>高（命令面板 + 遥测栏 + 全局等宽）</td>
+        <td>开发者 / 重度用户，愿意用键盘操作一切</td>
+        <td>运营类用户可能觉得冷、难亲近</td>
+      </tr>
+      <tr>
+        <td class="name">D 温柔仪表盘</td>
+        <td>现代 · 清晰 · 稳妥</td>
+        <td><span class="stars">★★★<span class="dim">★★</span></span></td>
+        <td>低（现有结构上做视觉升级）</td>
+        <td>想快速脱离「网页模板感」，又不想大改</td>
+        <td>同类产品多，缺少独占记忆点</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ========== 五、建议 ========== -->
+<section id="recommend">
+  <div class="sec-head"><span class="sec-num">05</span><h2>我的建议</h2></div>
+  <p class="sec-sub">如果由我决定，会这么组合——不是四选一，而是取各方向最强的那一块。</p>
+  <div class="rec">
+    <div class="rec-top">
+      <div class="dir-badge" style="background:#d9a441">★</div>
+      <div>
+        <div class="big">选 A 的视觉骨架，用 B 的排版手感，收 D 的可用性细节</div>
+        <p>「航海舱」提供记忆点，「纸墨」保证中文长文本读得舒服，「温柔仪表盘」保证交互细节经得起日常使用。</p>
+      </div>
+    </div>
+
+    <h5>三段式组合</h5>
+    <div class="mix">
+      <div><b>视觉骨架 ← A</b><span>深海蓝 + 黄铜的仪表体系，深色为默认、亮色为「白昼模式」。导航重做为带文字的两段式分组，数据栏常驻右侧。</span></div>
+      <div><b>阅读排版 ← B</b><span>笔记预览、对话回答、日报正文全部走宋体 + 1.85 行高；数字与元信息用等宽。中文界面最忌讳的正是「截图式的英文排版」。</span></div>
+      <div><b>交互细节 ← D</b><span>Bento 概览、圆角 12–14px、柔和阴影、悬停微浮起、快捷键提示。功能该有的一个不少，但不再像一张 Excel 表。</span></div>
+    </div>
+
+    <h5>落地顺序</h5>
+    <ol class="steps">
+      <li><b>第 1 步 · 令牌层</b>：把 global.css 重写成双主题令牌（明/暗 + 4 组语义色），各视图里硬编码的色值全部换掉。这一步不改任何布局，但立刻换掉「默认 Tailwind 感」。</li>
+      <li><b>第 2 步 · 图标层</b>：引入 Lucide，把全仓 emoji 图标替换为线性图标，侧栏从 68px 图标条升级为带文字导航。</li>
+      <li><b>第 3 步 · 骨架层</b>：重做 App.vue 外壳（标题栏 + 导航 + 内容区），统一 10 个页面的页头、间距、卡片规格。</li>
+      <li><b>第 4 步 · 重点页</b>：优先重做「概览」（Bento）与「对话」（三栏折叠 + 阅读列），这两页占用户停留时间 80%。</li>
+      <li><b>第 5 步 · 排版层</b>：给 Markdown 渲染、对话消息、笔记预览补一套「纸墨」排版规则（宋体、行高、代码块、表格）。</li>
+      <li><b>第 6 步 · 收尾</b>：补空状态、加载态、错误态；做一次明暗双主题的视觉走查；更新 README 截图与更新日志。</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  提案基于 qihang-ai-desktop v0.9.0 现有实现（10 个视图 / 11 个组件 / 单引擎 pi）。选定方向后可按上述六步逐个落地，每步都可独立验收。
+</footer>
+
+</div>
+
+<!-- ================= 模拟器模板 ================= -->
+<template id="tpl">
+  <div class="win">
+    <div class="win-chrome">
+      <span class="dt r"></span><span class="dt y"></span><span class="dt g"></span>
+      <span class="win-title">启航AI工作台</span>
+      <span class="win-right">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span class="k">⌘K</span>
+      </span>
+    </div>
+    <div class="win-body">
+      <aside class="side">
+        <div class="side-brand">
+          <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polygon points="16.2 7.8 14.1 14.1 7.8 16.2 9.9 9.9 16.2 7.8"/></svg></span>
+          <span class="brand-txt"><b>启航</b><i data-t="brand">QIHANG AI</i></span>
+        </div>
+
+        <div class="side-label" data-t="grp1">工作台</div>
+        <nav class="side-nav">
+          <div class="nav-i on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg><span data-t="n1">概览</span></div>
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span data-t="n2">对话</span><span class="tag">3</span></div>
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span data-t="n3">任务</span></div>
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg><span data-t="n4">数据</span></div>
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span data-t="n5">提醒</span></div>
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg><span data-t="n6">笔记</span></div>
+        </nav>
+
+        <div class="side-label" data-t="grp2">工具</div>
+        <nav class="side-nav">
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z"/></svg><span data-t="n7">工具箱</span></div>
+          <div class="nav-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span data-t="n8">设置</span></div>
+        </nav>
+
+        <div class="side-foot">
+          <div class="side-user"><span class="av">启</span><small data-t="user">本地引擎 · 就绪</small></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="main-head">
+          <div>
+            <div class="crumb" data-t="crumb">海图室 / 今日总览</div>
+            <h4 data-t="h4">今日海况</h4>
+            <div class="head-sub" data-t="sub">12 条待办 · 引擎就绪</div>
+          </div>
+          <div class="head-actions">
+            <span class="pill" data-t="pill">主机运转中</span>
+            <button class="mbtn" data-t="btn">＋ 新建对话</button>
+          </div>
+        </header>
+
+        <div class="kpis">
+          <div class="kpi acc"><b>12</b><i data-t="k1">待办航单</i></div>
+          <div class="kpi"><b>38</b><i data-t="k2">已归档</i></div>
+          <div class="kpi warn"><b>5</b><i data-t="k3">跟进中</i></div>
+          <div class="kpi"><b>7</b><i data-t="k4">日志</i></div>
+        </div>
+
+        <div class="cols">
+          <section class="col">
+            <header class="col-h"><span data-t="c1">待办航单</span><em>12</em></header>
+            <div class="col-b">
+              <div class="row"><span class="mk"></span><span class="tx">整理竞品价格表</span><span class="ln">3-01</span></div>
+              <div class="row"><span class="mk"></span><span class="tx">补货：iPhone 15 Pro</span><span class="ln">3-01</span></div>
+              <div class="row"><span class="mk"></span><span class="tx">写本周复盘</span><span class="ln">3-01</span></div>
+              <div class="row"><span class="mk f">✓</span><span class="tx">核对昨日订单</span><span class="ln">2-28</span></div>
+              <div class="row"><span class="mk"></span><span class="tx">回复客户邮件</span><span class="ln">2-28</span></div>
+            </div>
+          </section>
+          <section class="col">
+            <header class="col-h"><span data-t="c2">跟进事项</span><em>5</em></header>
+            <div class="col-b">
+              <div class="row"><span class="mk" style="border-color:var(--ma2)">◆</span><span class="tx">等供应商回传</span><span class="ln">10-30</span></div>
+              <div class="row"><span class="mk" style="border-color:var(--ma2)">◆</span><span class="tx">确认物流时效</span><span class="ln">10-29</span></div>
+              <div class="row"><span class="mk" style="border-color:var(--ma2)">◆</span><span class="tx">对接活动报名</span><span class="ln">10-28</span></div>
+              <div class="row"><span class="mk" style="border-color:var(--ma2)">◆</span><span class="tx">催样品寄出</span><span class="ln">10-27</span></div>
+            </div>
+          </section>
+          <section class="col">
+            <header class="col-h"><span data-t="c3">航海日志</span><em>7</em></header>
+            <div class="col-b">
+              <div class="logrow"><b>10-30 日报</b><span>今日完成 6 项待办，补货单已提交</span></div>
+              <div class="logrow"><b>10-29 日报</b><span>处理 3 个售后工单，库存已对齐</span></div>
+              <div class="logrow"><b>10-28 日报</b><span>新品上架 5 款，渠道价已同步</span></div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <aside class="rail">
+        <div class="tele-h" data-t="tel">Telemetry</div>
+        <div class="tele"><b>128</b><i>TOKENS / MIN</i><div class="bar"><span style="width:38%"></span></div></div>
+        <div class="tele"><b>1.4s</b><i>LATENCY</i><div class="bar"><span style="width:22%;background:var(--ma2)"></span></div></div>
+        <div class="tele"><b>3</b><i>QUEUED JOBS</i><div class="bar"><span style="width:60%"></span></div></div>
+        <div class="logstream">
+          <b>&gt;</b> engine.ready<br>
+          <b>&gt;</b> index.scan 24 files<br>
+          <b>&gt;</b> task.exec daily-report<br>
+          <b>&gt;</b> feishu.push ok
+        </div>
+      </aside>
+    </div>
+  </div>
+</template>
+
+<script>
+const DICTS = {
+  a:{brand:'QIHANG AI',grp1:'工作台',grp2:'工具',n1:'概览',n2:'对话',n3:'任务',n4:'数据',n5:'提醒',n6:'笔记',n7:'工具箱',n8:'设置',
+     user:'主机运转中',crumb:'海图室 / 今日总览',h4:'今日海况',sub:'12 条待办 · 引擎就绪',pill:'主机运转中',btn:'＋ 发起对话',
+     k1:'待办航单',k2:'已归档',k3:'跟进中',k4:'日志',c1:'待办航单',c2:'跟进事项',c3:'航海日志',tel:'TELEMETRY'},
+  b:{brand:'工作笔记',grp1:'目录',grp2:'工具',n1:'总览',n2:'对话',n3:'任务',n4:'数据',n5:'提醒',n6:'笔记',n7:'工具箱',n8:'设置',
+     user:'本地引擎 · 就绪',crumb:'目录 / 总览',h4:'今日要务',sub:'12 条待办 · 引擎就绪',pill:'本地引擎',btn:'＋ 新建对话',
+     k1:'未勾待办',k2:'已勾记',k3:'待跟进',k4:'工作日志',c1:'待办',c2:'跟进',c3:'工作日志',tel:'状态'},
+  c:{brand:'QIHANG AI',grp1:'WORKSPACE',grp2:'TOOLS',n1:'概览',n2:'对话',n3:'任务',n4:'数据',n5:'提醒',n6:'笔记',n7:'工具箱',n8:'设置',
+     user:'ENGINE READY',crumb:'OVERVIEW / 总览',h4:'工作台状态',sub:'ENGINE READY · 12 PENDING',pill:'READY',btn:'＋ NEW CHAT',
+     k1:'PENDING',k2:'DONE',k3:'FOLLOW-UP',k4:'LOGS',c1:'TASK QUEUE',c2:'FOLLOW UPS',c3:'JOURNAL',tel:'TELEMETRY'},
+  d:{brand:'启航工作台',grp1:'工作台',grp2:'工具',n1:'概览',n2:'对话',n3:'任务',n4:'数据',n5:'提醒',n6:'笔记',n7:'工具箱',n8:'设置',
+     user:'本地引擎 · 就绪',crumb:'工作台 / 总览',h4:'今天',sub:'12 项待办 · 2 个提醒临近',pill:'本地引擎就绪',btn:'＋ 新建对话',
+     k1:'未勾待办',k2:'已完成',k3:'待跟进',k4:'工作日志',c1:'待办清单',c2:'跟进事项',c3:'工作日志',tel:'状态'}
+};
+
+document.querySelectorAll('[data-mock]').forEach(host=>{
+  const key = host.getAttribute('data-mock');
+  const frag = document.getElementById('tpl').content.cloneNode(true);
+  const root = frag.querySelector('.win');
+  root.classList.add('t-'+key);
+  root.querySelectorAll('[data-t]').forEach(el=>{
+    const v = DICTS[key][el.getAttribute('data-t')];
+    if(v !== undefined) el.textContent = v;
+  });
+  host.appendChild(frag);
+});
+</script>
+</body>
+</html>

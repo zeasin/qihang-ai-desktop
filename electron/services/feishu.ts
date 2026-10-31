@@ -6,6 +6,12 @@ let wsClient: any = null;
 let client: any = null;
 let running = false;
 let messageHandler: any = null;
+let cardActionHandler: any = null;
+
+/** 设置卡片按钮回调处理器（点击按钮时触发，入参见 card.action.trigger 事件结构） */
+function setCardActionHandler(fn: ((action: any) => void) | null) {
+  cardActionHandler = fn;
+}
 
 // ========== Webhook (simple send-only, no SDK needed) ==========
 
@@ -106,6 +112,32 @@ async function start(configData, onMessage) {
             logger.error('[Feishu] Event handler error stack: %s', e.stack);
           }
         },
+        // 卡片按钮回调：点击交互卡片上的按钮时触发。
+        // 需要在飞书开放平台为该应用订阅「卡片回调」事件，否则收不到点击。
+        'card.action.trigger': async (data: any) => {
+          try {
+            const event = (data as any).event || data;
+            const action = event.action || {};
+            const context = event.context || {};
+            const operator = event.operator || {};
+            const payload = {
+              value: action.value,
+              tag: action.tag,
+              name: action.name,
+              messageId: context.open_message_id || event.open_message_id || '',
+              chatId: context.open_chat_id || event.open_chat_id || '',
+              operatorOpenId: operator.open_id || '',
+              operatorName: operator.name || '',
+              raw: event,
+            };
+            logger.info('[Feishu] Card action: value=%s chatId=%s operator=%s',
+              JSON.stringify(payload.value), payload.chatId, payload.operatorOpenId);
+            if (cardActionHandler) await cardActionHandler(payload);
+            else logger.warn('[Feishu] Card action received but no handler registered');
+          } catch (e) {
+            logger.error('[Feishu] Card action handler error: %s', e.message);
+          }
+        },
       }),
     });
 
@@ -154,7 +186,12 @@ function replyMessage(msg, content, msgType?) {
   logger.error('[Feishu] replyMessage: no valid target (sender=%s chatId=%s)', msg.sender, msg.chatId);
 }
 
-async function replyCard(msg, content, headerText?) {
+/**
+ * 发送交互卡片。
+ * extra.note：卡片底部的一行小字说明（如「本条发到：笔记库」）。
+ * extra.buttons：按钮组，每个按钮带 value（点击后通过 card.action.trigger 回传）。
+ */
+async function replyCard(msg, content, headerText?, extra?: { note?: string; buttons?: Array<{ text: string; value: any; type?: string; url?: string }> }) {
   logger.info('[Feishu] replyCard: chatId=%s chatType=%s sender=%s', msg.chatId, msg.chatType, msg.sender);
   const target = msg.chatType === 'group' ? msg.chatId : msg.sender;
   const targetType = msg.chatType === 'group' ? 'chat_id' : 'open_id';
@@ -167,6 +204,22 @@ async function replyCard(msg, content, headerText?) {
     return;
   }
   try {
+    const elements: any[] = [{ tag: 'markdown', content }];
+    if (extra?.note) {
+      elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: extra.note }] });
+    }
+    if (extra?.buttons && extra.buttons.length) {
+      elements.push({
+        tag: 'action',
+        actions: extra.buttons.map((b) => ({
+          tag: 'button',
+          text: { tag: 'plain_text', content: b.text },
+          type: b.type || 'default',
+          value: b.value,
+          ...(b.url ? { url: b.url } : {}),
+        })),
+      });
+    }
     await client.im.message.create({
       params: { receive_id_type: targetType },
       data: {
@@ -174,7 +227,7 @@ async function replyCard(msg, content, headerText?) {
         msg_type: 'interactive',
         content: JSON.stringify({
           config: { wide_screen_mode: true },
-          elements: [{ tag: 'markdown', content: content }],
+          elements,
           header: headerText
             ? { template: 'blue', title: { tag: 'plain_text', content: headerText } }
             : { template: 'blue', title: { tag: 'plain_text', content: '启航AI' } },
@@ -202,4 +255,4 @@ function isRunning() {
   return running;
 }
 
-export { sendViaWebhook, setWebhook, getWebhook, start, stop, isRunning, sendMessage, replyMessage, replyCard };
+export { sendViaWebhook, setWebhook, getWebhook, start, stop, isRunning, sendMessage, replyMessage, replyCard, setCardActionHandler };

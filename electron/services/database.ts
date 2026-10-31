@@ -213,6 +213,14 @@ function initSchema() {
       created_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
+    -- 飞书会话 → 项目 绑定（粘性上下文：绑定后该群/私聊的消息自动落到该项目）
+    CREATE TABLE IF NOT EXISTS feishu_contexts (
+      chat_id TEXT PRIMARY KEY,
+      chat_type TEXT DEFAULT '',
+      project_id INTEGER,
+      updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+
   `);
   try { getDb().exec("ALTER TABLE ai_analysis ADD COLUMN module_id TEXT"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN task_type TEXT DEFAULT ''"); } catch (e) {}
@@ -785,4 +793,22 @@ const aitoolHistory = {
   },
 };
 
-export { getDb, close, q, qOne, run, runRaw, save, project, chat, dm, ds, aa, reminder, task, taskExecution, aitoolHistory };
+// ========== 飞书会话 → 项目 绑定 ==========
+const feishuContext = {
+  get: (chatId: string) => qOne('SELECT * FROM feishu_contexts WHERE chat_id = ?', chatId),
+  set: (chatId: string, chatType: string, projectId: number) => {
+    run(
+      `INSERT INTO feishu_contexts (chat_id, chat_type, project_id, updated_at)
+       VALUES (?, ?, ?, datetime('now', '+8 hours'))
+       ON CONFLICT(chat_id) DO UPDATE SET
+         chat_type = excluded.chat_type,
+         project_id = excluded.project_id,
+         updated_at = excluded.updated_at`,
+      chatId, chatType || '', projectId
+    );
+  },
+  remove: (chatId: string) => run('DELETE FROM feishu_contexts WHERE chat_id = ?', chatId),
+  list: () => q('SELECT * FROM feishu_contexts ORDER BY updated_at DESC'),
+};
+
+export { getDb, close, q, qOne, run, runRaw, save, project, chat, dm, ds, aa, reminder, task, taskExecution, aitoolHistory, feishuContext };

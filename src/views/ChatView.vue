@@ -408,16 +408,16 @@ function restoreProjectPick() {
   if (Number.isFinite(saved) && workProjects.value.some((p: any) => p.id === saved)) selectedProjectId.value = saved;
 }
 
-/** 会话这一轮的工作目录与知识库：项目目录即该项目的笔记库；日常对话沿用默认项目 */
-function chatContext(): { projectDir: string; kbIds?: number[] } {
+/** 会话这一轮的工作目录：项目目录即该项目的库目录；日常对话沿用默认项目 */
+function chatContext(): { projectDir: string } {
   const proj = currentProject.value;
   if (proj) {
     const kb = kbLibraries.value.find((l: any) => sameDir(l.dir, proj.dir));
-    return { projectDir: proj.dir || kb?.dir || '', kbIds: kb ? [kb.id] : undefined };
+    return { projectDir: proj.dir || kb?.dir || '' };
   }
   const boundKb = kbLibraries.value.find((l: any) => l.id === Number(currentSession.value?.project_id));
   const kb = boundKb || defaultKb.value;
-  return { projectDir: kb?.dir || '', kbIds: kb ? [kb.id] : undefined };
+  return { projectDir: kb?.dir || '' };
 }
 function sameDir(a: string, b: string): boolean {
   const norm = (s: string) => String(s || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -694,10 +694,10 @@ async function doSend(text: string) {
   stream.status = '准备中...';
   scrollToBottom();
 
-  const { projectDir, kbIds } = chatContext();
+  const { projectDir } = chatContext();
 
   try {
-    await API.chat.send(text, sid, projectDir, kbIds, images.length ? images : undefined, 'general', selectedModel.value || undefined);
+    await API.chat.send(text, sid, projectDir, images.length ? images : undefined, 'general', selectedModel.value || undefined);
     if (selectedModel.value) localStorage.setItem(CHAT_MODEL_KEY, selectedModel.value);
     else localStorage.removeItem(CHAT_MODEL_KEY);
   } catch (err: any) {

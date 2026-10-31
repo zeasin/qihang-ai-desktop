@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "compile:electron": "tsc -p tsconfig.electron.json",
+    "test:router": "node scripts/test-feishu-router.cjs",
     "electron:dev": "npm run compile:electron && concurrently \"vite\" \"electron . --dev\"",
     "electron:build": "vite build && npm run compile:electron && npx electron-builder"
   },

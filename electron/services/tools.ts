@@ -4,7 +4,6 @@ import * as os from 'os';
 import * as db from './database';
 import { normalizeDatasetRecord } from './dataset-normalize';
 import logger from './logger';
-import * as pending from './pending';
 
 // typebox 是 ESM-only 包，而本文件编译为 CJS，用 Function 构造器保留运行时真正的动态 import()
 let cachedType: any = null;
@@ -48,14 +47,10 @@ async function webSearchTool({ query, maxResults }) {
 async function webFetchTool({ url, maxLength }) {
   return await _fetchPage(String(url || ''), maxLength);
 }
-// ========== 笔记库工具 ==========
-
-function noteDirOf(projectId) {
-  if (!projectId) return null;
-  const p = db.project.get(projectId);
-  if (!p || p.type !== 'note' || !p.dir || !fs.existsSync(p.dir)) return null;
-  return p.dir;
-}
+// ========== 路径安全 ==========
+// 笔记 CRUD 工具（list_notes/read_note/write_note/edit_note/delete_note）已按新设计移除：
+// 项目库的检索与读写交给 pi agent 用自己的 read/bash/write 直接完成，工作台不再提供笔记层工具。
+// 这里只保留路径越权校验，供待办自动落盘等内部逻辑使用。
 
 function safeNotePath(noteDir, p) {
   const full = path.isAbsolute(p) ? p : path.join(noteDir, p);
@@ -92,118 +87,12 @@ function findSimilarFiles(rootDir, relTarget, max = 5) {
   return hits.slice(0, max).map(h => h.rel);
 }
 
-function notFoundHint(rootDir, relPath, listToolName) {
+function notFoundHint(rootDir, relPath) {
   const similar = findSimilarFiles(rootDir, relPath);
   const hint = similar.length
     ? ` 目录中相似的文件:\n${similar.map(s => '  - ' + s).join('\n')}\n`
     : '';
-  return `文件不存在: ${relPath}。\n${hint}请先调用 ${listToolName} 查看目录结构，确认准确的文件路径后重试。`;
-}
-
-async function listNotesTool({ path: relPath, projectId }) {
-  const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
-  const target = safeNotePath(noteDir, relPath || '.');
-  if (!target) return '路径越权，只能访问笔记库目录';
-  if (!fs.existsSync(target)) return `目录不存在: ${relPath || '.'}。请用 list_notes 查看笔记库根目录结构。`;
-  try {
-    const items = fs.readdirSync(target, { withFileTypes: true });
-    return items
-      .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
-      .map(e => (e.isDirectory() ? `[目录] ${e.name}/` : `[文件] ${e.name}`))
-      .join('\n');
-  } catch (e) {
-    return `读取失败: ${e.message}`;
-  }
-}
-
-async function readNoteTool({ path: relPath, projectId }) {
-  const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
-  const target = safeNotePath(noteDir, relPath);
-  if (!target) return '路径越权，只能访问笔记库目录';
-  if (!fs.existsSync(target)) return notFoundHint(noteDir, relPath, 'list_notes');
-  try {
-    const content = fs.readFileSync(target, 'utf-8');
-    return content.length > 20000 ? content.slice(0, 20000) + '\n... (截断)' : content;
-  } catch (e) {
-    return `读取失败: ${e.message}`;
-  }
-}
-
-async function writeNoteTool({ path: relPath, content, projectId, stage }) {
-  const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
-  const target = safeNotePath(noteDir, relPath);
-  if (!target) return '路径越权，只能访问笔记库目录';
-  const rel = path.relative(noteDir, target);
-  if (stage) {
-    const staged = safeNotePath(pending.filesDirOf(stage.taskId), rel);
-    if (!staged) return '路径越权，只能写入暂存区';
-    try {
-      fs.mkdirSync(path.dirname(staged), { recursive: true });
-      fs.writeFileSync(staged, content, 'utf-8');
-      pending.recordOp(stage.taskId, rel, 'write');
-      return `已暂存 ${rel}（${content.length} 字符），等待用户确认后写入笔记库`;
-    } catch (e) {
-      return `暂存失败: ${e.message}`;
-    }
-  }
-  try {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content, 'utf-8');
-    return `已写入笔记 ${rel} (${content.length} 字符)`;
-  } catch (e) {
-    return `写入失败: ${e.message}`;
-  }
-}
-
-async function editNoteTool({ path: relPath, oldString, newString, projectId, stage }) {
-  const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
-  const target = safeNotePath(noteDir, relPath);
-  if (!target) return '路径越权，只能访问笔记库目录';
-  const rel = path.relative(noteDir, target);
-  const staged = stage ? safeNotePath(pending.filesDirOf(stage.taskId), rel) : null;
-  const src = staged && fs.existsSync(staged) ? staged : target;
-  if (!fs.existsSync(src)) return '文件不存在';
-  try {
-    const content = fs.readFileSync(src, 'utf-8');
-    const count = content.split(oldString).length - 1;
-    if (count === 0) return '未找到要替换的内容';
-    if (count > 1) return `找到 ${count} 处匹配，请提供更多上下文以唯一确定替换位置`;
-    const updated = content.replace(oldString, newString);
-    if (stage) {
-      if (!staged) return '路径越权，只能写入暂存区';
-      fs.mkdirSync(path.dirname(staged), { recursive: true });
-      fs.writeFileSync(staged, updated, 'utf-8');
-      pending.recordOp(stage.taskId, rel, 'write');
-      return `已暂存编辑 ${rel}（等待用户确认后写入笔记库）`;
-    }
-    fs.writeFileSync(target, updated, 'utf-8');
-    return `已编辑笔记 ${rel}`;
-  } catch (e) {
-    return `编辑失败: ${e.message}`;
-  }
-}
-
-async function deleteNoteTool({ path: relPath, projectId, stage }) {
-  const noteDir = noteDirOf(projectId);
-  if (!noteDir) return '当前对话未关联项目，请先在对话底部选择项目。';
-  const target = safeNotePath(noteDir, relPath);
-  if (!target) return '路径越权，只能访问笔记库目录';
-  if (!fs.existsSync(target)) return '文件不存在';
-  const rel = path.relative(noteDir, target);
-  if (stage) {
-    pending.recordOp(stage.taskId, rel, 'delete');
-    return `已暂存删除 ${rel}（等待用户确认后删除）`;
-  }
-  try {
-    fs.unlinkSync(target);
-    return `已删除笔记 ${rel}`;
-  } catch (e) {
-    return `删除失败: ${e.message}`;
-  }
+  return `文件不存在: ${relPath}。\n${hint}请先用 bash（ls/find）查看目录结构，确认准确的文件路径后重试。`;
 }
 
 // ========== 待办落笔记（方案：新建待办自动追加到项目根 待办.md，笔记保持事实超集） ==========
@@ -307,7 +196,7 @@ async function readProjectFileTool({ filePath }, projectDir) {
     const content = fs.readFileSync(checked, 'utf-8');
     return content.length > 10000 ? content.slice(0, 10000) + '\n... (截断)' : content;
   } catch (e) {
-    if (e.code === 'ENOENT') return notFoundHint(root, filePath, 'list_notes');
+    if (e.code === 'ENOENT') return notFoundHint(root, filePath);
     return `读取失败: ${e.message}`;
   }
 }
@@ -480,25 +369,10 @@ async function updateTaskTool({ id, title, prompt, status, trigger_type, schedul
 // 输出格式与 pi SDK 的 ToolDefinition 兼容：{ name, label, description, parameters, execute }
 // execute 返回 AgentToolResult：{ content: [{ type: 'text', text }], details: {} }
 
-const bindNote = (fn, projectId, stage) => (args) => fn({ ...args, projectId, stage: stage || null });
-
 const exec = (fn) => async (_toolCallId, params) => ({
   content: [{ type: 'text', text: String(await fn(params) ?? '') }],
   details: {},
 });
-
-async function buildNoteToolDefs(projectId, opts: { stage?: { taskId: number } } = {}) {
-  const { Type } = await ensureT();
-  const optStr = (description?: string) => Type.Optional(Type.Union([Type.String({ description }), Type.Null()]));
-  const wrap = (fn) => exec(bindNote(fn, projectId, opts.stage));
-  return [
-    { name: 'list_notes', label: 'list_notes', description: '列出笔记库中的目录和笔记文件。读取笔记前应先调用本工具确认路径。', parameters: Type.Object({ path: optStr('相对笔记库根目录的路径，默认根目录') }), execute: wrap(listNotesTool) },
-    { name: 'read_note', label: 'read_note', description: '读取笔记库中笔记文件的完整内容。若文件不存在会返回相似文件名建议，可据此用 list_notes 确认路径。', parameters: Type.Object({ path: Type.String({ description: '相对笔记库根目录的文件路径' }) }), execute: wrap(readNoteTool) },
-    { name: 'write_note', label: 'write_note', description: '创建或覆盖写入笔记库中的笔记文件（可自动创建子目录，建议以 .md 结尾）。', parameters: Type.Object({ path: Type.String({ description: '相对笔记库根目录的文件路径' }), content: Type.String({ description: '笔记完整内容（Markdown 格式）' }) }), execute: wrap(writeNoteTool) },
-    { name: 'edit_note', label: 'edit_note', description: '编辑笔记库中的笔记文件：将 oldString 替换为 newString。', parameters: Type.Object({ path: Type.String({ description: '相对笔记库根目录的文件路径' }), oldString: Type.String({ description: '被替换的原文（须唯一）' }), newString: Type.String({ description: '替换后的内容' }) }), execute: wrap(editNoteTool) },
-    { name: 'delete_note', label: 'delete_note', description: '删除笔记库中的笔记文件。', parameters: Type.Object({ path: Type.String({ description: '相对笔记库根目录的文件路径' }) }), execute: wrap(deleteNoteTool) },
-  ];
-}
 
 async function buildDataToolDefs(projectDir, opts: { noWeb?: boolean } = {}) {
   const { Type } = await ensureT();
@@ -511,7 +385,7 @@ async function buildDataToolDefs(projectDir, opts: { noWeb?: boolean } = {}) {
     { name: 'create_dataset', label: 'create_dataset', description: '创建一个新的数据集，用于存储结构化信息（如待办、客户、项目、Bug 等）。创建后可用 insert_dataset_record 写入记录。', parameters: Type.Object({ name: Type.String({ description: '数据集名称，如 todos, customers' }), description: Type.Optional(Type.String({ description: '数据集说明' })), schemaJson: Type.Optional(Type.String({ description: '可选的 Schema JSON 字符串，如 {"fields":[{"name":"title"}]}' })) }), execute: exec(createDatasetTool) },
     { name: 'insert_dataset_record', label: 'insert_dataset_record', description: '向数据集插入一条记录。data 参数为 JSON 对象字符串，字段须与数据集 schema 匹配。', parameters: Type.Object({ datasetName: Type.String({ description: '数据集名称或 id' }), data: Type.String({ description: '记录内容 JSON 对象，如 {"title":"季度总结","status":"进行中"}' }) }), execute: exec(insertDatasetRecordTool) },
     { name: 'update_dataset_record', label: 'update_dataset_record', description: '更新数据集中的一条记录（整体替换 data_json）。先调用 query_dataset 获取记录 id。', parameters: Type.Object({ id: Type.Number({ description: '记录 id（query_dataset 返回结果中的 id 字段）' }), data: Type.String({ description: '更新后的完整记录 JSON 对象' }) }), execute: exec(updateDatasetRecordTool) },
-    { name: 'read_project_file', label: 'read_project_file', description: '读取笔记库目录下的文件内容。若文件不存在会返回相似文件名建议，可据此用 list_notes 确认准确路径。', parameters: Type.Object({ filePath: Type.String({ description: '相对于笔记库根目录的文件路径，或绝对路径' }) }), execute: exec(bind(readProjectFileTool)) },
+    { name: 'read_project_file', label: 'read_project_file', description: '读取项目目录下的文件内容。若文件不存在会返回相似文件名建议，可据此用 bash（ls/find）确认准确路径。', parameters: Type.Object({ filePath: Type.String({ description: '相对于项目根目录的文件路径，或绝对路径' }) }), execute: exec(bind(readProjectFileTool)) },
     { name: 'web_search', label: 'web_search', description: '搜索外网资料，通过搜索引擎获取与查询词相关的网页标题、链接和摘要。适合查询最新资讯、技术文档、百科知识等。', parameters: Type.Object({ query: Type.String({ description: '搜索关键词，尽量精确' }), maxResults: optNum('返回结果条数上限，默认8，最大15') }), execute: exec((args) => webSearchTool({ ...args, maxResults: toNumber(args.maxResults, 8) })) },
     { name: 'web_fetch', label: 'web_fetch', description: '读取外部 URL 的文本内容，自动去除 HTML 标签和脚本，返回纯文本。适合阅读网页文章、API 文档、新闻等。', parameters: Type.Object({ url: Type.String({ description: '要读取的完整 URL（须以 http:// 或 https:// 开头）' }), maxLength: optNum('返回内容最大字符数，默认8000，最大50000') }), execute: exec((args) => webFetchTool({ ...args, maxLength: toNumber(args.maxLength, 8000) })) },
   ];
@@ -536,5 +410,5 @@ async function buildReportToolDefs(kbId) {
   ];
 }
 
-export { buildDataToolDefs, buildNoteToolDefs, buildReportToolDefs, getChinaDate, appendTodoNote };
+export { buildDataToolDefs, buildReportToolDefs, getChinaDate, appendTodoNote };
 

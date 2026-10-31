@@ -98,8 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Chat (general)
   chat: {
-    send: (question: string, sessionId: string, projectDir: string, kbIds: number[], images: unknown, agent: string, modelName: string) =>
-      ipcRenderer.invoke('chat:send', { question, sessionId, projectDir, kbIds, images, agent, modelName }),
+    send: (question: string, sessionId: string, projectDir: string, images: unknown, agent: string, modelName: string) =>
+      ipcRenderer.invoke('chat:send', { question, sessionId, projectDir, images, agent, modelName }),
     createSession: (sessionId: string, projectId: number, title: string, mode: string, agent: string, source: string) =>
       ipcRenderer.invoke('chat:session:create', { id: sessionId, projectId, title, mode, source, agent }),
     getSessions: (projectId?: number) => projectId ? ipcRenderer.invoke('chat:session:listByProject', { projectId }) : ipcRenderer.invoke('chat:session:list'),

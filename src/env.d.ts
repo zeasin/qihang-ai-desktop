@@ -62,7 +62,7 @@ interface ElectronAPI {
     remove: (datasetId: string) => Promise<void>;
   };
   chat: {
-    send: (question: string, sessionId?: string, projectDir?: string, kbIds?: string[], images?: any[], agent?: string, modelName?: string) => Promise<void>;
+    send: (question: string, sessionId?: string, projectDir?: string, images?: any[], agent?: string, modelName?: string) => Promise<void>;
     createSession: (sessionId?: string, projectId?: number, title?: string, mode?: string, agent?: string, source?: string) => Promise<any>;
     getSessions: (projectId?: number) => Promise<any[]>;
     getSessionsBySource: (source: string, projectId?: number) => Promise<any[]>;
