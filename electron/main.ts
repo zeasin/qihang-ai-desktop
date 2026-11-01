@@ -1744,12 +1744,16 @@ ipcMain.handle('archive:moduleOverview', async (_, { moduleId }) => {
     const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", String(dsRow.id)) || {}).c || 0;
     const recentRows = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY created_at DESC LIMIT 5", String(dsRow.id));
     const recentRecords = recentRows.map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
+    // 按 data_json.status 分组计数，供数据页卡片显示状态分布
+    const statusRows = db.q("SELECT IFNULL(JSON_EXTRACT(data_json, '$.status'), '') AS status, COUNT(*) AS c FROM data_center_records WHERE dataset_id = ? GROUP BY status", String(dsRow.id));
+    const statusCounts = statusRows.map(r => ({ status: r.status || '无', count: r.c }));
     return {
       datasetId: dsRow.id,
       name: dsRow.name,
       description: dsRow.description,
       schema: dsRow.schema_json ? JSON.parse(dsRow.schema_json) : null,
       recordCount: count,
+      statusCounts,
       recentRecords,
     };
   });

@@ -516,7 +516,7 @@ const dm = {
   },
   add: (name, description, icon) => {
     const id = 'm_' + Date.now();
-    run('INSERT INTO data_center_modules (module_id, name, description, icon) VALUES (?, ?, ?, ?, ?)', id, name, description || '', icon || '📁');
+    run('INSERT INTO data_center_modules (module_id, name, description, icon) VALUES (?, ?, ?, ?)', id, name, description || '', icon || '📁');
     return { id };
   },
   update: (id, data) => {

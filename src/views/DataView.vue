@@ -1,155 +1,164 @@
 <template>
-  <div class="data-view">
-    <div class="content-header">
-      <h1 class="content-title">数据</h1>
-      <div class="header-actions">
-        <button class="flyout-toggle" title="模块列表" @click.stop="toggleModuleList()">
-          <AppIcon name="database" :size="14" />
-          <span>模块</span>
-          <AppIcon name="chevron-down" :size="12" />
+  <div class="page data-view">
+    <!-- ========== 加载中 ========== -->
+    <div v-if="!loaded" class="none-row">加载中…</div>
+
+    <template v-else-if="modules.length > 0">
+      <!-- ========== 页头 ========== -->
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">数据<small>{{ pageDateStr }}</small></h1>
+          <p class="page-sub statline">
+            <span><b>{{ modules.length }}</b> 个模块</span>
+            <span><b>{{ totalDatasets }}</b> 个数据集</span>
+            <span><b>{{ totalRecords }}</b> 条记录</span>
+            <span>今日新增 <b class="acc">{{ todayRecords }}</b></span>
+          </p>
+        </div>
+        <div class="page-actions">
+          <input type="text" class="form-control filter-input" v-model="keyword" placeholder="筛选模块 / 数据集…">
+          <button class="btn btn-sm btn-primary" @click="showAddModule"><AppIcon name="plus" :size="13" />模块</button>
+          <button class="btn btn-sm btn-secondary" @click="showSuitesModal"><AppIcon name="archive" :size="13" />内置模板</button>
+        </div>
+      </header>
+
+      <!-- ========== 模块筛选 chips ========== -->
+      <div class="mod-chips" v-if="modules.length > 1">
+        <button class="mod-chip" :class="{ active: filterId === 'all' }" @click="filterId = 'all'">
+          全部<b>{{ totalRecords }}</b>
         </button>
-        <button class="btn btn-sm btn-secondary" @click="showSuitesModal">📦 内置模板</button>
-      </div>
-    </div>
-
-    <div class="content-body" v-if="modules.length > 0">
-      <div class="module-sidebar as-flyout" :class="{ open: moduleListOpen }" @click.stop>
-        <div class="sidebar-header">
-          <span class="sidebar-title">模块</span>
-          <button class="sidebar-add" @click="showAddModule" title="新建模块">+</button>
-        </div>
-        <div class="sidebar-list">
-          <div
-            v-for="mod in modules"
-            :key="mod.id"
-            class="sidebar-item"
-            :class="{ active: activeModuleId === mod.id }"
-            @click="switchModule(mod)"
-          >
-            <span class="sidebar-item-name">{{ mod.name }}</span>
-            <span class="sidebar-item-count">{{ mod.totalRecords }}</span>
-            <span class="sidebar-item-actions" v-if="activeModuleId === mod.id">
-              <button class="si-btn" @click.stop="showEditModule(mod)" title="编辑">✎</button>
-              <button class="si-btn si-btn-del" @click.stop="deleteModule(mod)" title="删除">×</button>
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="activeModule" class="module-main">
-        <div class="main-header">
-          <div class="main-title">
-            <h2>{{ activeModule.name }}</h2>
-            <span class="main-meta" v-if="activeModule.description">{{ activeModule.description }}</span>
-          </div>
-          <div class="main-actions">
-            <button class="btn btn-sm btn-primary" @click="showAddDataset">+ 数据集</button>
-          </div>
-        </div>
-
-        <div class="main-content">
-          <div class="ai-collapse">
-            <div class="ai-collapse-header" @click="toggleAiCollapse(activeModule)">
-              <span class="ai-icon">🤖</span>
-              <span class="ai-label">AI 业务分析</span>
-              <span class="ai-status" v-if="activeModule.aiLoading">生成中...</span>
-              <span class="ai-date" v-else-if="activeModule.aiAnalysis">{{ formatDate(activeModule.aiAnalysis.created_at) }}</span>
-              <span class="ai-toggle" v-if="!activeModule.aiLoading">{{ activeModule.aiCollapsed ? '展开' : '收起' }}</span>
-            </div>
-            <div v-if="!activeModule.aiCollapsed" class="ai-collapse-body">
-              <div v-if="activeModule.aiLoading" class="ai-loading">
-                <div class="spinner"></div>
-                <span>AI 正在分析业务数据...</span>
-              </div>
-              <div v-else-if="activeModule.aiAnalysis" class="ai-content">
-                <div class="ai-text" v-html="renderMarkdown(activeModule.aiAnalysis.content)"></div>
-                <div class="ai-bar">
-                  <button class="text-btn" @click="refreshAiAnalysis(activeModule, true)">↻ 刷新</button>
-                  <button class="text-btn" @click="archiveAnalysis(activeModule)" :disabled="activeModule.saving">📥 存档到默认项目</button>
-                </div>
-              </div>
-              <div v-else class="ai-loading">
-                <div class="spinner"></div>
-                <span>AI 正在分析...</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="data-section">
-            <div v-for="ds in activeModule.datasets" :key="ds.datasetId" class="ds-card">
-              <div class="ds-card-header">
-                <div class="ds-card-title">
-                  <span class="ds-card-name">{{ ds.name }}</span>
-                  <span class="ds-card-count">{{ ds.recordCount }} 条</span>
-                </div>
-                <div class="ds-card-actions">
-                  <button class="text-btn" @click="showAddRecord(ds)">+ 记录</button>
-                  <button class="text-btn" @click="showEditDatasetPortal(activeModule, ds)">编辑</button>
-                  <button class="text-btn text-btn-del" @click="deleteDatasetPortal(activeModule, ds)">删除</button>
-                  <button class="btn btn-sm btn-primary" @click="openFullView(activeModule, ds)">查看全部 →</button>
-                </div>
-              </div>
-              <table class="preview-table" v-if="ds.recentRecords && ds.recentRecords.length > 0">
-                <thead>
-                  <tr>
-                    <th v-for="col in getPreviewColumns(ds)" :key="col">{{ (schemaFieldsMap(ds)[col] && schemaFieldsMap(ds)[col].displayName) || col }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="rec in ds.recentRecords" :key="rec.id" class="pv-row" @click="viewRecordPortal(rec, ds)">
-                    <td v-for="col in getPreviewColumns(ds)" :key="col" :title="rec[col] || ''">{{ truncateText(formatFieldValue(schemaFieldsMap(ds)[col], rec[col]), 24) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-              <div v-else class="ds-empty">
-                暂无记录
-                <button class="btn btn-sm btn-secondary" @click="showAddRecord(ds)">+ 新增记录</button>
-              </div>
-            </div>
-            <div v-if="activeModule.datasets.length === 0" class="ds-empty-large">
-              <p>该模块暂无数据集</p>
-              <button class="btn btn-sm btn-primary" @click="showAddDataset">+ 创建数据集</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="panel-placeholder">
-        <p>选择一个模块</p>
-      </div>
-    </div>
-
-    <div v-else class="content-empty">
-      <div class="empty-icon">📋</div>
-      <div class="empty-title">暂无数据模块</div>
-      <div class="empty-desc">选择一套或多套内置模板，一键初始化完整的数据模块；也可以手动点击「+ 模块」创建</div>
-      <div class="suite-grid">
-        <div
-          v-for="s in suites"
-          :key="s.id"
-          class="suite-card"
-          :class="{ selected: selectedSuiteIds.includes(s.id) }"
-          @click="toggleSuite(s.id)"
+        <button
+          v-for="mod in modules" :key="mod.id"
+          class="mod-chip" :class="{ active: filterId === mod.id }"
+          @click="filterId = filterId === mod.id ? 'all' : mod.id"
         >
-          <div class="suite-check">✓</div>
-          <div class="suite-icon">{{ s.icon }}</div>
-          <div class="suite-name">{{ s.name }}</div>
-          <div class="suite-desc">{{ s.description }}</div>
-          <div class="suite-meta">{{ s.datasetCount }} 个数据集 · {{ s.sampleCount }} 条示例数据</div>
-        </div>
-      </div>
-      <div class="empty-actions">
-        <button class="btn btn-primary" @click="applySelectedSuites" :disabled="selectedSuiteIds.length === 0">
-          初始化所选（{{ selectedSuiteIds.length }} 套）
+          <span>{{ mod.icon }}</span>{{ mod.name }}<b>{{ mod.totalRecords }}</b>
         </button>
       </div>
-    </div>
+
+      <!-- ========== 模块区块（全景铺开） ========== -->
+      <section v-for="mod in visibleModules" :key="mod.id" class="panel mod-panel">
+        <div class="mod-head">
+          <span class="mod-icon">{{ mod.icon }}</span>
+          <div class="mod-t">
+            <h2 class="mod-name">{{ mod.name }}</h2>
+            <span class="mod-meta">{{ mod.datasets.length }} 个数据集 · {{ mod.totalRecords }} 条记录{{ mod.description ? ' · ' + mod.description : '' }}</span>
+          </div>
+          <div class="mod-actions">
+            <button class="text-btn" :class="{ on: !mod.aiCollapsed }" title="AI 业务分析" @click="toggleAi(mod)">
+              <AppIcon name="sparkles" :size="13" />AI 分析
+              <em v-if="!mod.aiLoading && mod.aiAnalysis">{{ formatDate(mod.aiAnalysis.created_at) }}</em>
+            </button>
+            <button class="text-btn" title="新建数据集" @click="showAddDatasetFor(mod)">
+              <AppIcon name="plus" :size="13" />数据集
+            </button>
+            <button class="icon-btn" title="编辑模块" @click="showEditModule(mod)"><AppIcon name="pencil" :size="13" /></button>
+            <button class="icon-btn" title="删除模块" @click="deleteModule(mod)"><AppIcon name="trash" :size="13" /></button>
+          </div>
+        </div>
+
+        <!-- AI 业务分析抽屉 -->
+        <div v-if="!mod.aiCollapsed" class="ai-drawer">
+          <div v-if="mod.aiLoading" class="ai-loading">
+            <div class="spinner"></div>
+            <span>AI 正在分析业务数据...</span>
+          </div>
+          <div v-else-if="mod.aiAnalysis" class="ai-content">
+            <div class="ai-text markdown-body" v-html="renderMarkdown(mod.aiAnalysis.content)"></div>
+            <div class="ai-bar">
+              <button class="text-btn" @click="refreshAiAnalysis(mod, true)"><AppIcon name="refresh-cw" :size="12" />刷新</button>
+              <button class="text-btn" @click="archiveAnalysis(mod)" :disabled="mod.saving"><AppIcon name="download" :size="12" />存档到默认项目</button>
+            </div>
+          </div>
+          <div v-else class="ai-loading">
+            <div class="spinner"></div>
+            <span>AI 正在分析...</span>
+          </div>
+        </div>
+
+        <!-- 数据集卡片网格 -->
+        <div class="ds-grid">
+          <div v-for="ds in visibleDatasets(mod)" :key="ds.datasetId" class="ds-card">
+            <div class="ds-card-head" title="查看全部记录" @click="openFullView(mod, ds)">
+              <span class="ds-name">{{ ds.name }}</span>
+              <span class="ds-count">{{ ds.recordCount }} 条</span>
+            </div>
+            <div class="ds-status" v-if="statusChips(ds).length">
+              <span v-for="sc in statusChips(ds)" :key="sc.status" class="badge" :class="statusTone(sc.status)">
+                {{ sc.status }}<b>{{ sc.count }}</b>
+              </span>
+            </div>
+            <table class="mini-table" v-if="ds.recentRecords && ds.recentRecords.length > 0">
+              <thead>
+                <tr>
+                  <th v-for="col in getPreviewColumns(ds)" :key="col">{{ displayName(ds, col) }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="rec in ds.recentRecords.slice(0, 3)" :key="rec.id" @click="viewRecordPortal(rec, ds)">
+                  <td v-for="col in getPreviewColumns(ds)" :key="col" :title="rec[col] || ''">{{ truncateText(formatFieldValue(schemaFieldsMap(ds)[col], rec[col]), 24) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="ds-none">暂无记录</div>
+            <div class="ds-foot">
+              <button class="text-btn" @click="openFullView(mod, ds)">查看全部<AppIcon name="chevron-right" :size="11" /></button>
+              <button class="text-btn" @click="showAddRecord(ds)"><AppIcon name="plus" :size="12" />记录</button>
+              <span class="grow"></span>
+              <button class="text-btn" @click="showEditDatasetPortal(mod, ds)">编辑</button>
+              <button class="text-btn text-btn-del" @click="deleteDatasetPortal(mod, ds)">删除</button>
+            </div>
+          </div>
+          <button class="ds-card ds-add" @click="showAddDatasetFor(mod)">
+            <AppIcon name="plus" :size="14" /><span>新建数据集</span>
+          </button>
+        </div>
+      </section>
+
+      <div v-if="visibleModules.length === 0" class="none-row">没有匹配「{{ keyword }}」的模块或数据集</div>
+    </template>
+
+    <!-- ========== 空状态：内置模板向导 ========== -->
+    <template v-else>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">数据</h1>
+          <p class="page-sub">选择一套或多套内置模板一键初始化，也可以手动新建模块</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-sm btn-secondary" @click="showAddModule"><AppIcon name="plus" :size="13" />新建模块</button>
+        </div>
+      </header>
+      <section class="panel suite-panel">
+        <div class="sec-label"><AppIcon name="archive" :size="13" />内置数据集模板<em>勾选后一键初始化，含示例数据</em></div>
+        <div class="suite-grid">
+          <div
+            v-for="s in suites"
+            :key="s.id"
+            class="suite-card"
+            :class="{ selected: selectedSuiteIds.includes(s.id) }"
+            @click="toggleSuite(s.id)"
+          >
+            <div class="suite-check">✓</div>
+            <div class="suite-icon">{{ s.icon }}</div>
+            <div class="suite-name">{{ s.name }}</div>
+            <div class="suite-desc">{{ s.description }}</div>
+            <div class="suite-meta">{{ s.datasetCount }} 个数据集 · {{ s.sampleCount }} 条示例数据</div>
+          </div>
+        </div>
+        <div class="suite-actions">
+          <button class="btn btn-primary" @click="applySelectedSuites" :disabled="selectedSuiteIds.length === 0">
+            初始化所选（{{ selectedSuiteIds.length }} 套）
+          </button>
+        </div>
+      </section>
+    </template>
 
     <!-- 内置模板弹窗 -->
     <div v-if="showSuitesModalFlag" class="modal-overlay" @click="showSuitesModalFlag = false">
       <div class="modal-box modal-box-wide" @click.stop>
         <div class="modal-header">
-          <h3>📦 内置数据集模板</h3>
+          <h3><AppIcon name="archive" :size="14" />内置数据集模板</h3>
           <button class="btn btn-secondary" @click="showSuitesModalFlag = false">✕</button>
         </div>
         <div class="modal-body">
@@ -184,7 +193,7 @@
     <div v-if="fullViewVisible" class="modal-overlay" @click="closeFullView">
       <div class="modal-box modal-box-wide" @click.stop>
         <div class="modal-header">
-          <h3>📋 {{ fullViewDs?.name || '数据集' }}</h3>
+          <h3><AppIcon name="clipboard-list" :size="14" />{{ fullViewDs?.name || '数据集' }}</h3>
           <div class="modal-header-actions">
             <span class="modal-badge">{{ fullViewDs?.recordCount || 0 }} 条记录</span>
             <button class="btn btn-secondary" @click="closeFullView">✕</button>
@@ -196,8 +205,8 @@
               <input type="text" v-model="fullViewKeyword" placeholder="搜索记录..." @keyup.enter="loadFullViewRecords()">
             </div>
             <button class="btn btn-sm btn-secondary" @click="loadFullViewRecords()">搜索</button>
-            <button class="btn btn-sm btn-primary" @click="showAddRecord">+ 记录</button>
-            <button class="btn btn-sm btn-secondary" @click="showImportModal">📥 导入</button>
+            <button class="btn btn-sm btn-primary" @click="showAddRecord()"><AppIcon name="plus" :size="12" />记录</button>
+            <button class="btn btn-sm btn-secondary" @click="showImportModal">导入</button>
           </div>
           <table class="data-table" v-if="fullViewRecords.length > 0">
             <thead>
@@ -206,17 +215,17 @@
                 <th v-for="col in fullViewColumns" :key="col" class="th-data">{{ (fullViewFieldsMap[col] && fullViewFieldsMap[col].displayName) || col }}</th>
               </tr>
             </thead>
-<tbody>
-                <tr v-for="rec in fullViewRecords" :key="rec.id" class="fv-row" @click="viewRecordPortal(rec, fullViewDs)">
-                  <td class="td-status" @click.stop><span class="badge badge-gray">{{ rec.status || '无' }}</span></td>
-                  <td v-for="col in fullViewColumns" :key="col" class="td-data" :title="rec[col] || ''">{{ truncateText(formatFieldValue(fullViewFieldsMap[col], rec[col]), 30) || '' }}</td>
-                </tr>
-              </tbody>
+            <tbody>
+              <tr v-for="rec in fullViewRecords" :key="rec.id" class="fv-row" @click="viewRecordPortal(rec, fullViewDs)">
+                <td class="td-status" @click.stop><span class="badge badge-gray">{{ rec.status || '无' }}</span></td>
+                <td v-for="col in fullViewColumns" :key="col" class="td-data" :title="rec[col] || ''">{{ truncateText(formatFieldValue(fullViewFieldsMap[col], rec[col]), 30) || '' }}</td>
+              </tr>
+            </tbody>
           </table>
           <div v-else class="right-empty">
             <div class="empty-icon">📝</div>
             <div class="empty-title">暂无记录</div>
-            <button class="btn btn-primary btn-sm" @click="showAddRecord">+ 新增记录</button>
+            <button class="btn btn-primary btn-sm" @click="showAddRecord()">+ 新增记录</button>
           </div>
         </div>
       </div>
@@ -420,8 +429,8 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-danger" @click="deleteFromDetail">🗑️ 删除</button>
-          <button class="btn btn-primary" @click="editFromDetail">✏️ 编辑</button>
+          <button class="btn btn-danger" @click="deleteFromDetail">删除</button>
+          <button class="btn btn-primary" @click="editFromDetail">编辑</button>
           <button class="btn btn-secondary" @click="showDetailModal = false">关闭</button>
         </div>
       </div>
@@ -431,15 +440,15 @@
     <div v-if="showImportModalFlag" class="modal-overlay" @click="showImportModalFlag = false">
       <div class="modal-box" @click.stop>
         <div class="modal-header">
-          <h3>📥 数据导入</h3>
+          <h3>数据导入</h3>
           <button class="btn btn-secondary" @click="showImportModalFlag = false">✕</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
             <label>导入方式</label>
             <div class="import-type-btns">
-              <button class="btn" :class="importType === 'json' ? 'btn-primary' : 'btn-secondary'" @click="importType = 'json'">📝 JSON</button>
-              <button class="btn" :class="importType === 'url' ? 'btn-primary' : 'btn-secondary'" @click="importType = 'url'">🔗 URL</button>
+              <button class="btn" :class="importType === 'json' ? 'btn-primary' : 'btn-secondary'" @click="importType = 'json'">JSON</button>
+              <button class="btn" :class="importType === 'url' ? 'btn-primary' : 'btn-secondary'" @click="importType = 'url'">URL</button>
             </div>
           </div>
           <div v-if="importType === 'json'" class="form-group">
@@ -461,7 +470,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 import AppIcon from '@/components/AppIcon.vue';
@@ -516,21 +525,66 @@ interface DatasetData {
   description: string;
   schema: any;
   recordCount: number;
+  statusCounts?: { status: string; count: number }[];
   recentRecords: any[];
 }
 
 const modules = ref<ModuleData[]>([]);
-const activeModuleId = ref<string | null>(null);
+const loaded = ref(false);
 
-const activeModule = computed(() => {
-  if (!activeModuleId.value) return null;
-  return modules.value.find(m => m.id === activeModuleId.value) || null;
+// ========== 全景筛选 ==========
+const filterId = ref<string>('all');
+const keyword = ref('');
+
+const kw = computed(() => keyword.value.trim().toLowerCase());
+
+const visibleModules = computed(() => {
+  const k = kw.value;
+  return modules.value.filter(m => {
+    if (filterId.value !== 'all' && filterId.value !== m.id) return false;
+    if (!k) return true;
+    return m.name.toLowerCase().includes(k)
+      || m.datasets.some(d => d.name.toLowerCase().includes(k) || (d.description || '').toLowerCase().includes(k));
+  });
 });
+
+function visibleDatasets(mod: ModuleData): DatasetData[] {
+  const k = kw.value;
+  if (!k || mod.name.toLowerCase().includes(k)) return mod.datasets;
+  return mod.datasets.filter(d =>
+    d.name.toLowerCase().includes(k) || (d.description || '').toLowerCase().includes(k));
+}
+
+const totalDatasets = computed(() => modules.value.reduce((s, m) => s + m.datasets.length, 0));
+const totalRecords = computed(() => modules.value.reduce((s, m) => s + m.totalRecords, 0));
+const todayRecords = ref(0);
+
+const pageDateStr = computed(() => {
+  const d = new Date();
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+});
+
+// 状态语气：完结类→绿，停滞/流失类→灰，待动类→橙，其余→主色
+const POSITIVE_STATUS = ['完成', '成交', '到账', '达成', '通过', '录用', '出库', '入库', '修复', '招满'];
+const NEGATIVE_STATUS = ['流失', '淘汰', '报废', '停用', '终止', '失败', '未通过', '逾期', '关闭', '暂停', '闲置'];
+function statusTone(status: string): string {
+  if (status === '无') return 'badge-gray';
+  if (NEGATIVE_STATUS.some(s => status.includes(s))) return 'badge-gray';
+  if (POSITIVE_STATUS.some(s => status.includes(s))) return 'badge-success';
+  if (status.includes('待')) return 'badge-warning';
+  return 'badge-primary';
+}
+
+/** 状态分布展示：无状态(无)桶是噪音——有其他状态时单独丢弃，只剩「无」时整行隐藏 */
+function statusChips(ds: DatasetData): { status: string; count: number }[] {
+  const chips = (ds.statusCounts || []).filter(sc => sc.status !== '无');
+  return chips;
+}
 
 // ========== 数据加载 ==========
 
 async function loadAll() {
-  if (!API) return;
+  if (!API) { loaded.value = true; return; }
   try {
     const modList = await API.dm.list();
     const overviews = await Promise.all(
@@ -555,11 +609,16 @@ async function loadAll() {
       });
     }
     modules.value = result;
-    if (result.length > 0) {
-      activeModuleId.value = result[0].id;
-      ensureAiAnalysis(result[0]);
-    }
   } catch (e) { console.error('加载模块数据失败:', e); }
+  loaded.value = true;
+}
+
+async function loadTodayStats() {
+  if (!API) return;
+  try {
+    const s = await API.insights.stats();
+    todayRecords.value = s.todayDataRecords || 0;
+  } catch { /* 统计失败不影响页面 */ }
 }
 
 // ========== 内置模板 ==========
@@ -672,6 +731,7 @@ async function deleteModule(mod: ModuleData) {
   if (!API) return;
   try {
     await API.dm.remove(mod.id);
+    if (filterId.value === mod.id) filterId.value = 'all';
     await loadAll();
   } catch (e) { console.error('删除模块失败:', e); }
 }
@@ -682,9 +742,9 @@ const showDsModal = ref(false);
 const editingDsId = ref<string | number>('');
 const dsForm = ref({ name: '', moduleId: '', description: '', fields: [] as FieldDef[], typeOptions: '', statusOptions: '' });
 
-function showAddDataset() {
+function showAddDatasetFor(mod?: ModuleData) {
   editingDsId.value = '';
-  dsForm.value = { name: '', moduleId: '', description: '', fields: [newFieldRow()], typeOptions: '', statusOptions: '' };
+  dsForm.value = { name: '', moduleId: mod ? mod.id : '', description: '', fields: [newFieldRow()], typeOptions: '', statusOptions: '' };
   showDsModal.value = true;
 }
 
@@ -794,32 +854,9 @@ function ensureAiAnalysis(mod: ModuleData) {
   }
 }
 
-// 模块列表浮层（不再常驻第三栏）：记忆开合状态，点击外部 / Esc 关闭
-const moduleListOpen = ref(localStorage.getItem('qihang-data-modules') === '1');
-function toggleModuleList() {
-  moduleListOpen.value = !moduleListOpen.value;
-  localStorage.setItem('qihang-data-modules', moduleListOpen.value ? '1' : '0');
-}
-function onGlobalClickModuleList() { moduleListOpen.value = false; }
-function onEscModuleList(e: KeyboardEvent) { if (e.key === 'Escape') moduleListOpen.value = false; }
-onMounted(() => {
-  document.addEventListener('click', onGlobalClickModuleList);
-  document.addEventListener('keydown', onEscModuleList);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener('click', onGlobalClickModuleList);
-  document.removeEventListener('keydown', onEscModuleList);
-});
-
-function switchModule(mod: ModuleData) {
-  moduleListOpen.value = false;
-  activeModuleId.value = mod.id;
-  mod.aiCollapsed = true;
-  ensureAiAnalysis(mod);
-}
-
-function toggleAiCollapse(mod: ModuleData) {
+function toggleAi(mod: ModuleData) {
   mod.aiCollapsed = !mod.aiCollapsed;
+  if (!mod.aiCollapsed) ensureAiAnalysis(mod);
 }
 
 async function refreshAiAnalysis(mod: ModuleData, force?: boolean) {
@@ -1079,6 +1116,11 @@ function schemaFieldsMap(ds: any): Record<string, FieldDef> {
   return map;
 }
 
+function displayName(ds: any, col: string): string {
+  const f = schemaFieldsMap(ds)[col];
+  return (f && f.displayName) || col;
+}
+
 function formatFieldValue(field: FieldDef | undefined, value: any): string {
   if (value === null || value === undefined || value === '') return '';
   if (field && field.type === 'money') {
@@ -1097,8 +1139,8 @@ function buildRecordColumns(recs: any[]): string[] {
 function getPreviewColumns(ds: DatasetData): string[] {
   if (!ds.recentRecords || ds.recentRecords.length === 0) return [];
   const schemaCols = getSchemaFields(ds).map(f => f.name).filter(n => !['status', 'id', 'type', '类型'].includes(n));
-  if (schemaCols.length) return schemaCols.slice(0, 8);
-  return buildRecordColumns(ds.recentRecords);
+  const cols = schemaCols.length ? schemaCols : buildRecordColumns(ds.recentRecords);
+  return cols.slice(0, 4);
 }
 
 function truncateText(text: string, maxLen: number): string {
@@ -1122,84 +1164,149 @@ function renderMarkdown(text: string): string {
 onMounted(async () => {
   await loadAll();
   await loadSuites();
+  loadTodayStats();
   // 工具箱跳转：?action=import 自动打开导入弹窗
   if (route.query.action === 'import') showImportModal();
 });
 </script>
 
 <style scoped>
-.data-view {
-  display: flex; flex-direction: column; height: 100%;
-}
-.content-header {
-  padding: 12px 20px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between;
-  flex-shrink: 0; background: var(--surface);
-}
-.content-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
-.header-actions { display: flex; gap: 8px; }
-.content-body {
-  flex: 1; display: flex; overflow: hidden; position: relative;
-}
+/* ========== 页头 ========== */
+.filter-input { width: 190px; padding: 6px 10px; font-size: 12.5px; }
+.statline { display: flex; gap: 14px; flex-wrap: wrap; }
+.statline b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.statline .acc { color: var(--primary); }
 
-/* ========== 模块列表浮层（不再常驻第三栏） ========== */
-.module-sidebar.as-flyout {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  bottom: 12px;
-  width: 240px;
-  min-width: 0;
-  z-index: 60;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
-  display: none;
-  flex-direction: column;
-  overflow: hidden;
+/* ========== 模块筛选 chips ========== */
+.mod-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.mod-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-secondary); font: inherit; font-size: 12px;
+  cursor: pointer; transition: all 0.15s;
 }
-.module-sidebar.as-flyout.open { display: flex; }
+.mod-chip b { font-size: 10.5px; color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mod-chip:hover { border-color: var(--primary); color: var(--primary); }
+.mod-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.mod-chip.active b { color: rgba(255, 255, 255, 0.8); }
 
-.flyout-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
+/* ========== 模块区块 ========== */
+.mod-panel { margin-bottom: 16px; }
+.mod-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.mod-icon { font-size: 18px; flex-shrink: 0; }
+.mod-t { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.mod-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.mod-meta {
+  font-size: 11.5px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mod-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+/* AI 抽屉 */
+.ai-drawer { padding: 14px 16px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.ai-loading { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13px; padding: 4px 0; }
+.ai-text { font-size: 13px; }
+.ai-bar { display: flex; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+/* ========== 数据集卡片网格 ========== */
+.ds-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px; padding: 14px 16px;
+}
+.ds-card {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-md); overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ds-card:hover { border-color: rgba(var(--primary-rgb), 0.45); box-shadow: var(--shadow-sm); }
+.ds-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px 8px; cursor: pointer;
+}
+.ds-name {
+  font-size: 13.5px; font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ds-card-head:hover .ds-name { color: var(--primary); }
+.ds-count {
+  font-size: 11px; color: var(--text-muted); background: var(--hover);
+  padding: 1px 8px; border-radius: 10px; flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ds-status { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 12px 10px; }
+.ds-status .badge { font-size: 10.5px; padding: 2px 7px; gap: 3px; }
+.ds-status .badge b { font-weight: 600; }
+
+/* 迷你预览表 */
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12px; border-top: 1px solid var(--border); }
+.mini-table th {
+  text-align: left; padding: 6px 12px; background: var(--surface);
+  border-bottom: 1px solid var(--border); font-weight: 500;
+  color: var(--text-muted); font-size: 11px; white-space: nowrap;
+}
+.mini-table td {
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.flyout-toggle:hover {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-soft);
+.mini-table tbody tr { cursor: pointer; }
+.mini-table tbody tr:hover { background: var(--hover); }
+.mini-table tbody tr:hover td { color: var(--text-primary); }
+.mini-table tbody tr:last-child td { border-bottom: none; }
+.ds-none { padding: 16px 12px; font-size: 12px; color: var(--text-muted); text-align: center; }
+.ds-foot {
+  display: flex; align-items: center; gap: 2px;
+  padding: 6px 8px; border-top: 1px solid var(--border); margin-top: auto;
 }
-.content-empty {
+.ds-foot .grow { flex: 1; }
+.ds-add {
+  border-style: dashed; background: transparent;
+  color: var(--text-muted); align-items: center; justify-content: center;
+  flex-direction: row; gap: 6px; min-height: 64px;
+  cursor: pointer; font-size: 13px; font-family: inherit;
+}
+.ds-add:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); box-shadow: none; }
+
+/* ========== 文本按钮 ========== */
+.text-btn {
+  background: none; border: none; cursor: pointer; font-size: 12px;
+  color: var(--text-secondary); padding: 4px 8px; border-radius: 4px;
+  display: inline-flex; align-items: center; gap: 4px; font-family: inherit;
+}
+.text-btn:hover { background: var(--hover); color: var(--primary); }
+.text-btn-del:hover { color: var(--danger); }
+.text-btn:disabled { opacity: 0.5; cursor: default; }
+.text-btn.on { background: var(--primary-soft); color: var(--primary); }
+.text-btn em { font-style: normal; font-size: 10.5px; color: var(--text-muted); }
+
+/* ========== 空状态 ========== */
+.none-row { padding: 40px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
+.empty-icon { font-size: 40px; margin-bottom: 10px; opacity: 0.4; }
+.empty-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary); }
+.right-empty {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center; color: var(--text-muted);
+  padding: 40px 0;
 }
-.empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
-.empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
-.empty-desc { font-size: 13px; }
+
+/* ========== 内置模板 ========== */
+.suite-panel { padding: 16px; }
 .suite-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 12px; width: 100%; max-width: 900px;
-  margin-top: 20px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px; margin-top: 4px;
 }
 .suite-card {
   position: relative; border: 1px solid var(--border);
   border-radius: 8px; padding: 14px 16px; cursor: pointer;
   background: var(--surface); text-align: left; transition: all 0.2s;
 }
-.suite-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(var(--primary-rgb),0.12); }
-.suite-card.selected { border-color: var(--primary); background: var(--surface-2); box-shadow: 0 0 0 3px rgba(var(--primary-rgb),0.15); }
+.suite-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(var(--primary-rgb), 0.12); }
+.suite-card.selected { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.15); }
 .suite-check {
   position: absolute; top: 10px; right: 10px;
   width: 18px; height: 18px; border-radius: 50%;
@@ -1218,148 +1325,13 @@ onMounted(async () => {
   padding: 1px 8px; border-radius: 10px;
 }
 .suite-card.installed { opacity: 0.55; cursor: default; }
-.empty-actions { margin-top: 20px; }
+.suite-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
 .footer-hint { font-size: 12px; color: var(--text-muted); margin-right: auto; }
 
-/* ---- Sidebar ---- */
-.module-sidebar {
-  width: 200px; min-width: 200px;
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  background: var(--surface-2);
-}
-.sidebar-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.sidebar-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.sidebar-add {
-  width: 22px; height: 22px; border-radius: 4px;
-  border: none; background: transparent;
-  font-size: 16px; line-height: 1; cursor: pointer;
-  color: var(--text-muted); display: flex; align-items: center; justify-content: center;
-}
-.sidebar-add:hover { background: var(--hover); color: var(--primary); }
-.sidebar-list { flex: 1; overflow-y: auto; padding: 4px 0; }
-.sidebar-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 8px 16px; cursor: pointer;
-  font-size: 13px; color: var(--text-secondary);
-  border-left: 3px solid transparent;
-  transition: none;
-}
-.sidebar-item:hover { background: var(--hover); color: var(--text-primary); }
-.sidebar-item.active { background: var(--surface); color: var(--text-primary); border-left-color: var(--primary); font-weight: 500; }
-.sidebar-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-item-count { font-size: 11px; color: var(--text-muted); }
-.sidebar-item-actions { display: none; gap: 2px; flex-shrink: 0; }
-.sidebar-item.active .sidebar-item-actions { display: flex; }
-.si-btn {
-  background: none; border: none; cursor: pointer; font-size: 13px;
-  padding: 0 3px; color: var(--text-muted); line-height: 1;
-}
-.si-btn:hover { color: var(--text-primary); }
-.si-btn-del:hover { color: var(--danger); }
-
-/* ---- Main ---- */
-.module-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.main-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 24px; border-bottom: 1px solid var(--border);
-  background: var(--surface); flex-shrink: 0;
-}
-.main-title { display: flex; align-items: baseline; gap: 10px; }
-.main-title h2 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
-.main-meta { font-size: 12px; color: var(--text-muted); }
-.main-actions { display: flex; gap: 8px; }
-.main-content { flex: 1; overflow-y: auto; }
-.panel-placeholder {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  color: var(--text-muted); font-size: 14px;
-}
-
-/* ---- AI Collapse ---- */
-.ai-collapse { border-bottom: 1px solid var(--border); }
-.ai-collapse-header {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 24px; cursor: pointer; user-select: none;
-  background: var(--surface-2);
-}
-.ai-collapse-header:hover { background: var(--primary-soft); }
-.ai-icon { font-size: 15px; }
-.ai-label { font-size: 13px; font-weight: 500; color: var(--text-primary); flex: 1; }
-.ai-status { font-size: 12px; color: var(--primary); }
-.ai-date { font-size: 11px; color: var(--text-muted); }
-.ai-toggle { font-size: 12px; color: var(--primary); }
-.ai-collapse-body { padding: 16px 24px 20px; background: var(--surface-2); }
-.ai-loading { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13px; }
-.ai-text { font-size: 14px; line-height: 1.8; color: var(--text-primary); }
-.ai-text :deep(pre) { background: var(--hover); padding: 12px 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 12px 0; }
-.ai-text :deep(code) { font-size: 13px; background: var(--hover); padding: 2px 5px; border-radius: 3px; }
-.ai-text :deep(h1) { font-size: 18px; margin: 20px 0 8px; }
-.ai-text :deep(h2) { font-size: 16px; margin: 16px 0 6px; }
-.ai-text :deep(h3) { font-size: 14px; margin: 12px 0 4px; }
-.ai-text :deep(p) { margin: 6px 0; }
-.ai-text :deep(ul) { padding-left: 20px; margin: 6px 0; }
-.ai-text :deep(li) { margin: 3px 0; }
-.ai-text :deep(blockquote) { border-left: 3px solid var(--primary); padding-left: 12px; margin: 8px 0; color: var(--text-secondary); }
-.ai-text :deep(strong) { font-weight: 600; }
-.ai-bar {
-  display: flex; gap: 12px; margin-top: 20px; padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-/* ---- Data Section ---- */
-.data-section { padding: 16px 24px; display: flex; flex-direction: column; gap: 16px; }
-.ds-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 8px; overflow: hidden;
-}
-.ds-card-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; border-bottom: 1px solid var(--border);
-}
-.ds-card-title { display: flex; align-items: center; gap: 8px; }
-.ds-card-name { font-size: 14px; font-weight: 500; color: var(--text-primary); }
-.ds-card-count { font-size: 12px; color: var(--text-muted); }
-.ds-card-actions { display: flex; align-items: center; gap: 8px; }
-
-/* Preview Table */
-.preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.preview-table th {
-  text-align: left; padding: 8px 14px; background: var(--surface-2);
-  border-bottom: 1px solid var(--border); font-weight: 500;
-  color: var(--text-secondary); font-size: 12px;
-}
-.preview-table td { padding: 8px 14px; border-bottom: 1px solid var(--border); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.preview-table tr:last-child td { border-bottom: none; }
-.preview-table tbody tr:hover { background: #f8f9fb; }
-.th-actions { width: 56px; }
-.row-actions { white-space: nowrap; opacity: 0; }
-.preview-table tbody tr:hover .row-actions { opacity: 1; }
-.row-btn {
-  background: none; border: none; cursor: pointer; font-size: 12px;
-  color: var(--text-muted); padding: 2px 5px; border-radius: 3px;
-}
-.row-btn:hover { color: var(--text-primary); background: var(--hover); }
-.row-btn-del:hover { color: var(--danger); }
-.ds-empty { padding: 12px 16px; font-size: 13px; color: var(--text-muted); }
-.ds-empty-large { padding: 40px 0; text-align: center; color: var(--text-muted); font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-
-/* Text Button */
-.text-btn {
-  background: none; border: none; cursor: pointer; font-size: 12px;
-  color: var(--text-secondary); padding: 4px 8px; border-radius: 4px;
-}
-.text-btn:hover { background: var(--hover); color: var(--primary); }
-.text-btn-del:hover { color: var(--danger); }
-
-/* Full View Modal */
+/* ========== 全量查看弹窗 ========== */
 .fv-row { cursor: pointer; }
 .fv-row:hover { background: var(--hover); }
 .fv-row td { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pv-row { cursor: pointer; }
 .modal-header-actions { display: flex; align-items: center; gap: 8px; }
 .modal-badge { font-size: 12px; color: var(--text-muted); background: var(--hover); padding: 2px 8px; border-radius: 10px; }
 .fullview-toolbar {
@@ -1370,9 +1342,7 @@ onMounted(async () => {
   width: 100%; padding: 6px 10px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); font-size: 13px; outline: none;
 }
-.search-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(var(--primary-rgb),0.1); }
-
-/* Data Table (full view) */
+.search-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.1); }
 .data-table {
   width: 100%; border-collapse: collapse; font-size: 13px;
   background: var(--surface); border-spacing: 0;
@@ -1386,10 +1356,9 @@ onMounted(async () => {
 .data-table tr:hover { background: var(--hover); }
 .th-status { width: 80px; }
 .td-status { text-align: center; }
-.th-data { }
 .td-data { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Modals */
+/* ========== 通用弹窗 ========== */
 .modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.5); display: flex;
@@ -1397,7 +1366,7 @@ onMounted(async () => {
 }
 .modal-box {
   background: var(--surface); border-radius: var(--radius-md);
-  box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 90%;
+  box-shadow: var(--shadow-lg); max-width: 90%;
   max-height: 90vh; overflow-y: auto; width: 480px;
 }
 .modal-box-ds { width: 720px; max-width: 720px; }
@@ -1409,12 +1378,14 @@ onMounted(async () => {
   padding: 14px 20px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between;
 }
-.modal-header h3 { font-size: 15px; font-weight: 600; }
+.modal-header h3 { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .modal-body { padding: 18px 20px; }
 .modal-footer {
   padding: 14px 20px; border-top: 1px solid var(--border);
   display: flex; align-items: center; justify-content: flex-end; gap: 8px;
 }
+
+/* ========== 表单 ========== */
 .form-group { margin-bottom: 12px; }
 .form-group label {
   display: block; font-size: 12px; font-weight: 500;
@@ -1422,12 +1393,6 @@ onMounted(async () => {
 }
 .label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
 .label-row label { margin-bottom: 0; }
-.form-control {
-  width: 100%; padding: 7px 10px; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); font-size: 13px; outline: none;
-  transition: all 0.2s; background: var(--surface); box-sizing: border-box;
-}
-.form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(var(--primary-rgb),0.1); }
 .form-control-sm { padding: 5px 8px; font-size: 12px; }
 textarea.form-control { resize: vertical; font-family: inherit; }
 .field-editor {
@@ -1451,21 +1416,12 @@ textarea.form-control { resize: vertical; font-family: inherit; }
 .detail-row .label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
 .detail-row .value { font-size: 13px; color: var(--text-primary); }
 .import-type-btns { display: flex; gap: 8px; }
-.right-empty {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; color: var(--text-muted);
-  padding: 40px 0;
-}
-.badge {
-  display: inline-flex; align-items: center; padding: 2px 8px;
-  border-radius: 20px; font-size: 12px; font-weight: 500;
-}
-.badge-gray { background: var(--hover); color: var(--text-muted); }
 
 .spinner {
   width: 16px; height: 16px; border: 2px solid var(--border);
   border-top-color: var(--primary); border-radius: 50%;
   animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
