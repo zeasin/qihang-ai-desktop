@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-PI]', msg, ...args);
 
@@ -174,8 +174,8 @@ export class PiCollector implements HubCollector {
   }
 
   /** 轻探针：mtime 在窗口内的 jsonl；sessionId 从缓存取，未缓存的做一次头部探针 */
-  async probe(): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
+  async probe(): Promise<Map<string, ProbeSignal>> {
+    const out = new Map<string, ProbeSignal>();
     const root = this.sessionsRoot();
     const cutoff = Date.now() - 10 * 60_000;
     let dirs: string[];
@@ -203,7 +203,7 @@ export class PiCollector implements HubCollector {
           meta = this.probeFile(full, stat);
           this.cache.set(full, { mtimeMs: stat.mtimeMs, size: stat.size, meta });
         }
-        if (meta.id) out.set(meta.id, stat.mtimeMs);
+        if (meta.id) out.set(meta.id, { ts: stat.mtimeMs });
       }
     }
     return out;

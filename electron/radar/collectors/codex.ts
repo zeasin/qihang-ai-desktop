@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-CODEX]', msg, ...args);
 
@@ -240,8 +240,8 @@ export class CodexCollector implements HubCollector {
   }
 
   /** 轻探针：mtime 在窗口内的 rollout 文件；sessionId 从缓存取，未缓存的做一次头部探针 */
-  async probe(): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
+  async probe(): Promise<Map<string, ProbeSignal>> {
+    const out = new Map<string, ProbeSignal>();
     const cutoff = Date.now() - 10 * 60_000;
     for (const full of this.listRolloutFiles(this.sessionsRoot())) {
       let stat: fs.Stats;
@@ -259,7 +259,7 @@ export class CodexCollector implements HubCollector {
         meta = this.probeFile(full, stat);
         this.cache.set(full, { mtimeMs: stat.mtimeMs, size: stat.size, meta });
       }
-      if (meta.sessionId) out.set(meta.sessionId, stat.mtimeMs);
+      if (meta.sessionId) out.set(meta.sessionId, { ts: stat.mtimeMs });
     }
     return out;
   }

@@ -122,6 +122,7 @@
     ],
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**",
+      "**/node_modules/fzstd/**",
       "**/dist-electron/electron/radar/**"
     ],
     "win": {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as fzstd from 'fzstd';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-DSH]', msg, ...args);
 
@@ -66,13 +66,13 @@ export class DshCollector implements HubCollector {
     return out;
   }
 
-  /** 只解到能拿到 meta/title/messageCount 为止（标题一般在文件前部，读到即停） */
+  /** 只解到能拿到 meta/title 为止（标题一般在文件前部，读到即停）；尾部另做 turn 开合回扫 */
   private async parseLogMeta(file: string): Promise<ParsedLog> {
     const stat = fs.statSync(file);
     const cached = this.metaCache.get(file);
     if (cached && cached.mtimeMs === stat.mtimeMs) return cached.parsed;
 
-    const parsed: ParsedLog = { meta: null, title: '', messageCount: 0 };
+    const parsed: ParsedLog = { meta: null, title: '', messageCount: 0, turnOpen: null };
     try {
       const decompress = await getZstd();
       const raw = await decompress(fs.readFileSync(file));
@@ -98,6 +98,14 @@ export class DshCollector implements HubCollector {
           }
         }
         if (parsed.meta?.id && parsed.title) break;
+      }
+      // 回合开合回扫：turn/start 与 turn/end 谁在后就是权威状态（事件按序追加，尾部的几行就够了）。
+      // DSH 显式发这两个事件，比 mtime 时间窗精确——turn/end 落盘即回合格已收口。
+      for (let i = lines.length - 1; i >= 0; i--) {
+        let evt: DshSessionEvent;
+        try { evt = JSON.parse(lines[i]); } catch { continue; }
+        if (evt.type === 'turn/start') { parsed.turnOpen = true; break; }
+        if (evt.type === 'turn/end') { parsed.turnOpen = false; break; }
       }
     } catch (e) {
       LOG('parseLogMeta error:', file, e);
@@ -186,9 +194,11 @@ export class DshCollector implements HubCollector {
     return messages;
   }
 
-  /** 轻探针：mtime 在窗口内的会话文件；id 走 meta 缓存（首次一个文件解压一次） */
-  async probe(): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
+  /** 轻探针：mtime 在窗口内的会话文件；id 走 meta 缓存（首次一个文件解压一次）。
+   *  DSH 日志带显式 turn/start / turn/end 事件——尾部回扫可判回合开合，实报精确信号：
+   *  turn 开着 = running，已收口 = idle（秒级，不等时间窗）。崩掉的回合（只有 start 没有 end）由监控侧 45 分钟兜底。 */
+  async probe(): Promise<Map<string, ProbeSignal>> {
+    const out = new Map<string, ProbeSignal>();
     const cutoff = Date.now() - 10 * 60_000;
     try {
       for (const file of this.sessionLogPaths()) {
@@ -200,7 +210,12 @@ export class DshCollector implements HubCollector {
         }
         if (stat.mtimeMs <= cutoff) continue;
         const parsed = await this.parseLogMeta(file);
-        if (parsed.meta?.id) out.set(parsed.meta.id, stat.mtimeMs);
+        if (parsed.meta?.id) {
+          const sig: ProbeSignal = { ts: stat.mtimeMs };
+          if (parsed.turnOpen === true) sig.running = true;
+          else if (parsed.turnOpen === false) sig.running = false;
+          out.set(parsed.meta.id, sig);
+        }
       }
     } catch (e) {
       LOG('probe error:', e);
@@ -224,6 +239,8 @@ interface ParsedLog {
   meta: { id: string; cwd: string; createdAt: number } | null;
   title: string;
   messageCount: number;
+  /** 回合开合（尾部 turn/start vs turn/end 回扫）：true=回合进行中；false=已收口；null=日志无回合标记 */
+  turnOpen: boolean | null;
 }
 
 function textOf(content: any[]): string {

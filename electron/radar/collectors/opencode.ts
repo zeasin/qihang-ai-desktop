@@ -3,7 +3,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { openSqliteReadonly } from '../sqlite-open';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-OPENCODE]', msg, ...args);
 
@@ -107,8 +107,8 @@ export class OpenCodeCollector implements HubCollector {
     }
   }
 
-  async probe(): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
+  async probe(): Promise<Map<string, ProbeSignal>> {
+    const out = new Map<string, ProbeSignal>();
     const db = this.openDb();
     if (!db) return out;
     try {
@@ -117,7 +117,7 @@ export class OpenCodeCollector implements HubCollector {
       const rows = db.prepare(
         `SELECT id, time_updated FROM session_v2 WHERE parent_id IS NULL AND time_updated > ?`,
       ).all(cutoff) as any[];
-      for (const r of rows) out.set(String(r.id), Number(r.time_updated));
+      for (const r of rows) out.set(String(r.id), { ts: Number(r.time_updated) });
     } catch (e) {
       LOG('probe error:', e);
     } finally {

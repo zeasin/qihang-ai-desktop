@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-TRAE]', msg, ...args);
 
@@ -113,8 +113,8 @@ export class TraeCollector implements HubCollector {
     }
   }
 
-  async probe(): Promise<Map<string, number>> {
-    return new Map(); // 加密库不做会话级探针（见类注释）
+  async probe(): Promise<Map<string, ProbeSignal>> {
+    return new Map<string, ProbeSignal>(); // 加密库不做会话级探针（见类注释）
   }
 
   async dispose(): Promise<void> {

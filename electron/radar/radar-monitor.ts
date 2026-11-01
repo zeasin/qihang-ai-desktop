@@ -1,6 +1,6 @@
 import { RadarDb } from './radar-db';
 import type { RadarConfig } from './radar-config';
-import type { HubCollector } from './types';
+import type { HubCollector, ProbeSignal } from './types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-MONITOR]', msg, ...args);
 
@@ -15,12 +15,20 @@ interface RunningSession {
   tool: string;
   sessionId: string;
   lastActivity: number;
+  /** 探针实报的精确运行中（running=true）。collector 保证僵死回合会在有限时间内翻转为 false */
+  exact?: boolean;
+  /** 精确运行期间最后一次源库写入（监控侧兜底判定用） */
+  lastWrite?: number;
 }
+
+/** 精确运行的监控侧兜底：collector 30 分钟翻转，这里 45 分钟纯保险（探针持续报错等异常场景） */
+const EXACT_BACKSTOP_MS = 45 * 60_000;
 
 /**
  * 实时监控通道：每 monitorIntervalMs（默认 3s）跑一轮轻探针，
  * diff 出会话状态跃迁（running/idle）→ 订阅者扇出（渲染层推送等）+ 落本地 radar_state_event + 会话 state 投影。
- * 探针绝不解析消息内容——这是实时性与成本的全部保障。
+ * 探针只读元数据（mtime/回合状态），不解析消息正文——这是实时性与成本的全部保障。
+ * 有精确信号的会话（如 ZCode turn_usage）秒级跃迁；没有的退回「activeWindow 内有写入=运行，超时归位」推断。
  */
 export class RadarMonitorLoop {
   private timer: NodeJS.Timeout | null = null;
@@ -85,32 +93,69 @@ export class RadarMonitorLoop {
       const maxActivity = new Map<string, number>();
 
       for (const collector of this.collectors) {
-        let activity: Map<string, number>;
+        let activity: Map<string, ProbeSignal>;
         try {
           activity = await collector.probe();
         } catch (e: any) {
           LOG(`${collector.tool} probe error:`, String(e?.message || e).slice(0, 120));
           continue;
         }
-        for (const [id, ts] of activity) {
-          if (!ts || now - ts > this.cfg.activeWindowMs) continue;
-          const prevMax = maxActivity.get(collector.tool) || 0;
-          if (ts > prevMax) maxActivity.set(collector.tool, ts);
-
+        for (const [id, sig] of activity) {
+          const ts = sig?.ts || 0;
+          if (!ts) continue;
           const key = `${collector.tool}/${id}`;
           const prev = this.running.get(key);
+
+          if (sig.running === false) {
+            // 精确空闲：最新回合已结束（完成/出错/被打断）→ 立即归位，不等多分钟超时
+            if (prev) {
+              this.running.delete(key);
+              events.push({
+                tool: collector.tool, sessionId: id, state: 'idle',
+                ts: now - ts <= this.cfg.activeWindowMs ? ts : now,
+              });
+            }
+            continue;
+          }
+
+          if (sig.running === true) {
+            // 精确运行中：直接信任探针（僵死由 collector 兜底窗口翻转为 false）
+            if (!prev) {
+              this.running.set(key, { tool: collector.tool, sessionId: id, lastActivity: now, exact: true, lastWrite: ts });
+              events.push({ tool: collector.tool, sessionId: id, state: 'running', ts: Math.max(ts, now - 1000) });
+            } else {
+              prev.lastActivity = now;
+              prev.exact = true;
+              if (ts > (prev.lastWrite ?? 0)) prev.lastWrite = ts;
+            }
+            // 源库确有新写入才提示 ingest 提前跑（长工具静默期不刷采集轮）
+            if (now - ts <= this.cfg.activeWindowMs) {
+              const prevMax = maxActivity.get(collector.tool) || 0;
+              if (ts > prevMax) maxActivity.set(collector.tool, ts);
+            }
+            continue;
+          }
+
+          // 无精确信号：时间窗口推断（原逻辑）
+          if (now - ts > this.cfg.activeWindowMs) continue;
+          const prevMax = maxActivity.get(collector.tool) || 0;
+          if (ts > prevMax) maxActivity.set(collector.tool, ts);
           if (!prev) {
-            this.running.set(key, { tool: collector.tool, sessionId: id, lastActivity: ts });
+            this.running.set(key, { tool: collector.tool, sessionId: id, lastActivity: ts, lastWrite: ts });
             events.push({ tool: collector.tool, sessionId: id, state: 'running', ts: Math.max(ts, now - 1000) });
-          } else if (ts > prev.lastActivity) {
-            prev.lastActivity = ts;
+          } else {
+            if (ts > prev.lastActivity) prev.lastActivity = ts;
+            prev.exact = false;
           }
         }
       }
 
-      // 超时归位 idle
+      // 超时归位 idle（精确运行中见上，由 collector 翻转；此处兜底探针异常导致的滞留）
       for (const [key, r] of [...this.running]) {
-        if (now - Math.max(r.lastActivity, this.startedAt) > this.cfg.idleTimeoutMs) {
+        const deadline = r.exact
+          ? Math.max(r.lastWrite ?? 0, this.startedAt) + EXACT_BACKSTOP_MS
+          : Math.max(r.lastActivity, this.startedAt) + this.cfg.idleTimeoutMs;
+        if (now > deadline) {
           this.running.delete(key);
           events.push({ tool: r.tool, sessionId: r.sessionId, state: 'idle', ts: now });
         }

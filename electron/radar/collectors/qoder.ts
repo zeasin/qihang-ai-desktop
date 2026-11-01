@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openSqliteReadonly } from '../sqlite-open';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-QODER]', msg, ...args);
 
@@ -128,9 +128,9 @@ export class QoderCollector implements HubCollector {
     }
   }
 
-  async probe(): Promise<Map<string, number>> {
+  async probe(): Promise<Map<string, ProbeSignal>> {
     const db = await this.ensureDb();
-    const out = new Map<string, number>();
+    const out = new Map<string, ProbeSignal>();
     if (!db) return out;
     try {
       const cutoff = Date.now() - 10 * 60_000;
@@ -138,7 +138,7 @@ export class QoderCollector implements HubCollector {
         `SELECT session_id, updated_at FROM chat_sessions
          WHERE deleted_at IS NULL AND updated_at > ?`,
       ).all(cutoff) as any[];
-      for (const r of rows) out.set(String(r.session_id), Number(r.updated_at));
+      for (const r of rows) out.set(String(r.session_id), { ts: Number(r.updated_at) });
     } catch (e) {
       LOG('probe error:', e);
     }

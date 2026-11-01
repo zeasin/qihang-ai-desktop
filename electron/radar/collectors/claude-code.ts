@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { HubCollector, SerializedMessage, SessionInfo } from '../types';
+import type { HubCollector, ProbeSignal, SerializedMessage, SessionInfo } from '../types';
 
 const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-CLAUDE]', msg, ...args);
 
@@ -154,8 +154,8 @@ export class ClaudeCodeCollector implements HubCollector {
   }
 
   /** 轻探针：mtime 在窗口内的 jsonl（文件名即 sessionId），stat 级成本 */
-  async probe(): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
+  async probe(): Promise<Map<string, ProbeSignal>> {
+    const out = new Map<string, ProbeSignal>();
     const root = this.projectsRoot();
     if (!fs.existsSync(root)) return out;
     const cutoff = Date.now() - 10 * 60_000;
@@ -177,7 +177,7 @@ export class ClaudeCodeCollector implements HubCollector {
             continue;
           }
           if (stat.mtimeMs > cutoff) {
-            out.set(f.replace(/\.jsonl$/, ''), stat.mtimeMs);
+            out.set(f.replace(/\.jsonl$/, ''), { ts: stat.mtimeMs });
           }
         }
       }
