@@ -146,6 +146,7 @@ interface ElectronAPI {
   noteDigest: {
     extract: () => Promise<{ todos: any[]; followups: any[]; logs: any[]; scannedFiles: number; generated_at: string }>;
     syncDone: () => Promise<{ touched: number }>;
+    checkTodo: (projectId: number, file: string, line: number, text: string, done: boolean) => Promise<{ ok: boolean; error?: string; line?: number }>;
   };
   reminder: {
     list: () => Promise<any[]>;

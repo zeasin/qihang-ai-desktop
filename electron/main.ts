@@ -50,7 +50,7 @@ import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import logger from './services/logger';
 import { relayClient, probeRelayHealth } from './services/relay-client';
-import { extractDigest, syncCheckedDone } from './services/note-digest';
+import { extractDigest, syncCheckedDone, checkDigestTodo } from './services/note-digest';
 import * as relayDevice from './services/relay-device';
 import { notify } from './services/notify';
 import { createTrayIcon, getWindowIcon } from './icon';
@@ -1529,6 +1529,9 @@ ipcMain.handle('noteDigest:syncDone', () => {
   }
   return { touched: touched.length };
 });
+// 笔记待办勾选回写：直接改笔记文件里的复选框
+ipcMain.handle('noteDigest:checkTodo', (_, { projectId, file, line, text, done }) =>
+  checkDigestTodo(projectId, file, line, text, done));
 
 // --- AI 自执行任务 ---
 ipcMain.handle('task:list', () => db.task.list());

@@ -207,6 +207,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   noteDigest: {
     extract: () => ipcRenderer.invoke('noteDigest:extract'),
     syncDone: () => ipcRenderer.invoke('noteDigest:syncDone'),
+    checkTodo: (projectId: number, file: string, line: number, text: string, done: boolean) =>
+      ipcRenderer.invoke('noteDigest:checkTodo', { projectId, file, line, text, done }),
   },
 
   // AI 自执行任务

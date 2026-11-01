@@ -83,13 +83,20 @@
           <span class="todo-dt" :class="{ warm: t.due_date && t.due_date < todayStr && t.status !== 'done' }">{{ t.due_date || '' }}</span>
         </div>
         <div v-if="!todos.length" class="empty-row">本地库暂无待办</div>
-        <!-- 来自笔记的待办（只读，按来源文件分组） -->
-        <template v-for="g in digestTodoGroups" :key="g.file">
-          <div class="src-title" :title="g.file"><AppIcon name="file-text" :size="11" />{{ g.file }}<span class="src-count">{{ g.items.length }}</span></div>
-          <div v-for="(t, i) in g.items" :key="g.file + ':' + i" class="todo-row ro" :title="g.file + ':' + t.line">
-            <span class="todo-box ro-box"></span>
+        <!-- 来自笔记的待办（按 项目+文件 分组，勾选回写笔记） -->
+        <template v-for="g in digestTodoGroups" :key="g.project + '/' + g.file">
+          <div class="src-title" :title="g.project + ' / ' + g.file"><AppIcon name="file-text" :size="11" />{{ g.file }}<span class="src-count">{{ g.items.length }}</span></div>
+          <div v-for="t in g.items" :key="g.project + '/' + g.file + ':' + t.line" class="todo-row ro" :title="g.project + ' / ' + g.file + ':' + t.line">
+            <button
+              class="todo-box ro-box"
+              :disabled="checking === g.project + '/' + g.file + ':' + t.line"
+              :title="checking === g.project + '/' + g.file + ':' + t.line ? '正在回写笔记…' : '勾选完成并回写笔记'"
+              @click="checkDigestTodo(t, g.file)"
+            >
+              <AppIcon v-if="checking === g.project + '/' + g.file + ':' + t.line" name="loader" :size="11" />
+            </button>
             <span class="todo-tx">{{ t.text }}</span>
-            <span class="todo-src">来自笔记</span>
+            <span class="todo-src">来自 {{ t.project }}</span>
             <span class="todo-dt">{{ t.line || '' }}</span>
           </div>
         </template>
@@ -526,17 +533,18 @@ const digestMeta = computed(() => {
   return `已扫描 ${digest.value?.scannedFiles ?? 0} 个文件`;
 });
 
-// 待办按来源文件分组展示；一屏最多 40 条，多了不截断出处信息
+// 待办按 项目+来源文件 分组展示；一屏最多 40 条，多了不截断出处信息
 const shownTodoCount = 40;
 const digestTodoGroups = computed(() => {
-  const groups: { file: string; items: any[] }[] = [];
-  const byFile: Record<string, { file: string; items: any[] }> = {};
+  const groups: { project: string; file: string; items: any[] }[] = [];
+  const byKey: Record<string, { project: string; file: string; items: any[] }> = {};
   let n = 0;
   for (const t of digestPending.value) {
     if (n >= shownTodoCount) break;
     n++;
-    let g = byFile[t.file];
-    if (!g) { g = byFile[t.file] = { file: t.file, items: [] }; groups.push(g); }
+    const key = t.project_id + '|' + t.file;
+    let g = byKey[key];
+    if (!g) { g = byKey[key] = { project: t.project, file: t.file, items: [] }; groups.push(g); }
     g.items.push(t);
   }
   return groups;
@@ -551,6 +559,25 @@ async function loadNoteDigest() {
     digestAt.value = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
   } catch { digest.value = null; }
   digestLoading.value = false;
+}
+
+// 来自笔记的待办：页内勾选，状态直接回写笔记文件里的复选框
+const checking = ref('');
+async function checkDigestTodo(t: any, file: string) {
+  const key = t.project + '/' + file + ':' + t.line;
+  if (checking.value) return;
+  checking.value = key;
+  try {
+    const r = await API.noteDigest.checkTodo(t.project_id, file, t.line, t.text, !t.done);
+    if (r?.ok) {
+      await loadNoteDigest();
+    } else {
+      alert(r?.error || '回写失败');
+    }
+  } catch (e: any) {
+    alert('回写失败: ' + (e?.message || e));
+  }
+  checking.value = '';
 }
 
 async function syncDone() {
@@ -725,7 +752,9 @@ onUnmounted(() => {
 }
 .todo-box:hover { border-color: var(--primary); }
 .todo-row.done .todo-box { background: var(--primary); border-color: var(--primary); }
-.ro-box { cursor: default; background: none; }
+.ro-box { cursor: pointer; background: none; }
+.ro-box:hover:not(:disabled) { border-color: var(--primary); }
+.ro-box:disabled { cursor: wait; }
 .prio { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); opacity: 0.6; }
 .prio.high { background: var(--danger); opacity: 1; }
 .prio.mid { background: var(--warning); opacity: 1; }

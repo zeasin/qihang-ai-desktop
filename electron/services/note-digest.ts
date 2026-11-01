@@ -87,6 +87,9 @@ export function extractDigest(): DigestResult {
   let scannedFiles = 0;
 
   for (const proj of db.project.list() as any[]) {
+    // 笔记提炼只认笔记库：代码仓库（type=code）里的 CONTRIBUTING 检查清单这类文档
+    // 不是用户的待办，混进概览「等你处理」会误导出处（那边标的是「来自笔记」）
+    if (proj.type === 'code') continue;
     if (!proj.dir || !fs.existsSync(proj.dir)) continue;
     const cands: Candidate[] = [];
     walkMd(proj.dir, proj.dir, splitIgnore(proj.ignore_dirs), splitIgnore(proj.ignore_files), cands);
@@ -150,6 +153,41 @@ export function extractDigest(): DigestResult {
   uniqTodos.sort((a, b) => Number(a.done) - Number(b.done));
   logs.sort((a, b) => b.date.localeCompare(a.date));
   return { todos: uniqTodos, followups, logs, scannedFiles, generated_at: new Date().toISOString() };
+}
+
+/** 勾选/取消勾选笔记待办：把状态回写到笔记文件里的复选框；行号漂移时按文本全文兜底查找 */
+export function checkDigestTodo(projectId: number, rel: string, line: number, text: string, done: boolean): { ok: boolean; error?: string; line?: number } {
+  const proj = (db.project.list() as any[]).find(p => p.id === projectId);
+  if (!proj?.dir) return { ok: false, error: '找不到来源笔记库' };
+  const full = path.join(proj.dir, rel);
+  if (!fs.existsSync(full)) return { ok: false, error: '笔记文件不存在：' + rel };
+  let content = '';
+  try { content = fs.readFileSync(full, 'utf-8'); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  const lines = content.split(/\r?\n/);
+  const want = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const isItem = (raw: string) => TODO_RE.test(raw) || /^\s*[-*+]\s+\S/.test(raw);
+  const norm = (raw: string) => cleanText(raw.replace(TODO_RE, '$2').replace(/^\s*[-*+]\s+/, '')).toLowerCase();
+
+  // 先信 digest 记录的行号，对不上（文件已被编辑）再全文找同文本的行
+  let idx = line - 1;
+  if (!(idx >= 0 && idx < lines.length && isItem(lines[idx]) && norm(lines[idx]).includes(want))) {
+    idx = lines.findIndex(raw => isItem(raw) && norm(raw).includes(want));
+    if (idx < 0) return { ok: false, error: '笔记里没找到对应的待办行（可能已被修改），请重新扫描' };
+  }
+
+  const raw = lines[idx];
+  const cm = raw.match(/^(\s*[-*+]\s*\[)( |x|X)(\]\s*)(.*)$/);
+  if (cm) {
+    lines[idx] = cm[1] + (done ? 'x' : ' ') + cm[3] + cm[4];
+  } else {
+    // TODO.md 人工清单的普通条目没有复选框：勾选时补上
+    const bm = raw.match(/^(\s*[-*+]\s+)(.*)$/);
+    if (!bm) return { ok: false, error: '该行不是待办条目' };
+    lines[idx] = bm[1] + (done ? '[x] ' : '[ ] ') + bm[2];
+  }
+  try { fs.writeFileSync(full, lines.join('\n'), 'utf-8'); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  logger.info(`[NoteDigest] 待办勾选回写：${rel}:${idx + 1} → ${done ? '[x]' : '[ ]'}`);
+  return { ok: true, line: idx + 1 };
 }
 
 /** 笔记里勾掉的 `- [x] 标题` 单向回写：同名 pending/in_progress 任务标记 done。返回受影响任务 id */
