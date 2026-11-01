@@ -338,7 +338,7 @@
       <!-- Backup / Restore -->
       <div class="card">
         <h2>💾 数据备份与恢复</h2>
-        <div class="text-muted mb-2">备份本地 SQLite 快照（会话、项目、待办、数据中心等全部数据）；恢复后需重启应用生效。</div>
+        <div class="text-muted mb-2">备份本地 SQLite 快照（会话、项目、待办、数据源等全部数据）；恢复后需重启应用生效。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
           <div class="form-group" style="flex:1;min-width:300px;margin:0;">
             <label style="font-size:12px;">备份目录（建议选择其他盘符）</label>
