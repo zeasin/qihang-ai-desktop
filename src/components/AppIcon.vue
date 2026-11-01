@@ -82,6 +82,16 @@ const ICONS: Record<string, IconFragment[]> = {
     { tag: 'path', attrs: { d: 'm21 21-4.34-4.34' } },
     { tag: 'circle', attrs: { cx: '11', cy: '11', r: '8' } },
   ],
+  'radar': [
+    { tag: 'path', attrs: { d: 'M19.07 4.93A10 10 0 0 0 6.99 3.34' } },
+    { tag: 'path', attrs: { d: 'M4 6h.01' } },
+    { tag: 'path', attrs: { d: 'M2.29 9.62a10 10 0 1 0 19.02-1.27' } },
+    { tag: 'path', attrs: { d: 'M16.24 7.76a6 6 0 1 0-8.01 8.91' } },
+    { tag: 'path', attrs: { d: 'M12 18h.01' } },
+    { tag: 'path', attrs: { d: 'M17.99 11.66a6 6 0 0 1-2.22 4.75' } },
+    { tag: 'circle', attrs: { cx: '12', cy: '12', r: '2' } },
+    { tag: 'path', attrs: { d: 'm13.41 10.59 5.66-5.66' } },
+  ],
   'moon': [
     { tag: 'path', attrs: { d: 'M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401' } },
   ],

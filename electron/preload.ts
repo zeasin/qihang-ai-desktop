@@ -5,6 +5,7 @@ const VALID_CHANNELS = [
   'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
   'report:generated', 'aitool:delta', 'task:changed',
+  'radar:event',
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -118,6 +119,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     disable: () => ipcRenderer.invoke('relay:disable'),
     clients: () => ipcRenderer.invoke('relay:clients'),
     kick: (sessionId: string) => ipcRenderer.invoke('relay:kick', { sessionId }),
+  },
+
+  // 智能体雷达（监控本机其他 AI 工具 + 会话对话本地沉淀）
+  radar: {
+    status: () => ipcRenderer.invoke('radar:status'),
+    setEnabled: (enabled: boolean | string) => ipcRenderer.invoke('radar:set-enabled', { enabled }),
+    scanNow: () => ipcRenderer.invoke('radar:scan-now'),
+    toolStats: () => ipcRenderer.invoke('radar:tool-stats'),
+    dashboard: () => ipcRenderer.invoke('radar:dashboard'),
+    sessions: (opts?: { tool?: string; q?: string; page?: number; pageSize?: number }) =>
+      ipcRenderer.invoke('radar:sessions', opts || {}),
+    messages: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:messages', { tool, sessionId }),
+    stateEvents: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:state-events', { tool, sessionId }),
+    sessionInfo: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:session-info', { tool, sessionId }),
+    unfreeze: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:unfreeze', { tool, sessionId }),
+    search: (q: string, limit?: number) => ipcRenderer.invoke('radar:search', { q, limit }),
   },
 
   // Projects

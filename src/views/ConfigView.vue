@@ -376,6 +376,45 @@
         </div>
       </div>
 
+      <!-- Agent Radar（智能体雷达） -->
+      <div class="card">
+        <h2>🛰 智能体雷达</h2>
+        <div class="text-muted mb-2">
+          监控本机其他 AI 编码工具（ZCode / Claude Code / Codex / OpenCode / Qoder / Trae / DSH / Pi）的运行状态，
+          会话对话自动存档在本地（~/.qihang-ai-desktop/radar/），<b>不上传任何数据</b>。默认关闭，开启后生效。
+        </div>
+        <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          <label class="toggle" title="开启后开始扫描本机 AI 工具的会话记录">
+            <input type="checkbox" v-model="radarEnabled" @change="toggleRadar">
+            <span class="slider"></span>
+          </label>
+          <span class="text-muted">开启雷达</span>
+          <span class="badge" :class="radarRunning ? 'badge-success' : 'badge-gray'">
+            {{ radarRunning ? '监控中' : (radarEnabled ? '启动中…' : '未开启') }}
+          </span>
+        </div>
+        <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:12px;">对话入库间隔（毫秒）</label>
+            <input v-model="radarIntervalMs" type="number" min="10000" step="10000" class="form-control" style="width:140px;">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:12px;">状态探针间隔（毫秒）</label>
+            <input v-model="radarMonitorMs" type="number" min="1000" step="1000" class="form-control" style="width:140px;">
+          </div>
+          <div class="form-group" style="flex:1;min-width:260px;margin:0;">
+            <label style="font-size:12px;">排除目录（逗号分隔，前缀匹配）</label>
+            <input v-model="radarExclude" type="text" class="form-control" placeholder="如 D:\tmp,C:\scratch">
+          </div>
+        </div>
+        <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" @click="saveRadarCfg" :disabled="radarBusy">保存设置</button>
+          <button class="btn btn-secondary" @click="scanRadarNow" :disabled="radarBusy || !radarEnabled">立即扫描</button>
+          <router-link class="btn btn-secondary" to="/radar">打开雷达</router-link>
+        </div>
+        <span v-if="radarStatus" class="text-muted" :style="{ color: radarStatus.startsWith('✅') ? 'var(--success)' : radarStatus.startsWith('⏳') ? 'var(--warning)' : 'var(--danger)' }">{{ radarStatus }}</span>
+      </div>
+
       </div>
   </div>
 </template>
@@ -1208,6 +1247,73 @@ async function kickRelayClient(sessionId: string): Promise<void> {
   void loadRelay();
 }
 
+// ========== 智能体雷达 ==========
+const radarEnabled = ref(false);
+const radarRunning = ref(false);
+const radarIntervalMs = ref('60000');
+const radarMonitorMs = ref('3000');
+const radarExclude = ref('');
+const radarBusy = ref(false);
+const radarStatus = ref('');
+
+async function loadRadarCfg() {
+  try {
+    const [cfg, st] = await Promise.all([API.config.get(), API.radar.status()]);
+    radarEnabled.value = String(cfg.agentRadarEnabled || '') === '1';
+    radarIntervalMs.value = String(cfg.agentRadarIntervalMs || '60000');
+    radarMonitorMs.value = String(cfg.agentRadarMonitorMs || '3000');
+    radarExclude.value = cfg.agentRadarExclude || '';
+    radarRunning.value = !!st?.running;
+  } catch { /* 雷达 IPC 不可用时保持默认 */ }
+}
+
+async function saveRadarCfg() {
+  radarBusy.value = true;
+  try {
+    await API.config.set({
+      agentRadarIntervalMs: String(parseInt(radarIntervalMs.value) || 60000),
+      agentRadarMonitorMs: String(parseInt(radarMonitorMs.value) || 3000),
+      agentRadarExclude: radarExclude.value.trim(),
+    });
+    // 间隔改动需重启采集循环生效
+    if (radarEnabled.value) {
+      const res = await API.radar.setEnabled(true);
+      if (res?.status) radarRunning.value = !!res.status.running;
+    }
+    radarStatus.value = '✅ 已保存' + (radarEnabled.value ? '并重新加载采集循环' : '（雷达未开启，开关打开后生效）');
+    setTimeout(() => { radarStatus.value = ''; }, 3000);
+  } catch (e: any) {
+    radarStatus.value = '❌ ' + (e?.message || e);
+  } finally { radarBusy.value = false; }
+}
+
+async function toggleRadar() {
+  radarBusy.value = true;
+  try {
+    radarStatus.value = radarEnabled.value ? '⏳ 正在启动…' : '⏳ 正在停止…';
+    const res = await API.radar.setEnabled(radarEnabled.value);
+    if (res?.status) radarRunning.value = !!res.status.running;
+    radarStatus.value = res?.ok
+      ? (radarEnabled.value ? '✅ 雷达已开启' : '✅ 雷达已关闭')
+      : '❌ ' + (res?.error || '操作失败');
+    if (res?.ok) setTimeout(() => { radarStatus.value = ''; }, 3000);
+  } catch (e: any) {
+    radarStatus.value = '❌ ' + (e?.message || e);
+  } finally { radarBusy.value = false; }
+}
+
+async function scanRadarNow() {
+  radarBusy.value = true;
+  try {
+    radarStatus.value = '⏳ 扫描中…';
+    const r = await API.radar.scanNow();
+    radarStatus.value = r?.ok ? '✅ 扫描完成' : '❌ ' + (r?.error || '扫描失败');
+    if (r?.ok) setTimeout(() => { radarStatus.value = ''; }, 3000);
+  } catch (e: any) {
+    radarStatus.value = '❌ ' + (e?.message || e);
+  } finally { radarBusy.value = false; }
+}
+
 onMounted(async () => {
   await loadConfig();
   await loadLlmConfig();
@@ -1219,6 +1325,7 @@ onMounted(async () => {
   await loadBackups();
   await loadAutoBackup();
   await loadRelay();
+  await loadRadarCfg();
   relayPoll = setInterval(() => { void loadRelay(); }, 10000);
   try {
     const svc = await API.service.status();

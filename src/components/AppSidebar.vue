@@ -114,6 +114,10 @@
             <span>飞书 Bot</span>
             <b><i class="status-dot" :class="services.feishu ? 'ok' : 'idle'"></i>{{ services.feishu ? '已连接' : '未启用' }}</b>
           </div>
+          <div class="svc">
+            <span>智能体雷达</span>
+            <b><i class="status-dot" :class="services.radar ? 'ok' : 'idle'"></i>{{ services.radar ? '监控中' : '未开启' }}</b>
+          </div>
           <router-link class="pop-more" to="/log" @click="engOpen = false">
             打开运行日志
             <AppIcon name="chevron-right" :size="12" />
@@ -159,6 +163,7 @@ const footMenu = computed(() => [
   { path: '/reminders', label: '待办', icon: 'list-checks', badge: todoOpen.value, badgeClass: '', beta: false },
   { path: '/notes', label: '笔记', icon: 'library', badge: 0, badgeClass: '', beta: false },
   { path: '/tools', label: '技能', icon: 'sparkles', badge: 0, badgeClass: '', beta: true },
+  { path: '/radar', label: '雷达', icon: 'radar', badge: radarRunning.value, badgeClass: 'run', beta: false },
 ]);
 
 const isActive = (path: string) => {
@@ -304,11 +309,22 @@ function toggleSearch() {
 }
 
 // ========== 引擎状态 ==========
-const services = ref({ feishu: false, scheduler: false });
+const services = ref({ feishu: false, scheduler: false, radar: false });
 const engOpen = ref(false);
+
+/** 雷达运行中的会话数（徽标）：仅在雷达页之外显示提醒 */
+const radarRunning = ref(0);
 
 async function loadServices() {
   try { services.value = await API.service.status(); } catch {}
+}
+
+async function loadRadarBadge() {
+  if (route.path === '/radar') { radarRunning.value = 0; return; }
+  try {
+    const stats = await API.radar.toolStats();
+    radarRunning.value = (stats || []).reduce((n: number, t: any) => n + (Number(t.running) || 0), 0);
+  } catch { radarRunning.value = 0; }
 }
 
 // ========== 徽标计数 ==========
@@ -335,6 +351,7 @@ let timer: number | undefined;
 function refreshAll() {
   loadServices();
   loadBadges();
+  loadRadarBadge();
   loadChatTree();
   loadCurrentSid();
 }

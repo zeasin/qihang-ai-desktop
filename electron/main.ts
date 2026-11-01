@@ -47,6 +47,7 @@ import * as feishu from './services/feishu';
 import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice, buildProjectButtons, boundProjectId, needsProjectChoice, stashPendingFollowup, peekPendingFollowup, clearPendingFollowup } from './services/feishu-router';
 import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
+import { agentRadar } from './services/agent-radar';
 import logger from './services/logger';
 import { relayClient, probeRelayHealth } from './services/relay-client';
 import { extractDigest, syncCheckedDone } from './services/note-digest';
@@ -218,12 +219,14 @@ function createWindow() {
 function stopAllServices() {
   feishu.stop();
   scheduler.stop();
+  agentRadar.stop();
 }
 
 function getServicesStatus() {
   return {
     feishu: feishu.isRunning(),
     scheduler: scheduler.isRunning(),
+    radar: agentRadar.isRunning(),
   };
 }
 
@@ -1298,6 +1301,79 @@ ipcMain.handle('relay:disable', async () => {
 ipcMain.handle('relay:clients', () => relayClient.listMobileClients());
 ipcMain.handle('relay:kick', (_, { sessionId }) => relayClient.kickMobileClient(String(sessionId || '')));
 
+// --- Agent Radar（智能体雷达：监控本机其他 AI 工具 + 会话对话本地沉淀） ---
+ipcMain.handle('radar:status', () => agentRadar.status());
+ipcMain.handle('radar:set-enabled', async (_, { enabled }) => {
+  try {
+    const on = enabled === true || String(enabled) === '1';
+    appConfig.saveConfig({ agentRadarEnabled: on ? '1' : '0' });
+    if (on) await agentRadar.start();
+    else await agentRadar.stop();
+    updateTrayMenu(getServicesStatus());
+    return { ok: true, status: agentRadar.status() };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), status: agentRadar.status() };
+  }
+});
+ipcMain.handle('radar:scan-now', async () => {
+  try {
+    const started = agentRadar.isRunning() || agentRadar.isEnabled();
+    if (!agentRadar.isRunning() && agentRadar.isEnabled()) await agentRadar.start();
+    const ok = await agentRadar.scanNow();
+    return { ok, skipped: !started, round: agentRadar.roundStat() };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('radar:tool-stats', () => agentRadar.toolStats());
+ipcMain.handle('radar:dashboard', () => agentRadar.dashboard());
+ipcMain.handle('radar:sessions', (_, { tool, q, page, pageSize }) => {
+  try {
+    if (q && String(q).trim()) {
+      const rows = agentRadar.findSessions(String(q).trim());
+      return { ok: true, rows, total: rows.length };
+    }
+    return { ok: true, ...agentRadar.listSessions({ tool, page, pageSize }) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), rows: [], total: 0 };
+  }
+});
+ipcMain.handle('radar:messages', (_, { tool, sessionId }) => {
+  try {
+    return { ok: true, rows: agentRadar.getMessages(String(tool || ''), String(sessionId || '')) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
+  }
+});
+ipcMain.handle('radar:state-events', (_, { tool, sessionId }) => {
+  try {
+    return { ok: true, rows: agentRadar.stateEvents(String(tool || ''), String(sessionId || '')) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
+  }
+});
+ipcMain.handle('radar:session-info', (_, { tool, sessionId }) => {
+  try {
+    return { ok: true, info: agentRadar.sessionInfo(String(tool || ''), String(sessionId || '')) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), info: null };
+  }
+});
+ipcMain.handle('radar:unfreeze', (_, { tool, sessionId }) => {
+  try {
+    return { ok: agentRadar.unfreeze(String(tool || ''), String(sessionId || '')) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('radar:search', (_, { q, limit }) => {
+  try {
+    return { ok: true, rows: agentRadar.searchMessages(String(q || ''), Math.min(Number(limit) || 50, 200)) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
+  }
+});
+
 // 判断是否为「查询本地知识」类问题（如事务/笔记/待办/记录/知识检索）。
 // 这类问题依赖笔记库，若未配置笔记库则先引导用户去设置。
 function isKBQuery(text) {
@@ -2080,6 +2156,11 @@ app.whenReady().then(async () => {
   scheduler.start();
   backup.startAutoBackup();
   startRelay();
+  // 智能体雷达：默认关，用户在设置页显式开启
+  agentRadar.onStateEvents((events) => sendToRenderer('radar:event', { type: 'state', events }));
+  if (agentRadar.isEnabled()) {
+    agentRadar.start().catch((e) => logger.error('[Radar] auto start failed: %s', e?.message || e));
+  }
   startupElapsed('services started');
 
   updateTrayMenu(getServicesStatus());

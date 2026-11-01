@@ -21,7 +21,62 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
       getDefault: async () => ({ id: 1, name: '旗舰店运营', dir: 'C:/demo/notes' }),
       setDefault: async () => ({}),
     },
-    service: { status: async () => ({ feishu: true, scheduler: true }) },
+    service: { status: async () => ({ feishu: true, scheduler: true, radar: true }) },
+    radar: (() => {
+      const tools = [
+        { tool: 'zcode', label: 'ZCode' }, { tool: 'claude-code', label: 'Claude Code' },
+        { tool: 'codex', label: 'Codex' }, { tool: 'opencode', label: 'OpenCode' },
+        { tool: 'qoder', label: 'Qoder' }, { tool: 'trae', label: 'Trae' },
+        { tool: 'dsh', label: 'DSH' }, { tool: 'pi', label: 'Pi' },
+      ];
+      const sessions = tools.flatMap((t, i) => Array.from({ length: 3 }, (_, j) => ({
+        tool: t.tool, sessionId: `${t.tool}-s${j}`, title: `${t.label} 示例会话 ${j + 1}`,
+        projectDir: 'D:/demo/project', messageCount: 6 + i + j, actual_count: 6 + i + j,
+        sourceUpdatedAt: Date.now() - (i * 3 + j) * 3600_000,
+        state: i === 0 && j === 0 ? 'running' : 'idle', frozen: 0, missingSince: 0,
+      })));
+      return {
+        status: async () => ({ enabled: true, running: true, dataDir: 'C:/demo/radar', collectors: tools.map((t) => t.tool), allTools: tools.map((t) => t.tool), lastRound: null, stats: { sessions: sessions.length, messages: 128, running: 1, activeToday: 5 } }),
+        dashboard: async () => ({
+          cards: tools.map((t, i) => ({
+            tool: t.tool, sessions: 3, running: i === 0 ? 1 : 0,
+            lastActivity: Date.now() - i * 1800_000,
+            lastSessionTitle: i === 0 ? 'AgentHub监控智能体对话存入数据库研究' : '',
+            lastSessionProject: 'D:/projects/qihang-ai-desktop',
+            lastSessionState: i === 0 ? 'running' : 'idle',
+          })),
+          events: [0, 1, 2, 3, 4].flatMap((i) => [
+            { tool: 'zcode', sessionId: 'zcode-s0', state: 'running', ts: Date.now() - i * 600_000 - 60_000, title: 'AgentHub监控智能体对话存入数据库研究' },
+            { tool: 'zcode', sessionId: 'zcode-s0', state: 'idle', ts: Date.now() - i * 600_000, title: 'AgentHub监控智能体对话存入数据库研究' },
+          ]),
+          sessions: sessions.slice(0, 10),
+          stats: { sessions: sessions.length, messages: 128, running: 1, activeToday: 5 },
+          lastRound: null,
+        }),
+        setEnabled: async (v: any) => ({ ok: true }),
+        scanNow: async () => ({ ok: true }),
+        toolStats: async () => tools.map((t, i) => ({ tool: t.tool, sessions: 3, running: i === 0 ? 1 : 0, lastActivity: Date.now() - i * 3600_000 })),
+        sessions: async (opts: any = {}) => {
+          const rows = opts.tool ? sessions.filter((s) => s.tool === opts.tool) : sessions;
+          return { total: rows.length, rows };
+        },
+        messages: async (_tool: string, sessionId: string) => ({
+          ok: true,
+          rows: sessionId === 'zcode-s0' ? [
+            { seq: 1, role: 'user', content: '## 任务\n\n帮我看一下这个模块的报错栈：\n\n- 优先看 `a.ts:42`\n- 关注空指针', thinking: '', toolsJson: '', ts: Date.now() - 3600_000 },
+            { seq: 2, role: 'assistant', content: '## 已定位\n\n是空指针，第 42 行没判空。修复建议：\n\n```ts\nif (user == null) throw new Error("用户不存在");\n```\n\n- 加参数校验\n- 补单元测试', thinking: '先读文件，再定位报错行。', toolsJson: JSON.stringify([{ name: 'read', args: '{"file":"a.ts"}', result: 'ok', status: 'done' }]), ts: Date.now() - 3500_000 },
+          ] : [],
+        }),
+        stateEvents: async () => ({ ok: true, rows: [{ state: 'running', ts: Date.now() - 3600_000 }, { state: 'idle', ts: Date.now() - 600_000 }] }),
+        sessionInfo: async (_tool: string, sessionId: string) => ({
+          ok: true,
+          info: sessions.find((s) => s.sessionId === sessionId)
+            ? { tool: _tool, sessionId, title: 'ZCode 示例会话 1', projectDir: 'D:/projects/qihang-ai-desktop', state: 'running', messageCount: 2, frozen: 0 }
+            : null,
+        }),
+        search: async (q: string) => sessions.slice(0, 5),
+      };
+    })(),
     todo: {
       list: async () => [
         { id: 1, title: '核对昨日订单与库存差异', status: 'pending', priority: 'high', due_date: '' },

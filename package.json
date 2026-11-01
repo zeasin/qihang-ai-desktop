@@ -16,6 +16,7 @@
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "better-sqlite3": "^12.11.1",
+    "fzstd": "^0.1.1",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
     "marked": "^15.0.0",
@@ -119,7 +120,9 @@
       "en-US"
     ],
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**"
+      "**/node_modules/better-sqlite3/**",
+      "**/dist-electron/electron/radar/collectors/trae-db-worker.js",
+      "**/dist-electron/electron/radar/radar-worker.js"
     ],
     "win": {
       "target": "nsis"

@@ -81,6 +81,20 @@ interface ElectronAPI {
     clients: () => Promise<{ ok: boolean; clients: any[]; error?: string }>;
     kick: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
   };
+  radar: {
+    status: () => Promise<any>;
+    setEnabled: (enabled: boolean | string) => Promise<{ ok: boolean; status?: any; error?: string }>;
+    scanNow: () => Promise<{ ok: boolean; skipped?: boolean; round?: any; error?: string }>;
+    toolStats: () => Promise<{ tool: string; sessions: number; running: number; lastActivity: number }[]>;
+    dashboard: () => Promise<{ cards: any[]; events: any[]; sessions: any[]; stats: any; lastRound: any }>;
+    sessions: (opts?: { tool?: string; q?: string; page?: number; pageSize?: number }) =>
+      Promise<{ total: number; rows: any[] }>;
+    messages: (tool: string, sessionId: string) => Promise<{ ok: boolean; rows: any[] }>;
+    stateEvents: (tool: string, sessionId: string) => Promise<{ ok: boolean; rows: any[] }>;
+    sessionInfo: (tool: string, sessionId: string) => Promise<{ ok: boolean; info: any }>;
+    unfreeze: (tool: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+    search: (q: string, limit?: number) => Promise<{ ok: boolean; rows: any[] }>;
+  };
   project: {
     list: (type?: string) => Promise<any[]>;
     get: (id: number) => Promise<any>;
@@ -104,7 +118,7 @@ interface ElectronAPI {
     configTest: (cfg: { baseUrl: string; apiKey: string; modelName: string }) => Promise<{ ok: boolean; error?: string; latencyMs?: number }>;
   };
   service: {
-    status: () => Promise<{ feishu: boolean; scheduler: boolean }>;
+    status: () => Promise<{ feishu: boolean; scheduler: boolean; radar?: boolean }>;
     startFeishu: (config: any) => Promise<boolean>;
     stopFeishu: () => Promise<boolean>;
     startScheduler: () => Promise<boolean>;
