@@ -64,6 +64,17 @@ let mainWindow: Electron.BrowserWindow | null = null;
 let tray: Electron.Tray | null = null;
 let backgroundReady = false;
 
+// ========== 单实例 ==========
+// 同一时刻只允许一个实例运行：重复启动时第二个实例直接退出，由已有实例唤起窗口。
+// dev 与打包版 userData 路径不同（qihang-ai-desktop / 启航AI工作台），二者互不抢锁，可并行。
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  logger.info('[Startup] 已有实例在运行，第二个实例退出');
+  app.quit();
+} else {
+  app.on('second-instance', () => showWindow());
+}
+
 function convertMarkdownForFeishu(md: string): string {
   const lines = md.trim().split('\n');
   const out: string[] = [];
@@ -2083,6 +2094,7 @@ ipcMain.handle('aitool:image:setConfig', (_, { baseUrl, apiKey, model }) => {
 (app as any).isQuitting = false;
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return; // 双保险：极端时序下避免第二实例完成初始化
   startupElapsed('whenReady fired');
   if (process.platform === 'darwin') {
     app.setName('启航AI工作台');
