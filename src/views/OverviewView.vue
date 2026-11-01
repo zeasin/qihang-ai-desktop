@@ -109,11 +109,20 @@
         <section>
           <div class="sec-label"><AppIcon name="bookmark" :size="13" />跟进事项<em>{{ digestFollowups.length }}</em></div>
           <div class="panel list-panel">
-            <div v-for="(f, i) in digestFollowups.slice(0, 20)" :key="'f' + i" class="file-row" :title="f.project + ' / ' + f.file + ':' + f.line + '（点击在笔记中打开）'" @click="openFollowupSource(f)">
-              <AppIcon name="bookmark" :size="14" />
+            <div v-for="(f, i) in digestFollowups.slice(0, 20)" :key="'f' + i" class="file-row" :title="f.project + ' / ' + f.file + ':' + f.line + (f.resolvable ? '（点击在笔记中打开，勾选 = 已跟进并回写 [x]）' : '（点击在笔记中打开）')" @click="openFollowupSource(f)">
+              <button
+                v-if="f.resolvable"
+                class="todo-box ro-box"
+                :disabled="checkingFu === f.project + '/' + f.file + ':' + f.line"
+                :title="checkingFu === f.project + '/' + f.file + ':' + f.line ? '正在回写跟进清单…' : '已跟进：结清并回写 [x] 到跟进清单'"
+                @click.stop="checkDigestFollowup(f)"
+              >
+                <AppIcon v-if="checkingFu === f.project + '/' + f.file + ':' + f.line" name="loader" :size="11" />
+              </button>
+              <AppIcon v-else name="bookmark" :size="14" />
               <span class="plan-tx"><b>{{ f.text }}</b><small>{{ f.file.split('/').pop() }}</small></span>
             </div>
-            <div v-if="!digestFollowups.length" class="empty-row">没有命中「待跟进 / 跟进中」这类话术</div>
+            <div v-if="!digestFollowups.length" class="empty-row">没有待跟进事项（工作日志等历史记录不算跟进）</div>
           </div>
         </section>
         <section>
@@ -356,6 +365,26 @@ function fileTime(ts: number): string {
 // 跟进事项点击：跳到笔记页打开来源文件（带项目与相对路径，笔记页按 query 定位）
 function openFollowupSource(f: any) {
   router.push({ path: '/notes', query: { lib: String(f.project_id), file: f.file } });
+}
+
+// 跟进清单（跟进.md）条目一键结清：回写 [x]，再次扫描后不再展示；
+// 工作日志等历史来源的命中没有结清入口，本就不该挂在这里（提炼层已排除）
+const checkingFu = ref('');
+async function checkDigestFollowup(f: any) {
+  const key = f.project + '/' + f.file + ':' + f.line;
+  if (checkingFu.value) return;
+  checkingFu.value = key;
+  try {
+    const r = await API.noteDigest.checkFollowup(f.project_id, f.file, f.line, f.text);
+    if (r?.ok) {
+      await loadNoteDigest();
+    } else {
+      alert(r?.error || '回写失败');
+    }
+  } catch (e: any) {
+    alert('回写失败: ' + (e?.message || e));
+  }
+  checkingFu.value = '';
 }
 
 async function toggleTodo(t: any) {

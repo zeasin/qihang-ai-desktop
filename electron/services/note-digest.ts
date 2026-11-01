@@ -12,7 +12,8 @@ const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 const MAX_ANCHOR_FILES = 60;
 
 export interface DigestTodo { project_id: number; project: string; file: string; line: number; text: string; done: boolean; }
-export interface DigestFollowup { project_id: number; project: string; file: string; line: number; text: string; }
+// resolvable=true 表示来自专门的跟进清单（跟进.md），可在今天页一键结清（回写 [x]）
+export interface DigestFollowup { project_id: number; project: string; file: string; line: number; text: string; resolvable?: boolean; }
 export interface DigestLogSection { project_id: number; project: string; file: string; line: number; date: string; heading: string; preview: string; }
 export interface DigestResult { todos: DigestTodo[]; followups: DigestFollowup[]; logs: DigestLogSection[]; scannedFiles: number; generated_at: string; }
 
@@ -64,6 +65,11 @@ function stripFrontmatter(lines: string[]): string[] {
   return lines;
 }
 
+/** 条目行归一成纯文本（去掉 bullet/复选框记号），勾选回写时按文本匹配用 */
+function normItemText(raw: string): string {
+  return cleanText(String(raw).replace(TODO_RE, '$2').replace(/^\s*[-*+]\s+(\[[ xX]\]\s*)?/, '')).toLowerCase();
+}
+
 function pushLog(logs: DigestLogSection[], proj: any, rel: string, lines: string[], date: string, line: number) {
   let preview = '';
   let title = '';
@@ -110,14 +116,19 @@ export function extractDigest(): DigestResult {
       // 跟进.md 是专门的跟进清单（锚点文件）：每条 bullet 即一个跟进项，`[x]` 视为已解决不展示；
       // 整文件只走跟进口径，不再进待办/模糊匹配，避免一稿两投
       const isFollowupFile = /(^|\/)(跟进|跟进事项)\.md$/i.test(rel);
+      // 工作日志（日期命名文件、文件内纯日期标题分节）是历史记录：不参与跟进提炼，
+      // 否则日志里出现过的「待跟进」会每次扫描都重新挂上，永远没有结清入口；
+      // 勾选待办不受影响（复选框本身有勾掉的能力）
+      const isLogFile = DATE_FILE_RE.test(path.basename(rel));
       let inTodoSection = false;
+      let datedLevel = 0;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
 
         if (isFollowupFile) {
           if (/^\s*[-*+]\s+\S/.test(line) && !/^\s*[-*+]\s*\[[xX]\]/.test(line)) {
-            followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^\s*[-*+]\s*(\[[ xX]\]\s*)?/, '')) });
+            followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^\s*[-*+]\s*(\[[ xX]\]\s*)?/, '')), resolvable: true });
           }
           continue;
         }
@@ -133,6 +144,14 @@ export function extractDigest(): DigestResult {
             todos.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')), done: false });
           }
         }
+        // 日期分节跟踪：同级或更高级的标题结束该日期段，更深的日期标题接续该段
+        if (/^#{1,6}\s/.test(line)) {
+          const level = (line.match(/^#+/) || [''])[0].length;
+          if (datedLevel && level <= datedLevel) { datedLevel = 0; }
+        }
+        const dh = !isLogFile ? line.match(BARE_DATE_HEADING_RE) : null;
+        if (dh) datedLevel = (line.match(/^#+/) || [''])[0].length;
+        if (isLogFile || datedLevel) continue;
         if (FOLLOWUP_RE.test(line) && !NOISE_LINE_RE.test(line) && !/\.md/.test(line)) {
           followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')) });
         }
@@ -175,12 +194,11 @@ export function checkDigestTodo(projectId: number, rel: string, line: number, te
   const lines = content.split(/\r?\n/);
   const want = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const isItem = (raw: string) => TODO_RE.test(raw) || /^\s*[-*+]\s+\S/.test(raw);
-  const norm = (raw: string) => cleanText(raw.replace(TODO_RE, '$2').replace(/^\s*[-*+]\s+/, '')).toLowerCase();
 
   // 先信 digest 记录的行号，对不上（文件已被编辑）再全文找同文本的行
   let idx = line - 1;
-  if (!(idx >= 0 && idx < lines.length && isItem(lines[idx]) && norm(lines[idx]).includes(want))) {
-    idx = lines.findIndex(raw => isItem(raw) && norm(raw).includes(want));
+  if (!(idx >= 0 && idx < lines.length && isItem(lines[idx]) && normItemText(lines[idx]).includes(want))) {
+    idx = lines.findIndex(raw => isItem(raw) && normItemText(raw).includes(want));
     if (idx < 0) return { ok: false, error: '笔记里没找到对应的待办行（可能已被修改），请重新扫描' };
   }
 
@@ -196,6 +214,35 @@ export function checkDigestTodo(projectId: number, rel: string, line: number, te
   }
   try { fs.writeFileSync(full, lines.join('\n'), 'utf-8'); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
   logger.info(`[NoteDigest] 待办勾选回写：${rel}:${idx + 1} → ${done ? '[x]' : '[ ]'}`);
+  return { ok: true, line: idx + 1 };
+}
+
+/** 结清跟进清单里的一条跟进：在跟进.md / 跟进事项.md 的 bullet 前回写 [x]；行号漂移时按文本全文兜底 */
+export function checkDigestFollowup(projectId: number, rel: string, line: number, text: string): { ok: boolean; error?: string; line?: number } {
+  if (!/(^|\/)(跟进|跟进事项)\.md$/i.test(rel)) return { ok: false, error: '只有跟进清单（跟进.md / 跟进事项.md）里的条目支持勾选结清' };
+  const proj = (db.project.list() as any[]).find(p => p.id === projectId);
+  if (!proj?.dir) return { ok: false, error: '找不到来源笔记库' };
+  const full = path.join(proj.dir, rel);
+  if (!fs.existsSync(full)) return { ok: false, error: '笔记文件不存在：' + rel };
+  let content = '';
+  try { content = fs.readFileSync(full, 'utf-8'); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  const lines = content.split(/\r?\n/);
+  const want = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const isItem = (raw: string) => /^\s*[-*+]\s+\S/.test(raw);
+
+  // 先信 digest 记录的行号，对不上（文件已被编辑）再全文找同文本的行
+  let idx = line - 1;
+  if (!(idx >= 0 && idx < lines.length && isItem(lines[idx]) && normItemText(lines[idx]).includes(want))) {
+    idx = lines.findIndex(raw => isItem(raw) && normItemText(raw).includes(want));
+    if (idx < 0) return { ok: false, error: '跟进清单里没找到对应的条目（可能已被修改），请重新扫描' };
+  }
+  if (/^\s*[-*+]\s*\[[xX]\]/.test(lines[idx])) return { ok: true, line: idx + 1 }; // 已是结清状态
+
+  const bm = lines[idx].match(/^(\s*[-*+]\s+)(\[[ xX]\]\s*)?(.*)$/);
+  if (!bm) return { ok: false, error: '该行不是跟进条目' };
+  lines[idx] = bm[1] + '[x] ' + bm[3];
+  try { fs.writeFileSync(full, lines.join('\n'), 'utf-8'); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  logger.info(`[NoteDigest] 跟进结清回写：${rel}:${idx + 1} → [x]`);
   return { ok: true, line: idx + 1 };
 }
 

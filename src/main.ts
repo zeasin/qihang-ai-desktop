@@ -178,8 +178,8 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
           { file: '1015 运营记录.md', line: 15, text: 'CRM #131 状态改回跟进中', done: false },
         ],
         followups: [
-          { file: '跟进记录.md', line: 8, text: '等供应商回传报价单' },
-          { file: '跟进记录.md', line: 9, text: '确认物流时效' },
+          { file: '跟进.md', line: 8, text: '等供应商回传报价单', resolvable: true },
+          { file: '跟进.md', line: 9, text: '确认物流时效', resolvable: true },
         ],
         logs: [
           { file: '2026-10-30.md', line: 1, date: '2026-10-30', preview: '今日完成 6 项待办，补货单已提交。' },
@@ -188,6 +188,8 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
         generated_at: new Date().toISOString(),
       }),
       syncDone: async () => ({ touched: 0 }),
+      checkTodo: async () => ({ ok: true }),
+      checkFollowup: async () => ({ ok: true }),
     },
     pi: { models: async () => ({ models: [] }) },
   };
