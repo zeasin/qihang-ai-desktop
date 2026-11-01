@@ -44,8 +44,15 @@ export class RadarMonitorLoop {
   start(): void {
     if (this.timer) return;
     this.startedAt = Date.now();
+    // 先清扫上次运行留下的僵尸 running（worker 中途挂掉没来得及转 idle 的），再预置本次 running：
+    try {
+      const swept = this.db.sweepStaleRunning(this.cfg.idleTimeoutMs);
+      if (swept) LOG(`swept ${swept} stale running session(s) to idle`);
+    } catch (e: any) {
+      LOG('sweep stale running failed:', String(e?.message || e).slice(0, 120));
+    }
     // 预置上次运行留下的 running 会话：重启不重复发「开始运行」；
-    // 若 3 分钟内探针见不到新活动，会自然转入空闲（对卡在 running 的陈旧会话同样生效）
+    // 若 3 分钟内探针见不到新活动，会自然转入空闲
     try {
       for (const s of this.db.runningSessionIds()) {
         this.running.set(`${s.tool}/${s.sessionId}`, { tool: s.tool, sessionId: s.sessionId, lastActivity: this.startedAt });

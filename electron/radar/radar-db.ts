@@ -42,6 +42,9 @@ export function dbPath(root: string): string {
   return path.join(root, 'radar.db');
 }
 
+/** 僵尸 running 判定窗口：running 超过该时长无同步心跳，读路径一律按 idle 展示 */
+const ZOMBIE_MS = 15 * 60_000;
+
 export class RadarDb {
   private db: DatabaseSync;
   readonly root: string;
@@ -261,23 +264,19 @@ export class RadarDb {
 
   /** 会话行（检索/展示） */
   getSession(tool: string, sessionId: string): SessionRow | null {
-    const r = this.db.prepare('SELECT * FROM radar_session WHERE tool = ? AND session_id = ?').get(tool, sessionId) as any;
+    const r = this.db.prepare(`
+      SELECT *, ${this.stateExpr()} AS effective_state
+      FROM radar_session WHERE tool = ? AND session_id = ?
+    `).get(tool, sessionId) as any;
     return r ? rowToSession(r) : null;
   }
 
-  /** 状态投影：running 超 15 分钟无心跳归 idle（防僵尸） */
-  effectiveState(tool: string, sessionId: string): { state: string; stateChangedAt: number } {
-    const s = this.getSession(tool, sessionId);
-    if (!s) return { state: 'idle', stateChangedAt: 0 };
-    let state = s.state;
-    let changed = s.stateChangedAt;
-    if (state === 'running' && Date.now() - Math.max(changed, s.syncedAt) > 15 * 60_000) {
-      state = 'idle';
-      this.db.prepare('UPDATE radar_session SET state = ?, state_changed_at = ? WHERE tool = ? AND session_id = ?')
-        .run('idle', Date.now(), tool, sessionId);
-      changed = Date.now();
-    }
-    return { state, stateChangedAt: changed };
+  /** 生效状态 SQL 片段：running 且超过 ZOMBIE_MS 无同步心跳 → 读路径视为 idle（只读投影，不落库）。
+   *  worker 存活时 ingest 每轮都会刷新在源里仍存在的会话的 synced_at（约 60s 一次），
+   *  worker 挂掉/崩溃循环时 synced_at 冻结，靠它保证 UI 不会永远显示「运行中」。 */
+  private stateExpr(alias = ''): string {
+    const p = alias ? `${alias}.` : '';
+    return `CASE WHEN ${p}state = 'running' AND MAX(${p}state_changed_at, ${p}synced_at) < ${Date.now() - ZOMBIE_MS} THEN 'idle' ELSE ${p}state END`;
   }
 
   /** 当前标记为 running 的会话（worker 启动时预置监控表，防重启后重复发 running 事件） */
@@ -286,6 +285,19 @@ export class RadarDb {
       "SELECT tool, session_id FROM radar_session WHERE state = 'running'",
     ).all() as any[];
     return rows.map((r) => ({ tool: r.tool, sessionId: r.session_id }));
+  }
+
+  /**
+   * 启动清扫：上次运行 worker 中途挂掉时来不及转 idle 的僵尸 running 会话，直接归位。
+   * 心跳 = MAX(state_changed_at, synced_at)（ingest 每轮都会刷新在源里仍存在的会话的 synced_at），
+   * 超过 idleTimeoutMs 没心跳说明 worker 已停摆至少一轮，不可能仍在运行。只改投影，不补发事件。
+   */
+  sweepStaleRunning(idleTimeoutMs: number): number {
+    const info = this.db.prepare(`
+      UPDATE radar_session SET state = 'idle', state_changed_at = ?
+      WHERE state = 'running' AND MAX(state_changed_at, synced_at) < ?
+    `).run(Date.now(), Date.now() - idleTimeoutMs);
+    return Number(info.changes);
   }
 
   /** 状态跃迁写入 + 会话 state 投影（monitor 落点） */
@@ -315,11 +327,11 @@ export class RadarDb {
     const params: any[] = opts.tool ? [opts.tool] : [];
     const total = (this.db.prepare(`SELECT count(*) c FROM radar_session ${where}`).get(...params) as any).c;
     const rows = this.db.prepare(`
-      SELECT s.*, (
+      SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s ${where}
-      ORDER BY s.state = 'running' DESC, s.source_updated_at DESC LIMIT ? OFFSET ?
+      ORDER BY ${this.stateExpr('s')} = 'running' DESC, s.source_updated_at DESC LIMIT ? OFFSET ?
     `).all(...params, limit, offset) as any[];
     return { total, rows: rows.map(rowToSession) };
   }
@@ -346,7 +358,7 @@ export class RadarDb {
     if (!term) {
       const rows = this.db.prepare(`
         SELECT m.tool, m.session_id AS sessionId, m.seq, m.role, m.content, m.thinking,
-               m.ts, s.title, s.project_dir AS projectDir, s.state
+               m.ts, s.title, s.project_dir AS projectDir, ${this.stateExpr('s')} AS state
         FROM radar_message m
         LEFT JOIN radar_session s ON s.tool = m.tool AND s.session_id = m.session_id
         WHERE m.content LIKE ? ESCAPE '!' AND m.content <> ''
@@ -356,7 +368,7 @@ export class RadarDb {
     }
     const rows = this.db.prepare(`
       SELECT m.tool, m.session_id AS sessionId, m.seq, m.role, m.content, m.thinking,
-             m.ts, s.title, s.project_dir AS projectDir, s.state,
+             m.ts, s.title, s.project_dir AS projectDir, ${this.stateExpr('s')} AS state,
              bm25(radar_message_fts, 6.0, 1.0) AS score
       FROM radar_message_fts f
       JOIN radar_message m ON m.rowid = f.rowid
@@ -396,7 +408,7 @@ export class RadarDb {
         WHERE radar_message_fts MATCH ?
         GROUP BY m.tool, m.session_id
       )
-      SELECT s.*, (
+      SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s
@@ -407,7 +419,7 @@ export class RadarDb {
     `).all(term, like, String(q || ''), like, limit)
       // term 为 null（2 字中文词）时 trigram 无从匹配，只走标题/路径/会话id 的 LIKE
       : this.db.prepare(`
-      SELECT s.*, (
+      SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s
@@ -430,7 +442,7 @@ export class RadarDb {
     const dayStart = new Date().setHours(0, 0, 0, 0);
     const s = this.db.prepare('SELECT count(*) c FROM radar_session').get() as any;
     const m = this.db.prepare('SELECT count(*) c FROM radar_message').get() as any;
-    const r = this.db.prepare("SELECT count(*) c FROM radar_session WHERE state = 'running'").get() as any;
+    const r = this.db.prepare(`SELECT count(*) c FROM radar_session WHERE ${this.stateExpr()} = 'running'`).get() as any;
     // 今日活跃按会话在源工具里的最近活动时间算；synced_at 只代表雷达同步过，扫描即刷新，不能反映活跃
     const a = this.db.prepare('SELECT count(*) c FROM radar_session WHERE source_updated_at >= ?').get(dayStart) as any;
     return { sessions: s.c, messages: m.c, running: r.c, activeToday: a.c };
@@ -441,7 +453,7 @@ export class RadarDb {
     const rows = this.db.prepare(`
       SELECT tool,
              count(*) AS sessions,
-             SUM(CASE WHEN state = 'running' THEN 1 ELSE 0 END) AS running,
+             SUM(CASE WHEN ${this.stateExpr()} = 'running' THEN 1 ELSE 0 END) AS running,
              MAX(source_updated_at) AS lastActivity
       FROM radar_session GROUP BY tool
     `).all() as any[];
@@ -456,12 +468,12 @@ export class RadarDb {
       lastSessionTitle: string; lastSessionProject: string; lastSessionState: string }[] {
     const stats = this.db.prepare(`
       SELECT tool, count(*) AS sessions,
-             SUM(CASE WHEN state = 'running' THEN 1 ELSE 0 END) AS running,
+             SUM(CASE WHEN ${this.stateExpr()} = 'running' THEN 1 ELSE 0 END) AS running,
              MAX(source_updated_at) AS lastActivity
       FROM radar_session GROUP BY tool
     `).all() as any[];
     const lastRows = this.db.prepare(`
-      SELECT tool, session_id, title, project_dir, source_updated_at, state
+      SELECT tool, session_id, title, project_dir, source_updated_at, ${this.stateExpr()} AS state
       FROM radar_session
       WHERE source_updated_at = (SELECT MAX(x.source_updated_at) FROM radar_session x WHERE x.tool = radar_session.tool)
     `).all() as any[];
@@ -494,11 +506,11 @@ export class RadarDb {
   /** 最近活跃会话（运行中优先，按最近更新排序） */
   recentSessions(limit = 15): any[] {
     const rows = this.db.prepare(`
-      SELECT s.*, (
+      SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s
-      ORDER BY s.state = 'running' DESC, s.source_updated_at DESC LIMIT ?
+      ORDER BY ${this.stateExpr('s')} = 'running' DESC, s.source_updated_at DESC LIMIT ?
     `).all(Math.min(limit, 100)) as any[];
     return rows.map((r) => ({ ...rowToSession(r), actual_count: r.actual_count }));
   }
@@ -515,7 +527,8 @@ function rowToSession(r: any): SessionRow {
     tool: r.tool, sessionId: r.session_id, projectDir: r.project_dir, title: r.title,
     messageCount: r.message_count, sourceUpdatedAt: r.source_updated_at, sourceCreatedAt: r.source_created_at,
     capturedAt: r.captured_at, syncedAt: r.synced_at, lastSyncedSeq: r.last_synced_seq,
-    state: r.state, stateChangedAt: r.state_changed_at, frozen: r.frozen,
+    // 读路径带出防僵尸投影（effective_state）；worker 内部写入路径无该列，回退原始 state
+    state: r.effective_state ?? r.state, stateChangedAt: r.state_changed_at, frozen: r.frozen,
     frozenReason: r.frozen_reason, missingSince: r.missing_since,
   };
 }

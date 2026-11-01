@@ -4,7 +4,9 @@
  *   - 采集内核（collectors + ingest + monitor）整体跑在独立工作线程（electron/radar/radar-worker.js），
  *     重 IO/CPU（整文件解析、zstd 解压、SQLCipher 解密、批量入库）不堵主进程事件循环；
  *   - 主进程持有 radar.db 的只读连接（WAL 并发读）负责 UI 查询，与线程内写入端互不阻塞；
- *   - 线程内状态跃迁经 postMessage 回主进程，转发给渲染层（radar:event）。
+ *   - 线程内状态跃迁经 postMessage 回主进程，转发给渲染层（radar:event）；
+ *   - 自愈：worker 意外退出自动按指数退避重启；monitor 启动时清扫僵尸 running；
+ *     读路径按同步心跳归位僵尸 running（worker 停摆期间 UI 也不会永远显示「运行中」）。
  * 数据全部落 ~/.qihang-ai-desktop/radar/，不出机器。
  */
 import { Worker } from 'node:worker_threads';
@@ -55,6 +57,9 @@ class AgentRadarService {
   private runningFlag = false;
   private workerCollectors: string[] = [];
   private lastRound: RoundStat | null = null;
+  private stopping = false;
+  private restartTimer: NodeJS.Timeout | null = null;
+  private restartAttempts = 0;
   private readonly subs = new Set<(events: StateEvent[]) => void>();
 
   onStateEvents(fn: (events: StateEvent[]) => void): () => void {
@@ -72,6 +77,8 @@ class AgentRadarService {
 
   async start(): Promise<void> {
     if (this.runningFlag || this.worker) return;
+    this.stopping = false;
+    this.clearRestartTimer();
     const cfg = buildConfig();
     const root = ensureDataDir();
     const jsPath = workerJsPath();
@@ -84,6 +91,7 @@ class AgentRadarService {
       if (msg?.type === 'ready') {
         this.workerCollectors = Array.isArray(msg.collectors) ? msg.collectors : [];
         this.runningFlag = true;
+        this.restartAttempts = 0;
         logger.info('[Radar] worker ready (tools=%s)', this.workerCollectors.join(',') || 'none');
       } else if (msg?.type === 'state') {
         const events: StateEvent[] = Array.isArray(msg.events) ? msg.events : [];
@@ -107,10 +115,39 @@ class AgentRadarService {
         this.runningFlag = false;
         this.workerCollectors = [];
       }
+      // 意外退出（崩溃/异常）→ 指数退避自动重启；此前卡在 running 的会话
+      // 由 monitor 启动清扫 + 读路径防僵尸投影归位，不再依赖用户重启应用
+      this.scheduleRestart();
     });
   }
 
+  /** worker 意外退出后的自动重启：5s 起指数退避，上限 60s，ready 后清零 */
+  private scheduleRestart(): void {
+    if (this.stopping || this.worker || this.restartTimer) return;
+    if (!this.isEnabled()) return;
+    this.restartAttempts += 1;
+    const delay = Math.min(5_000 * 2 ** (this.restartAttempts - 1), 60_000);
+    logger.info('[Radar] worker restart in %ss (attempt %s)', Math.round(delay / 1000), this.restartAttempts);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (this.stopping || this.worker) return;
+      this.start().catch((e: any) => {
+        logger.error('[Radar] worker restart failed: %s', e?.message || e);
+        this.scheduleRestart();
+      });
+    }, delay);
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+  }
+
   async stop(): Promise<void> {
+    this.stopping = true;
+    this.clearRestartTimer();
     const worker = this.worker;
     if (!worker) {
       this.runningFlag = false;
