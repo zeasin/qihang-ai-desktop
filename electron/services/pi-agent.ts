@@ -13,6 +13,7 @@ import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 30;
 import * as fs from 'fs';
 import logger from './logger';
+import { buildLoadedMcpConfig } from './mcp-manager';
 
 // ---- 桌面端会话放行 bash/edit/write（不经过 AgentHub 人工审批网关） ----
 // ~/.pi/agent/extensions/pi-agenthub-gate.ts 会在 bash/edit/write 的 tool_call 上阻塞等待
@@ -89,6 +90,7 @@ export const QIHANG_SYSTEM_PROMPT = `你是「启航 AI 助手」，一个运行
 你的特点：
 - 使用中文交流，回复简洁、专业、可执行
 - 熟悉工作台提供的数据查询、笔记读写、文件与代码操作等工具，需要时主动查询数据后再回答
+- 外部系统的数据通过 MCP 数据源接入（工具名以 mcp__ 开头，如 mcp__qihang-site__list_leads）；使用这类工具查到的数据，回答中要注明数据来源（如「数据来自 qihang-site 数据源」）
 - 查找笔记库内容时，直接用 bash（rg/find/grep）与 read 自己检索并读取项目库文件，不要依赖工作台的检索工具；不要凭印象作答
 - 当前工作目录所属项目的 AGENTS.md 会随会话加载，其中的规则（内容源范围、目录结构、记忆契约与启动协议等）必须遵守
 - 回答问题时先理解用户意图，必要时用工具核实数据，不编造
@@ -155,6 +157,19 @@ async function getSession(opts: {
     agentDir: getAgentDir(),
     settingsManager,
     systemPrompt: QIHANG_SYSTEM_PROMPT,
+    // 用带 loadConfig 注入的 MCP 扩展替换内置 mcp 扩展（同名 replaceable）：
+    // 数据源读应用 config.json 的 mcpServers，不读 ~/.pi/agent/mcp.json，避免与 pi CLI 配置互染
+    ...(typeof sdk.createMcpExtension === 'function'
+      ? {
+          extensionFactories: [{
+            name: 'mcp',
+            factory: sdk.createMcpExtension({
+              loadConfig: () => buildLoadedMcpConfig() as any,
+              startupWaitMs: 8000,
+            }),
+          }],
+        }
+      : {}),
   });
   await resourceLoader.reload();
   const { session } = await sdk.createAgentSession({
@@ -171,6 +186,14 @@ async function getSession(opts: {
     excludeTools: excludeTools.length ? excludeTools : undefined,
   });
   if (modelFallbackMessage) logger.warn('[PiAgent] %s', modelFallbackMessage);
+
+  // 触发扩展 session_start：MCP server 的连接在这里才发生（SDK 的 createAgentSession 不自动触发）。
+  // 无启用源时 loadConfig 返回空配置，这一步近似空操作。
+  try {
+    await session.bindExtensions({});
+  } catch (e: any) {
+    logger.warn('[PiAgent] bindExtensions failed (MCP 可能不可用): %s', e.message);
+  }
 
   handle = { session, registry: bundle.registry, customTools, tail: Promise.resolve() };
   sessions.set(sessionId, handle);
@@ -516,6 +539,19 @@ export function resetPiSession(sessionId: string): void {
   if (!handle) return;
   try { handle.session.dispose(); } catch {}
   sessions.delete(sessionId);
+}
+
+/**
+ * 释放全部缓存会话（MCP 数据源配置变更后调用）。
+ * 会话工具集在创建时固定：MCP server 增删/启停后必须重建，新的 mcp__ 工具才会生效。
+ * 历史消息都在 jsonl 里，重建不丢上下文。
+ */
+export function resetAllPiSessions(): void {
+  for (const [, handle] of sessions) {
+    try { handle.session.dispose(); } catch {}
+  }
+  sessions.clear();
+  logger.info('[PiAgent] 已重建全部缓存会话（MCP 配置变更）');
 }
 
 /** 释放全部会话（应用退出时调用） */

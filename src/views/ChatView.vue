@@ -536,10 +536,14 @@ function bindChatEvents() {
 
   API.on('chat:tool', (data: { sessionId: string; type: string; name: string; text?: string; error?: boolean }) => {
     const stream = streamOf(String(data.sessionId));
+    // MCP 工具名是 mcp__<server>__<tool>：显示成「🔌 <server> · <tool>」，让用户知道在查外部数据源
+    const label = data.name.startsWith('mcp__')
+      ? '🔌 ' + data.name.replace(/^mcp__/, '').replace(/__/g, ' · ')
+      : '🔧 ' + data.name;
     if (data.type === 'start') {
-      stream.status = `🔧 正在执行: ${data.name}`;
+      stream.status = `${label} 正在执行`;
     } else if (data.type === 'end') {
-      stream.status = `${data.error ? '❌' : '✅'} ${data.name} ${data.error ? '失败' : '完成'}`;
+      stream.status = `${data.error ? '❌' : '✅'} ${label} ${data.error ? '失败' : '完成'}`;
     }
     if (String(data.sessionId) === currentSessionId.value) scrollToBottom();
   });

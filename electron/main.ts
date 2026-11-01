@@ -35,7 +35,8 @@ try {
 import * as db from './services/database';
 import { normalizeDatasetRecord } from './services/dataset-normalize';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession } from './services/pi-agent';
+import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession, resetAllPiSessions } from './services/pi-agent';
+import * as mcpManager from './services/mcp-manager';
 import { agentVersions } from './services/agent-versions';
 import { buildDataToolDefs, appendTodoNote } from './services/tools';
 import { followUpFeishuSession, buildKbPrompt } from './services/task-runner';
@@ -1386,6 +1387,67 @@ ipcMain.handle('radar:search', (_, { q, limit }) => {
     return { ok: true, rows: agentRadar.searchMessages(String(q || ''), Math.min(Number(limit) || 50, 200)) };
   } catch (e: any) {
     return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
+  }
+});
+
+// ========== MCP 数据源（新模块：mcp-manager.ts） ==========
+ipcMain.handle('mcp:list', () => {
+  try {
+    return { ok: true, servers: mcpManager.listServers() };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), servers: [] };
+  }
+});
+ipcMain.handle('mcp:save', async (_, { servers }) => {
+  try {
+    const res = await mcpManager.saveServers(Array.isArray(servers) ? servers : []);
+    // 启用中的源变了：会话工具集在创建时固定，全部重建，新的 mcp__ 工具才生效
+    if (res.fingerprintChanged) resetAllPiSessions();
+    return { ok: true, servers: res.servers, fingerprintChanged: res.fingerprintChanged };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), servers: [] };
+  }
+});
+ipcMain.handle('mcp:test', async (_, { url, token }) => {
+  try {
+    return await mcpManager.probeServer(String(url || ''), String(token || ''));
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('mcp:overview', async (_, { serverId, refresh }) => {
+  try {
+    return await mcpManager.sourceOverview(String(serverId || ''), refresh === true);
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('mcp:fetch', async (_, { serverId, tool, from, to, page }) => {
+  try {
+    return await mcpManager.fetchRecords(String(serverId || ''), String(tool || ''), {
+      from: from ? String(from) : undefined,
+      to: to ? String(to) : undefined,
+      page: Number(page) || 1,
+    });
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('mcp:classify', async (_, { serverId, tool, limit, force }) => {
+  try {
+    return await mcpManager.classifyRecords(String(serverId || ''), String(tool || ''), {
+      limit: Number(limit) || 0,
+      force: force === true,
+    });
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('mcp:classifications', (_, { serverId, tool }) => {
+  try {
+    return { ok: true, items: mcpManager.listClassifications(String(serverId || ''), String(tool || '')) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), items: [] };
   }
 });
 

@@ -34,7 +34,6 @@
         <span>待你处理 <b class="acc">{{ digestPending.length }}</b></span>
         <span>笔记已勾 <b>{{ digestDoneCount }}</b></span>
         <span>待跟进 <b>{{ digestFollowups.length }}</b></span>
-        <span class="warm">数据待确认 <b>{{ pendingRecordCount }}</b></span>
       </div>
 
       <!-- ========== 引擎简报 ========== -->
@@ -194,11 +193,7 @@ const reportScheduleText = computed(() => {
 const reportPushText = ref('，可推送飞书');
 
 const todos = ref<any[]>([]);
-const pendingRecords = ref<any[]>([]);
 const todayStr = ref('');
-
-const pendingRecordCount = computed(() =>
-  (pendingRecords.value || []).reduce((n: number, g: any) => n + (g.records?.length || 0), 0));
 
 // ========== 页头日期与问候 ==========
 const pageDateStr = computed(() => {
@@ -236,10 +231,6 @@ const briefLines = computed(() => {
     if (dp || df) {
       lines.push(`笔记库扫描 <b>${digest.value.scannedFiles ?? 0}</b> 个文件：发现未勾待办 <b>${dp}</b> 项、待跟进 <b>${df}</b> 项。`);
     }
-  }
-  const topPending = (pendingRecords.value || [])[0];
-  if (topPending && topPending.records?.length) {
-    lines.push(`<b>「${topPending.datasetName}」</b>数据集新增 <b>${topPending.records.length}</b> 条待确认记录，去数据页确认入库。`);
   }
   return lines.slice(0, 4);
 });
@@ -400,7 +391,7 @@ async function loadOverviewData() {
   try { reports.value = await API.insights.reports(); } catch {}
   try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 8); } catch {}
   try { recentFiles.value = await API.insights.recentFiles(); } catch {}
-  try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
+  // 数据页退役（本地数据集隐藏）：pendingRecords 不再加载
   // 日报调度时间来自内置的「生成综合日报」任务（未开启则不显示该行）
   try {
     const tsk = (await API.task.list()) || [];

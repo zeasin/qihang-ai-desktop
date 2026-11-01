@@ -21,15 +21,21 @@ const routes = [
     component: () => import('@/views/NotesView.vue')
   },
   {
+    // MCP 数据源（新模块）：配置 / 域浏览 / AI 分类
+    path: '/sources',
+    name: 'Sources',
+    component: () => import('@/views/SourcesView.vue')
+  },
+  {
+    // 旧数据页已退役（本地数据集隐藏不删），旧入口一律重定向
     path: '/data',
-    name: 'Data',
-    component: () => import('@/views/DataView.vue')
+    redirect: '/sources'
   },
   {
     path: '/data-module',
-    redirect: '/data'
+    redirect: '/sources'
   },
-  
+
   {
     path: '/planner',
     name: 'Planner',

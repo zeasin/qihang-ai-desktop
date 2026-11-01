@@ -103,6 +103,20 @@ interface ElectronAPI {
     unfreeze: (tool: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>;
     search: (q: string, limit?: number) => Promise<{ ok: boolean; rows: any[] }>;
   };
+  mcp: {
+    list: () => Promise<{ ok: boolean; servers: any[]; error?: string }>;
+    save: (servers: unknown[]) => Promise<{ ok: boolean; servers: any[]; fingerprintChanged?: boolean; error?: string }>;
+    test: (url: string, token: string) =>
+      Promise<{ ok: boolean; serverName?: string; version?: string; instructions?: string; tools?: any[]; error?: string }>;
+    overview: (serverId: string, refresh?: boolean) =>
+      Promise<{ ok: boolean; error?: string; instructions?: string; tools?: any[]; metrics?: any; counts?: any }>;
+    fetch: (serverId: string, tool: string, opts?: { from?: string; to?: string; page?: number }) =>
+      Promise<{ ok: boolean; error?: string; rows?: any[]; text?: string; hasMore?: boolean }>;
+    classify: (serverId: string, tool: string, opts?: { limit?: number; force?: boolean }) =>
+      Promise<{ ok: boolean; error?: string; dimensions?: any[]; labeled?: number; cached?: number }>;
+    classifications: (serverId: string, tool: string) =>
+      Promise<{ ok: boolean; error?: string; items: { key: string; labels: any; created_at: string }[] }>;
+  };
   project: {
     list: (type?: string) => Promise<any[]>;
     get: (id: number) => Promise<any>;

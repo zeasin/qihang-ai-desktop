@@ -146,6 +146,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     search: (q: string, limit?: number) => ipcRenderer.invoke('radar:search', { q, limit }),
   },
 
+  // MCP 数据源（配置 / 连接测试 / 拉数 / AI 分类）
+  mcp: {
+    list: () => ipcRenderer.invoke('mcp:list'),
+    save: (servers: unknown[]) => ipcRenderer.invoke('mcp:save', { servers }),
+    test: (url: string, token: string) => ipcRenderer.invoke('mcp:test', { url, token }),
+    overview: (serverId: string, refresh?: boolean) => ipcRenderer.invoke('mcp:overview', { serverId, refresh }),
+    fetch: (serverId: string, tool: string, opts?: { from?: string; to?: string; page?: number }) =>
+      ipcRenderer.invoke('mcp:fetch', { serverId, tool, ...(opts || {}) }),
+    classify: (serverId: string, tool: string, opts?: { limit?: number; force?: boolean }) =>
+      ipcRenderer.invoke('mcp:classify', { serverId, tool, ...(opts || {}) }),
+    classifications: (serverId: string, tool: string) =>
+      ipcRenderer.invoke('mcp:classifications', { serverId, tool }),
+  },
+
   // Projects
   project: {
     list: (type?: string) => ipcRenderer.invoke('project:list', { type }),

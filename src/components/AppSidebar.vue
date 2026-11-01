@@ -158,7 +158,7 @@ function quickNewChat() {
 const topMenu = computed(() => [
   { path: '/overview', label: '今天', icon: 'sun', badge: 0, badgeClass: '' },
   { path: '/planner', label: '任务', icon: 'workflow', badge: taskRunning.value, badgeClass: 'run' },
-  { path: '/data', label: '数据', icon: 'database', badge: pendingCount.value, badgeClass: 'warm' },
+  { path: '/sources', label: '数据源', icon: 'database', badge: 0, badgeClass: '' },
 ]);
 
 const footMenu = computed(() => [
@@ -332,7 +332,6 @@ async function loadRadarBadge() {
 // ========== 徽标计数 ==========
 const todoOpen = ref(0);
 const taskRunning = ref(0);
-const pendingCount = ref(0);
 
 async function loadBadges() {
   try {
@@ -343,10 +342,6 @@ async function loadBadges() {
     const tasks = await API.task.list();
     taskRunning.value = (tasks || []).filter((t: any) => t.status === 'in_progress').length;
   } catch { taskRunning.value = 0; }
-  try {
-    const groups = await (API as any).ds.pendingRecords();
-    pendingCount.value = (groups || []).reduce((n: number, g: any) => n + (g.records?.length || 0), 0);
-  } catch { pendingCount.value = 0; }
 }
 
 let timer: number | undefined;
