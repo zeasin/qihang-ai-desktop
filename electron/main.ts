@@ -1849,6 +1849,34 @@ ipcMain.handle('app:firstRun:done', () => {
   return true;
 });
 
+// --- 开机自启 ---
+// 偏好保存在 config.json（launchAtStartup）；打包版额外写入系统登录项
+// （Windows 注册表 Run 键 / macOS 登录项）。开发模式不写系统登录项
+// （electron.exe 无法映射到本应用），仅记录偏好，打包后生效。
+const LAUNCH_AT_STARTUP_KEY = 'launchAtStartup';
+
+function isLaunchAtStartup(): boolean {
+  if (app.isPackaged) {
+    try { return app.getLoginItemSettings().openAtLogin; } catch {}
+  }
+  return appConfig.getConfig(LAUNCH_AT_STARTUP_KEY) === '1';
+}
+
+function setLaunchAtStartup(enabled: boolean): void {
+  appConfig.saveConfig({ [LAUNCH_AT_STARTUP_KEY]: enabled ? '1' : '0' });
+  if (app.isPackaged) {
+    try { app.setLoginItemSettings({ openAtLogin: enabled }); } catch (e: any) {
+      logger.warn('[Startup] 设置登录项失败: %s', e?.message || e);
+    }
+  }
+}
+
+ipcMain.handle('app:startup:get', () => ({ enabled: isLaunchAtStartup() }));
+ipcMain.handle('app:startup:set', (_, { enabled }: { enabled: boolean }) => {
+  setLaunchAtStartup(!!enabled);
+  return { ok: true, enabled: isLaunchAtStartup() };
+});
+
 // --- Window controls（Windows/Linux 无边框标题栏按钮） ---
 ipcMain.handle('win:minimize', () => mainWindow?.minimize());
 ipcMain.handle('win:toggleMaximize', () => {
@@ -1929,6 +1957,10 @@ ipcMain.handle('config:get', () => {
     dailyReportRetentionDays: appConfig.getConfig('daily_report_retention_days') || '30',
     dailyReportPrompt: appConfig.getConfig('daily_report_prompt') || '',
     dailyReportTemplate: appConfig.getConfig('daily_report_template') || scheduler.DEFAULT_REPORT_TEMPLATE || '',
+    agentRadarEnabled: appConfig.getConfig('agentRadarEnabled') || '0',
+    agentRadarIntervalMs: appConfig.getConfig('agentRadarIntervalMs') || '60000',
+    agentRadarMonitorMs: appConfig.getConfig('agentRadarMonitorMs') || '3000',
+    agentRadarExclude: appConfig.getConfig('agentRadarExclude') || '',
   };
 });
 ipcMain.handle('config:set', (_, cfg) => {
@@ -2138,6 +2170,16 @@ app.whenReady().then(async () => {
     }
   } catch (e) {
     logger.error('cleanup legacy pending dir error: %s', e);
+  }
+
+  // 开机自启自愈：配置为开启但系统登录项缺失（升级换路径/被安全软件清理）时补回
+  try {
+    if (app.isPackaged && appConfig.getConfig(LAUNCH_AT_STARTUP_KEY) === '1' && !app.getLoginItemSettings().openAtLogin) {
+      app.setLoginItemSettings({ openAtLogin: true });
+      logger.info('[Startup] 已补回开机自启登录项');
+    }
+  } catch (e: any) {
+    logger.warn('[Startup] 开机自启自愈失败: %s', e?.message || e);
   }
 
   // 默认模型自愈：settings.json 的默认模型若指向已删除的接入点（或缺失），

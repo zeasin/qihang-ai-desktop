@@ -160,7 +160,8 @@ A：数据保存在本机数据库，正常退出不丢失。可在「设置 →
 
 ```bash
 npm install            # 安装依赖（含 Electron 原生模块编译）
-npm run electron:dev   # 编译主进程 + 启动 Vite 开发服务器 + 启动 Electron
+npm run dev            # 编译主进程 + 启动 Vite 开发服务器 + 启动 Electron
+npm run dev:web        # 仅启动 Vite 前端（纯浏览器预览，带示例数据垫片，不开 Electron）
 ```
 
 ### 测试
@@ -172,7 +173,8 @@ npm run test:router    # 飞书多项目路由单元测试（103 条断言）
 ### 构建
 
 ```bash
-npm run electron:build   # vite build + tsc 编译 + electron-builder 打包
+npm run build            # vite build + tsc 编译 + electron-builder 完整打包
+npm run build:web        # 仅构建前端产物（不打包安装程序）
 ```
 
 ### 项目结构

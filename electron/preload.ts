@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     firstRun: () => ipcRenderer.invoke('app:firstRun'),
     firstRunDone: () => ipcRenderer.invoke('app:firstRun:done'),
     openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+    startupGet: () => ipcRenderer.invoke('app:startup:get'),
+    startupSet: (enabled: boolean) => ipcRenderer.invoke('app:startup:set', { enabled }),
   },
   // 无边框窗口标题栏按钮（Windows/Linux）
   win: {

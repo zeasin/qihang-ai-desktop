@@ -4,7 +4,7 @@ import App from './App.vue';
 import router from './router';
 import './styles/global.css';
 
-// 纯浏览器 dev 预览垫片：npm run dev（不开 Electron）时提供示例数据，
+// 纯浏览器 dev 预览垫片：npm run dev:web（不开 Electron）时提供示例数据，
 // 便于 UI 开发调试；打包与 Electron 运行完全不受影响。
 if (import.meta.env.DEV && !(window as any).electronAPI) {
   const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 19).replace('T', ' ');

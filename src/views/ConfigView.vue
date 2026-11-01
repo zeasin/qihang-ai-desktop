@@ -376,6 +376,20 @@
         </div>
       </div>
 
+      <!-- 通用 -->
+      <div class="card">
+        <h2>🚀 通用</h2>
+        <div class="text-muted mb-2">应用基础行为设置。</div>
+        <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;">
+          <label class="toggle" title="登录系统后自动启动应用">
+            <input type="checkbox" v-model="launchAtStartup" @change="toggleLaunchAtStartup">
+            <span class="slider"></span>
+          </label>
+          <span class="text-muted">开机自动启动</span>
+        </div>
+        <span v-if="startupStatus" class="text-muted" :style="{ color: startupStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="display:block;margin-top:6px;">{{ startupStatus }}</span>
+      </div>
+
       <!-- Agent Radar（智能体雷达） -->
       <div class="card">
         <h2>🛰 智能体雷达</h2>
@@ -1259,7 +1273,8 @@ const radarStatus = ref('');
 async function loadRadarCfg() {
   try {
     const [cfg, st] = await Promise.all([API.config.get(), API.radar.status()]);
-    radarEnabled.value = String(cfg.agentRadarEnabled || '') === '1';
+    // 开关以服务真实状态为准（与「监控中」徽标同源），config 值仅作兜底
+    radarEnabled.value = typeof st?.enabled === 'boolean' ? st.enabled : String(cfg.agentRadarEnabled || '') === '1';
     radarIntervalMs.value = String(cfg.agentRadarIntervalMs || '60000');
     radarMonitorMs.value = String(cfg.agentRadarMonitorMs || '3000');
     radarExclude.value = cfg.agentRadarExclude || '';
@@ -1314,8 +1329,33 @@ async function scanRadarNow() {
   } finally { radarBusy.value = false; }
 }
 
+// 开机自启
+const launchAtStartup = ref(false);
+const startupStatus = ref('');
+
+async function loadStartupSetting() {
+  try {
+    const res = await API.app.startupGet();
+    launchAtStartup.value = !!res?.enabled;
+  } catch { /* 保持默认关闭 */ }
+}
+
+async function toggleLaunchAtStartup() {
+  const target = launchAtStartup.value;
+  try {
+    const res = await API.app.startupSet(target);
+    launchAtStartup.value = !!res?.enabled;
+    startupStatus.value = launchAtStartup.value ? '✅ 已开启开机自启' : '✅ 已关闭开机自启';
+  } catch (e: any) {
+    launchAtStartup.value = !target; // 失败回滚
+    startupStatus.value = '❌ ' + (e?.message || '设置失败');
+  }
+  setTimeout(() => { if (startupStatus.value.startsWith('✅')) startupStatus.value = ''; }, 3000);
+}
+
 onMounted(async () => {
   await loadConfig();
+  await loadStartupSetting();
   await loadLlmConfig();
   await loadSearchConfig();
   await loadAgentVersions();

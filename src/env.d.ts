@@ -20,6 +20,8 @@ interface ElectronAPI {
     firstRunDone: () => Promise<boolean>;
     /** 用系统默认浏览器打开外部链接（仅 http/https） */
     openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
+    startupGet: () => Promise<{ enabled: boolean }>;
+    startupSet: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>;
   };
   win: {
     minimize: () => Promise<void>;
