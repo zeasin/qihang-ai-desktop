@@ -1776,6 +1776,7 @@ ipcMain.handle('insights:stats', () => {
 ipcMain.handle('insights:reports', () => {
   return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'daily_report' ORDER BY created_at DESC LIMIT 10");
 });
+ipcMain.handle('insights:recentFiles', () => projectScan.collectRecentFiles(6));
 ipcMain.handle('insights:reportGenerating', () => {
   const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);

@@ -227,6 +227,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   insights: {
     stats: () => ipcRenderer.invoke('insights:stats'),
     reports: () => ipcRenderer.invoke('insights:reports'),
+    recentFiles: () => ipcRenderer.invoke('insights:recentFiles'),
     weeklyReports: () => ipcRenderer.invoke('insights:weeklyReports'),
     subProjects: () => ipcRenderer.invoke('insights:subProjects'),
     tags: () => ipcRenderer.invoke('insights:tags'),

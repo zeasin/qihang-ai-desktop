@@ -104,44 +104,12 @@
         <div v-if="!digestPending.length && !todos.length" class="empty-row">{{ digestLoading ? '正在扫描笔记…' : '笔记里没有未勾选的待办' }}</div>
       </section>
 
-      <!-- ========== 今日节奏 + 新产出 ========== -->
-      <div class="grid2">
-        <section>
-          <div class="sec-label"><AppIcon name="clock" :size="13" />今日节奏</div>
-          <div class="panel list-panel">
-            <div v-if="reportScheduleText" class="plan-row">
-              <AppIcon name="clock" :size="14" />
-              <span class="plan-tx"><b>{{ reportScheduleText }}</b><small>综合日报自动生成{{ reportPushText }}</small></span>
-            </div>
-            <div v-for="r in activeReminders" :key="r.id" class="plan-row">
-              <AppIcon name="bell-ring" :size="14" />
-              <span class="plan-tx"><b>{{ r.time || '09:00' }} {{ r.name }}</b><small>{{ reminderTypeText(r.type) }}{{ r.date ? ' · ' + r.date : '' }}</small></span>
-            </div>
-            <div v-if="!reportScheduleText && !activeReminders.length" class="empty-row">暂无定时安排</div>
-          </div>
-        </section>
-        <section>
-          <div class="sec-label"><AppIcon name="file-text" :size="13" />新产出<em>{{ reports.length }}</em></div>
-          <div class="panel list-panel">
-            <div v-for="r in reports.slice(0, 6)" :key="r.id" class="file-row" @click="openReportModal(r)">
-              <AppIcon name="file-text" :size="14" />
-              <span class="plan-tx">
-                <b>{{ r.report_date || '日报' }} 综合日报</b>
-                <small>{{ (r.summary || '').slice(0, 60) || '（无摘要）' }}</small>
-              </span>
-              <span class="badge badge-primary">日报</span>
-            </div>
-            <div v-if="!reports.length" class="empty-row">暂无日报</div>
-          </div>
-        </section>
-      </div>
-
       <!-- ========== 跟进事项 + 工作日志 ========== -->
       <div class="grid2">
         <section>
           <div class="sec-label"><AppIcon name="bookmark" :size="13" />跟进事项<em>{{ digestFollowups.length }}</em></div>
           <div class="panel list-panel">
-            <div v-for="(f, i) in digestFollowups.slice(0, 20)" :key="'f' + i" class="file-row" :title="f.file + ':' + f.line">
+            <div v-for="(f, i) in digestFollowups.slice(0, 20)" :key="'f' + i" class="file-row" :title="f.project + ' / ' + f.file + ':' + f.line + '（点击在笔记中打开）'" @click="openFollowupSource(f)">
               <AppIcon name="bookmark" :size="14" />
               <span class="plan-tx"><b>{{ f.text }}</b><small>{{ f.file.split('/').pop() }}</small></span>
             </div>
@@ -160,20 +128,23 @@
           </div>
         </section>
       </div>
-    </template>
-  </div>
 
-  <!-- ========== 日报详情弹窗 ========== -->
-  <div v-if="showReportModal" class="modal-overlay" @click.self="closeReportModal">
-    <div class="modal-box modal-box-lg">
-      <div class="modal-header">
-        <h3>综合日报{{ modalReport?.report_date ? ' · ' + modalReport.report_date : '' }}</h3>
-        <button class="modal-close" @click="closeReportModal">&times;</button>
-      </div>
-      <div class="modal-body report-modal-body">
-        <div v-html="renderMarkdown(reportBody(modalReport?.content || ''))"></div>
-      </div>
-    </div>
+      <!-- ========== 最新更新（垫底板块，与上方拉开距离） ========== -->
+      <section class="tail-sec">
+        <div class="sec-label"><AppIcon name="file-text" :size="13" />最新更新<em>{{ recentFiles.length }}</em></div>
+        <div class="panel list-panel">
+          <div v-for="f in recentFiles" :key="f.projectName + '/' + f.rel" class="file-row" :title="f.projectName + ' / ' + f.rel">
+            <AppIcon name="file-text" :size="14" />
+            <span class="plan-tx">
+              <b>{{ f.rel.split('/').pop() }}</b>
+              <small>{{ f.projectName }}/{{ f.rel.split('/').slice(0, -1).join('/') }}</small>
+            </span>
+            <span class="todo-dt">{{ fileTime(f.mtime) }}</span>
+          </div>
+          <div v-if="!recentFiles.length" class="empty-row">笔记库最近没有文件改动</div>
+        </div>
+      </section>
+    </template>
   </div>
 </template>
 
@@ -214,19 +185,11 @@ const reportScheduleText = computed(() => {
 const reportPushText = ref('，可推送飞书');
 
 const todos = ref<any[]>([]);
-const reminders = ref<any[]>([]);
 const pendingRecords = ref<any[]>([]);
 const todayStr = ref('');
 
 const pendingRecordCount = computed(() =>
   (pendingRecords.value || []).reduce((n: number, g: any) => n + (g.records?.length || 0), 0));
-
-const activeReminders = computed(() => (reminders.value || []).filter((r: any) => r.enabled !== 0));
-
-function reminderTypeText(type: string): string {
-  const m: Record<string, string> = { daily: '每天', weekly: '每周', monthly: '每月', yearly: '每年', once: '仅一次' };
-  return m[type] || type || '提醒';
-}
 
 // ========== 页头日期与问候 ==========
 const pageDateStr = computed(() => {
@@ -307,81 +270,6 @@ async function loadRadarStats() {
   } catch { radarStats.value = null; radarCards.value = []; }
 }
 
-const renderMarkdown = (text: string) => {
-  if (!text) return '';
-  const lines = text.split('\n');
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^> /.test(line)) {
-      let cnt = line.slice(2)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-        .replace(/`(.+?)`/g,'<code>$1</code>')
-        .replace(/\[(.+?)\]\((.+?)\)/g,'<a href="$2">$1</a>');
-      out.push('<blockquote style="border-left:3px solid var(--primary);padding:6px 12px;margin:8px 0;background:var(--primary-soft);border-radius:4px;color:var(--text-secondary)">' + cnt + '</blockquote>');
-      continue;
-    }
-    if (/^\|/.test(line)) {
-      const trows: string[] = [line];
-      while (i + 1 < lines.length && /^\|/.test(lines[i + 1])) { i++; trows.push(lines[i]); }
-      let thtml = '';
-      if (trows.length > 1 && /^\|[-:| ]+\|$/.test(trows[1])) {
-        thtml += '<thead><tr>';
-        const hcells = trows[0].split('|').filter(c => c.trim() !== '');
-        for (const hc of hcells) {
-          const hv = hc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          thtml += '<th style="padding:6px 10px;border:1px solid var(--border);background:var(--surface-2);font-weight:600;text-align:left;font-size:13px">' + hv + '</th>';
-        }
-        thtml += '</tr></thead><tbody>';
-        for (let tj = 2; tj < trows.length; tj++) {
-          const dcells = trows[tj].split('|').filter(c => c.trim() !== '');
-          thtml += '<tr>';
-          for (const dc of dcells) {
-            const dv = dc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            thtml += '<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px">' + dv + '</td>';
-          }
-        }
-        thtml += '</tbody>';
-      } else {
-        thtml += '<tbody>';
-        for (const row of trows) {
-          const dcells = row.split('|').filter(c => c.trim() !== '');
-          thtml += '<tr>';
-          for (const dc of dcells) {
-            const dv = dc.trim().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            thtml += '<td style="padding:6px 10px;border:1px solid var(--border);font-size:13px">' + dv + '</td>';
-          }
-        }
-        thtml += '</tbody>';
-      }
-      out.push('<table style="width:100%;border-collapse:collapse;margin:8px 0">' + thtml + '</table>');
-      continue;
-    }
-    const esc = line
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-      .replace(/`(.+?)`/g,'<code>$1</code>')
-      .replace(/\[(.+?)\]\((.+?)\)/g,'<a href="$2">$1</a>');
-    if (/^### /.test(line)) { out.push('<h3>' + esc.slice(4) + '</h3>'); continue; }
-    if (/^## /.test(line)) { out.push('<h2 style="font-size:16px;margin:12px 0 6px">' + esc.slice(3) + '</h2>'); continue; }
-    if (/^# /.test(line)) { out.push('<h1 style="font-size:18px;margin:16px 0 8px">' + esc.slice(2) + '</h1>'); continue; }
-    if (/^---$/.test(line)) { out.push('<hr>'); continue; }
-    if (/^☀️ /.test(line)) { out.push('<div style="font-size:20px;font-weight:700;margin:16px 0 8px">' + esc + '</div>'); continue; }
-    if (/^📅 /.test(line)) { out.push('<div style="font-size:14px;color:var(--text-muted);margin-bottom:16px">' + esc + '</div>'); continue; }
-    if (/^✅ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:var(--success)">' + esc + '</div>'); continue; }
-    if (/^⚠️ /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px;color:var(--danger)">' + esc + '</div>'); continue; }
-    if (/^(📋|⏰|💬|📝|🗂️|📊) /.test(line)) { out.push('<div style="font-size:15px;font-weight:600;margin:12px 0 6px">' + esc + '</div>'); continue; }
-    if (/^(🌅|🌤️|🌇|🌙) /.test(line)) { out.push('<div style="font-size:14px;color:var(--primary);margin:8px 0">' + esc + '</div>'); continue; }
-    if (/^💡 /.test(line)) { out.push('<div style="font-size:13px;color:var(--text-muted);margin-top:8px">' + esc + '</div>'); continue; }
-    if (/^  - 🔴 /.test(line)) { out.push('<div style="padding:2px 0 2px 16px;color:var(--danger)">' + esc.slice(6) + '</div>'); continue; }
-    if (/^  - /.test(line)) { out.push('<div style="padding:2px 0 2px 16px">' + esc.slice(4) + '</div>'); continue; }
-    if (line === '') { out.push('<br>'); continue; }
-    out.push('<div>' + esc + '</div>');
-  }
-  return out.join('\n');
-};
-
 // ========== 最新日报重点提炼 ==========
 const latestReport = computed(() => (reports.value.length ? reports.value[0] : null));
 
@@ -398,16 +286,6 @@ function markdownClean(s: string): string {
     .replace(/`(.+?)`/g, '$1')
     .replace(/\[(.+?)\]\(.+?\)/g, '$1')
     .trim();
-}
-
-function reportBody(content: string): string {
-  if (!content) return '';
-  const lines = content.split('\n');
-  const start = lines.findIndex((l) => {
-    const t = l.trim();
-    return /^#{1,4}\s/.test(t) || /^-{3,}\s*$/.test(t);
-  });
-  return start > 0 ? lines.slice(start).join('\n') : content;
 }
 
 function extractKeyPoints(content: string): { label: string; items: string[] }[] {
@@ -465,17 +343,19 @@ function extractKeyPoints(content: string): { label: string; items: string[] }[]
 
 const keyPointGroups = computed(() => extractKeyPoints(latestReport.value?.content || ''));
 
-// ========== 日报详情弹窗 ==========
-const showReportModal = ref(false);
-const modalReport = ref<any>(null);
+// ========== 最近更新（笔记库按修改时间倒序的前 6 个文件） ==========
+const recentFiles = ref<any[]>([]);
 
-function openReportModal(r: any) {
-  modalReport.value = r;
-  showReportModal.value = true;
+function fileTime(ts: number): string {
+  const d = new Date(ts);
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  if (d.toDateString() === new Date().toDateString()) return hm;
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`;
 }
-function closeReportModal() {
-  showReportModal.value = false;
-  modalReport.value = null;
+
+// 跟进事项点击：跳到笔记页打开来源文件（带项目与相对路径，笔记页按 query 定位）
+function openFollowupSource(f: any) {
+  router.push({ path: '/notes', query: { lib: String(f.project_id), file: f.file } });
 }
 
 async function toggleTodo(t: any) {
@@ -490,7 +370,7 @@ async function loadOverviewData() {
   try { stats.value = await API.insights.stats(); } catch {}
   try { reports.value = await API.insights.reports(); } catch {}
   try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 8); } catch {}
-  try { reminders.value = await API.reminder.list(); } catch {}
+  try { recentFiles.value = await API.insights.recentFiles(); } catch {}
   try { pendingRecords.value = await API.ds.pendingRecords(); } catch {}
   // 日报调度时间来自内置的「生成综合日报」任务（未开启则不显示该行）
   try {
@@ -521,7 +401,7 @@ const digestAt = ref('');
 const digestPending = computed(() => (digest.value?.todos || []).filter((t: any) => !t.done));
 const digestDoneCount = computed(() => (digest.value?.todos || []).length - digestPending.value.length);
 const digestFollowups = computed(() => digest.value?.followups || []);
-const digestLogs = computed(() => (digest.value?.logs || []).slice(0, 20));
+const digestLogs = computed(() => (digest.value?.logs || []).slice(0, 6));
 const digestLogGroups = computed(() => {
   const m: Record<string, any[]> = {};
   for (const g of digestLogs.value) (m[g.date] = m[g.date] || []).push(g);
@@ -622,6 +502,8 @@ onUnmounted(() => {
 /* 根节点同时是 .page（视口高度 + overflow-y:auto）：内容超高时 flex 会把子项压扁
    （.panel 的 overflow:hidden 使压缩无下限，简报曾被压到只剩标题），这里禁止压缩，交给页面滚动 */
 .today-view > * { flex-shrink: 0; }
+/* 垫底板块：标准区块间距是 sec-label 的 16px，尾部的最新更新拉开一倍 */
+.tail-sec { margin-top: 32px; }
 
 /* ========== 统计行 ========== */
 .statline {
@@ -784,6 +666,9 @@ onUnmounted(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
+  /* grid2 里 section 的首个子元素就是 sec-label，其 ：first-child 上边距会被全局清零，
+     这里补回与其他区块一致的 16px 节奏 */
+  margin-top: 16px;
   margin-bottom: 4px;
 }
 .list-panel { display: flex; flex-direction: column; }

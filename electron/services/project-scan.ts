@@ -59,9 +59,9 @@ export function walkMd(dir: string, base: string, ignoreDirs: string[], ignoreFi
   }
 }
 
-/** 锚点文件：TODO 清单、日期命名的日志 */
+/** 锚点文件：TODO 清单、跟进清单、日期命名的日志 */
 export function isAnchorName(name: string): boolean {
-  return /^TODO\.md$/i.test(name) || /^\d{4}-\d{2}-\d{2}\.md$/i.test(name);
+  return /^TODO\.md$/i.test(name) || /^(跟进|跟进事项)\.md$/i.test(name) || /^\d{4}-\d{2}-\d{2}\.md$/i.test(name);
 }
 
 /** 扫一个项目的全部 .md */
@@ -125,6 +125,17 @@ export function collectPerProject(): Array<{ projectId: number; name: string; is
       todayModified: own.filter(f => f.mtime >= t0).length,
     };
   });
+}
+
+/** 最近更新的笔记文件：与笔记提炼同口径（跳过代码仓库），按修改时间倒序取前 N 条 */
+export function collectRecentFiles(limit = 6): Array<{ projectId: number; projectName: string; rel: string; mtime: number }> {
+  const out: Array<{ projectId: number; projectName: string; rel: string; mtime: number }> = [];
+  for (const proj of db.project.list() as any[]) {
+    if (proj.type === 'code' || !proj.dir) continue;
+    for (const f of scanProject(proj)) out.push({ projectId: proj.id, projectName: proj.name, rel: f.rel, mtime: f.mtime });
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out.slice(0, limit);
 }
 
 /**

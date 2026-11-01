@@ -69,6 +69,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
@@ -76,6 +77,8 @@ import TreeNode from '@/components/TreeNode.vue';
 import NotesGate from '@/components/NotesGate.vue';
 
 const API = window.electronAPI;
+const route = useRoute();
+const router = useRouter();
 
 // ========== 文件浏览 ==========
 const libs = ref<any[]>([]);
@@ -122,10 +125,6 @@ async function applyCurrentLib() {
 
 async function onLibChange() {
   await applyCurrentLib();
-}
-
-async function onGateReady() {
-  await loadLibraries();
 }
 
 async function loadFileTree() {
@@ -188,8 +187,24 @@ function openSearchResult(r: any) {
   selectFile({ name: r.name, path: r.path, type: 'file' });
 }
 
-onMounted(() => {
-  loadLibraries();
+// 概览页「跟进事项」跳转过来：定位到来源项目并打开文件，用完即清 query 防刷新重复跳
+async function consumeOpenQuery() {
+  const qlib = Number(route.query.lib);
+  const qfile = String(route.query.file || '');
+  if (!qlib || !qfile) return;
+  if (libs.value.some((l) => l.id === qlib)) { currentLibId.value = qlib; await applyCurrentLib(); }
+  selectFile({ name: qfile.split('/').pop() || qfile, path: qfile, type: 'file' });
+  router.replace({ path: '/notes' });
+}
+
+async function onGateReady() {
+  await loadLibraries();
+  await consumeOpenQuery();
+}
+
+onMounted(async () => {
+  await loadLibraries();
+  await consumeOpenQuery();
 });
 </script>
 

@@ -176,6 +176,8 @@ interface ElectronAPI {
       remindersActive: number; todayDataRecords: number;
     }>;
     reports: () => Promise<any[]>;
+    /** 最近更新的笔记文件（跳过代码仓库，按修改时间倒序） */
+    recentFiles: () => Promise<Array<{ projectId: number; projectName: string; rel: string; mtime: number }>>;
     weeklyReports: () => Promise<any[]>;
     reportGenerating: () => Promise<{ generating: boolean }>;
     subProjects: () => Promise<Array<{ name: string; fileCount: number; totalSize: number; files: string[]; analysis?: string; hasAnalysis: boolean }>>;

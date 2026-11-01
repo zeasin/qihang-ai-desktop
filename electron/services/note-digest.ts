@@ -107,11 +107,20 @@ export function extractDigest(): DigestResult {
 
       // 待办：复选框全局识别；TODO.md 是人工维护的清单，其 bullet 条目同样视为待办
       const isTodoFile = /(^|\/)TODO\.md$/i.test(rel);
+      // 跟进.md 是专门的跟进清单（锚点文件）：每条 bullet 即一个跟进项，`[x]` 视为已解决不展示；
+      // 整文件只走跟进口径，不再进待办/模糊匹配，避免一稿两投
+      const isFollowupFile = /(^|\/)(跟进|跟进事项)\.md$/i.test(rel);
       let inTodoSection = false;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
 
+        if (isFollowupFile) {
+          if (/^\s*[-*+]\s+\S/.test(line) && !/^\s*[-*+]\s*\[[xX]\]/.test(line)) {
+            followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^\s*[-*+]\s*(\[[ xX]\]\s*)?/, '')) });
+          }
+          continue;
+        }
         const todoMatch = line.match(TODO_RE);
         if (todoMatch) {
           const text = cleanText(todoMatch[2]);
