@@ -189,7 +189,8 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
-    titleBarStyle: 'hiddenInset',
+    // macOS 用隐藏式标题栏（配合前端 mac-titlebar 拖拽条）；Windows/Linux 去掉原生标题栏，由前端顶栏 + 窗口按钮接管
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     autoHideMenuBar: true,
     backgroundColor: '#f8fafc',
     show: false,
@@ -207,6 +208,9 @@ function createWindow() {
   }
 
   mainWindow!.once('ready-to-show', () => mainWindow!.show());
+  // 无边框窗口：把最大化状态推给前端标题栏按钮（切换 □ / ❐ 图标）
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('win:maximized', true));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('win:maximized', false));
   mainWindow!.on('close', (event) => {
     if (!(app as any).isQuitting) {
       event.preventDefault();
@@ -1822,6 +1826,16 @@ ipcMain.handle('app:firstRun:done', () => {
   appConfig.saveConfig({ firstRunWelcomeSeen: true });
   return true;
 });
+
+// --- Window controls（Windows/Linux 无边框标题栏按钮） ---
+ipcMain.handle('win:minimize', () => mainWindow?.minimize());
+ipcMain.handle('win:toggleMaximize', () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize(); else mainWindow.maximize();
+  return mainWindow.isMaximized();
+});
+ipcMain.handle('win:close', () => mainWindow?.close());
+ipcMain.handle('win:isMaximized', () => !!mainWindow?.isMaximized());
 
 // --- Feishu ---
 ipcMain.handle('feishu:testBot', async (_, { app_id, app_secret }) => {

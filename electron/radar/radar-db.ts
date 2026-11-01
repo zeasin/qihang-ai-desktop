@@ -431,7 +431,8 @@ export class RadarDb {
     const s = this.db.prepare('SELECT count(*) c FROM radar_session').get() as any;
     const m = this.db.prepare('SELECT count(*) c FROM radar_message').get() as any;
     const r = this.db.prepare("SELECT count(*) c FROM radar_session WHERE state = 'running'").get() as any;
-    const a = this.db.prepare('SELECT count(*) c FROM radar_session WHERE synced_at >= ?').get(dayStart) as any;
+    // 今日活跃按会话在源工具里的最近活动时间算；synced_at 只代表雷达同步过，扫描即刷新，不能反映活跃
+    const a = this.db.prepare('SELECT count(*) c FROM radar_session WHERE source_updated_at >= ?').get(dayStart) as any;
     return { sessions: s.c, messages: m.c, running: r.c, activeToday: a.c };
   }
 

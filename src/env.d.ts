@@ -21,6 +21,12 @@ interface ElectronAPI {
     /** 用系统默认浏览器打开外部链接（仅 http/https） */
     openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
   };
+  win: {
+    minimize: () => Promise<void>;
+    toggleMaximize: () => Promise<boolean>;
+    close: () => Promise<void>;
+    isMaximized: () => Promise<boolean>;
+  };
   dialog: {
     openDirectory: () => Promise<string | null>;
   };

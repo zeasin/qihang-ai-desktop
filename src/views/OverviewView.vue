@@ -46,6 +46,29 @@
         <div v-else class="brief-body"><p>暂无数据。扫描笔记库后，这里会汇总你的待办、跟进与最新产出。</p></div>
       </section>
 
+      <!-- ========== 雷达统计 ========== -->
+      <section class="panel radar-sec">
+        <div class="sec-label">
+          <AppIcon name="radar" :size="13" />雷达统计
+          <em v-if="radarStats">监控 {{ radarCards.length }} 个工具 · 沉淀 {{ radarStats.messages }} 条消息</em>
+          <em v-else>未开启或暂无数据</em>
+          <router-link class="sec-more" to="/radar">进入雷达<AppIcon name="chevron-right" :size="11" /></router-link>
+        </div>
+        <div class="radar-stats">
+          <div class="rs-item" :class="{ run: (radarStats?.running || 0) > 0 }"><b>{{ radarStats?.running ?? 0 }}</b><small>运行中</small></div>
+          <div class="rs-item"><b>{{ radarStats?.activeToday ?? 0 }}</b><small>今日活跃</small></div>
+          <div class="rs-item"><b>{{ radarStats?.sessions ?? 0 }}</b><small>会话总数</small></div>
+          <div class="rs-item"><b>{{ radarStats?.messages ?? 0 }}</b><small>沉淀消息</small></div>
+        </div>
+        <div v-if="radarCards.length" class="radar-tools">
+          <div v-for="c in radarCards" :key="c.tool" class="radar-tool" :class="{ run: (c.running || 0) > 0 }">
+            <span class="rt-dot"></span>
+            <span class="rt-name">{{ toolLabel(c.tool) }}</span>
+            <span class="rt-sub">{{ radarToolSub(c) }}</span>
+          </div>
+        </div>
+      </section>
+
       <!-- ========== 等你处理 ========== -->
       <div class="sec-label"><AppIcon name="list-checks" :size="13" />等你处理<em>{{ digestPending.length + todos.length }} 项</em></div>
       <section class="panel todo-panel">
@@ -226,7 +249,7 @@ const briefLines = computed(() => {
       `最新综合日报 <b>《${latest.report_date || '最新'}》</b> 已生成${latest.created_at ? '（' + latest.created_at + '）' : ''}` +
       (reportScheduleText.value ? `，${reportScheduleText.value}自动更新` : '') + '。'
     );
-    for (const p of points) lines.push(escapeHtml(p) + '。');
+    for (const p of points) lines.push(escapeHtml(p).replace(/：(\d[\d,.]*)/g, '：<b>$1</b>') + '。');
   }
   if (digest.value) {
     const dp = digestPending.value.length;
@@ -244,6 +267,37 @@ const briefLines = computed(() => {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ========== 雷达统计（复用雷达页 dashboard，一次取全；radar:event 时刷新） ==========
+const radarStats = ref<any>(null);
+const radarCards = ref<any[]>([]);
+
+const RADAR_TOOL_LABELS: Record<string, string> = {
+  zcode: 'ZCode', 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode',
+  qoder: 'Qoder', trae: 'Trae', dsh: 'DSH', pi: 'Pi',
+};
+const toolLabel = (t: string) => RADAR_TOOL_LABELS[t] || t;
+
+function relTime(diff: number): string {
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
+  return `${Math.floor(diff / 86400_000)} 天前`;
+}
+
+function radarToolSub(c: any): string {
+  if ((c.running || 0) > 0) return `运行中 ${c.running} · 共 ${c.sessions}`;
+  if (!c.lastActivity) return '暂无活动';
+  return `${c.sessions} 会话 · ${relTime(Date.now() - c.lastActivity)}`;
+}
+
+async function loadRadarStats() {
+  try {
+    const d = await API.radar.dashboard();
+    radarStats.value = d.stats || null;
+    radarCards.value = d.cards || [];
+  } catch { radarStats.value = null; radarCards.value = []; }
 }
 
 const renderMarkdown = (text: string) => {
@@ -522,17 +576,25 @@ onMounted(() => {
   loadOverviewData();
   loadKbCount();
   loadNoteDigest();
+  loadRadarStats();
   API.on('report:generated', () => {
     loadOverviewData();
+  });
+  API.on('radar:event', () => {
+    loadRadarStats();
   });
 });
 onUnmounted(() => {
   API.removeAllListeners('report:generated');
+  API.removeAllListeners('radar:event');
 });
 </script>
 
 <style scoped>
 .today-view { display: flex; flex-direction: column; }
+/* 根节点同时是 .page（视口高度 + overflow-y:auto）：内容超高时 flex 会把子项压扁
+   （.panel 的 overflow:hidden 使压缩无下限，简报曾被压到只剩标题），这里禁止压缩，交给页面滚动 */
+.today-view > * { flex-shrink: 0; }
 
 /* ========== 统计行 ========== */
 .statline {
@@ -548,11 +610,90 @@ onUnmounted(() => {
 .statline.warm, .statline .warm b { color: var(--warning); }
 
 /* ========== 引擎简报 ========== */
-.brief { border-left: 3px solid var(--primary); padding: 12px 16px 14px; }
+/* 左侧强调条用内嵌伪元素而非 border-left：panel 有圆角，border-left 会沿圆角弯成 "(" 形 */
+.brief { position: relative; padding: 12px 16px 14px 19px; }
+.brief::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--primary);
+}
 .brief .sec-label { margin: 0 0 8px; }
 .brief-body { display: flex; flex-direction: column; gap: 5px; }
 .brief-body p { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary); }
-.brief-body p :deep(b) { color: var(--text-primary); font-weight: 600; }
+.brief-body p :deep(b) {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+/* ========== 雷达统计 ========== */
+/* 标题在面板内，没有外置 sec-label 的 16px 上边距，需自行与上一区块留白 */
+.radar-sec { padding: 12px 16px 14px; margin-top: 16px; }
+.radar-sec .sec-label { margin: 0 0 10px; }
+.sec-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.sec-more:hover { color: var(--primary); }
+
+.radar-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.rs-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.rs-item b {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.rs-item small { font-size: 11px; color: var(--text-muted); }
+/* 有会话运行时，"运行中"块与下方运行徽章同色系呼应 */
+.rs-item.run { background: var(--primary-soft); border-color: var(--primary); }
+.rs-item.run b { color: var(--primary); }
+
+.radar-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.radar-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface);
+}
+.radar-tool.run { border-color: var(--primary); background: var(--primary-soft); color: var(--text-primary); }
+.rt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); opacity: 0.45; flex-shrink: 0; }
+.radar-tool.run .rt-dot { background: var(--primary); opacity: 1; }
+.rt-name { font-weight: 600; color: var(--text-primary); }
 
 /* ========== 等你处理 ========== */
 .todo-panel { display: flex; flex-direction: column; }

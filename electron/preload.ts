@@ -5,7 +5,7 @@ const VALID_CHANNELS = [
   'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
   'report:generated', 'aitool:delta', 'task:changed',
-  'radar:event',
+  'radar:event', 'win:maximized',
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     firstRun: () => ipcRenderer.invoke('app:firstRun'),
     firstRunDone: () => ipcRenderer.invoke('app:firstRun:done'),
     openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+  },
+  // 无边框窗口标题栏按钮（Windows/Linux）
+  win: {
+    minimize: () => ipcRenderer.invoke('win:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('win:toggleMaximize'),
+    close: () => ipcRenderer.invoke('win:close'),
+    isMaximized: () => ipcRenderer.invoke('win:isMaximized'),
   },
   dialog: {
     openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),

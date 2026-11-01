@@ -1,13 +1,13 @@
 <!--
   AppSidebar —— ZCode 风格侧栏
-  结构：品牌区 → 顶部菜单（今天/任务/数据）→ 新建对话（Ctrl+N）
+  结构：品牌区（仅浏览器模式，Electron 下已上移到顶栏）→ 顶部菜单（今天/任务/数据）→ 新建对话（Ctrl+N）
         → 对话树（按项目分组，标题 + 相对时间，可搜索/折叠/显示更多）
-        → 底部功能区（待办/笔记/技能/设置）→ 最底部（引擎状态/日志/帮助/主题）
+        → 底部功能区（待办/笔记/技能/设置）→ 最底部（引擎状态/日志/主题；帮助在 Electron 下位于顶栏右侧）
 -->
 <template>
   <aside class="sidebar">
     <!-- 品牌区 -->
-    <div class="brand">
+    <div v-if="isBrowser" class="brand">
       <span class="brand-mark"><AppIcon name="sailboat" :size="15" /></span>
       <span class="brand-text"><b>启航</b><small>AI 工作台</small></span>
     </div>
@@ -125,7 +125,8 @@
         </div>
       </div>
       <router-link to="/log" class="foot-link" title="运行日志"><AppIcon name="terminal" :size="15" /></router-link>
-      <router-link to="/help" class="foot-link" title="帮助"><AppIcon name="circle-help" :size="15" /></router-link>
+      <!-- 帮助入口已上移到顶栏右侧；浏览器模式下此处兜底显示 -->
+      <router-link v-if="isBrowser" to="/help" class="foot-link" title="帮助"><AppIcon name="circle-help" :size="15" /></router-link>
       <span class="foot-sp"></span>
       <button class="foot-link" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">
         <AppIcon :name="isDark ? 'sun' : 'moon'" :size="15" />
@@ -142,6 +143,7 @@ import AppIcon from './AppIcon.vue';
 import { toggleTheme, useTheme } from '../composables/theme';
 
 const API = window.electronAPI;
+const isBrowser = !API;
 const route = useRoute();
 const router = useRouter();
 const isDark = useTheme();
