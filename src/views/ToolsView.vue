@@ -1,7 +1,7 @@
 <template>
   <div class="tools-view">
     <aside class="tool-sidebar">
-      <div class="sidebar-title">AI 工具箱</div>
+      <div class="sidebar-title">技能库</div>
       <div v-for="group in groups" :key="group.name" class="group">
         <div class="group-title">{{ group.name }}</div>
         <div
@@ -29,99 +29,118 @@
           <div class="tab-item" :class="{ active: activeTab === 'history' }" @click="switchTab('history')">历史</div>
         </div>
 
-        <!-- 生成 Tab：表单区 -->
-        <div v-if="activeTab === 'generate' && !running && !outputText && !imgDataUrl && !error" class="form-area">
-          <div v-for="f in activeTool.fields" :key="f.key" class="form-row">
-            <label class="form-label">{{ f.label }}</label>
-            <textarea
-              v-if="f.type === 'textarea'"
-              v-model="form[f.key]"
-              class="form-input form-textarea"
-              :placeholder="f.placeholder"
-              rows="3"
-            ></textarea>
-            <select
-              v-else-if="f.type === 'select'"
-              v-model="form[f.key]"
-              class="form-input"
-            >
-              <option v-for="opt in f.options" :key="opt" :value="opt">{{ opt }}</option>
-            </select>
-            <input
-              v-else
-              v-model="form[f.key]"
-              class="form-input"
-              :type="f.type === 'number' ? 'number' : 'text'"
-              :placeholder="f.placeholder"
-            />
-          </div>
-
-          <!-- 图片生成：服务配置 -->
-          <div v-if="activeTool.id === 'image'" class="img-config">
-            <div class="img-config-toggle" @click="imgConfigOpen = !imgConfigOpen">
-              {{ imgConfigOpen ? '收起图像服务设置 ▲' : '图像服务设置 ▼' }}
+        <!-- 生成 Tab：表单常驻，输出展示在表单下方，方便改参数重跑 -->
+        <div v-if="activeTab === 'generate'" class="gen-area">
+          <div class="form-area">
+            <div v-for="f in activeTool.fields" :key="f.key" class="form-row">
+              <label class="form-label">{{ f.label }}</label>
+              <textarea
+                v-if="f.type === 'textarea'"
+                v-model="form[f.key]"
+                class="form-input form-textarea"
+                :placeholder="f.placeholder"
+                rows="3"
+              ></textarea>
+              <select
+                v-else-if="f.type === 'select'"
+                v-model="form[f.key]"
+                class="form-input"
+              >
+                <option v-for="opt in f.options" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+              <input
+                v-else
+                v-model="form[f.key]"
+                class="form-input"
+                :type="f.type === 'number' ? 'number' : 'text'"
+                :placeholder="f.placeholder"
+              />
             </div>
-            <div v-if="imgConfigOpen" class="img-config-body">
-              <div class="form-row">
-                <label class="form-label">API 地址</label>
-                <input v-model="imgConfig.baseUrl" class="form-input" placeholder="https://api.openai.com/v1" />
+
+            <!-- 图片生成：服务配置 -->
+            <div v-if="activeTool.id === 'image'" class="img-config">
+              <div class="img-config-toggle" @click="imgConfigOpen = !imgConfigOpen">
+                {{ imgConfigOpen ? '收起图像服务设置 ▲' : '图像服务设置 ▼' }}
               </div>
-              <div class="form-row">
-                <label class="form-label">API Key</label>
-                <input v-model="imgConfig.apiKey" class="form-input" type="password" placeholder="sk-..." />
+              <div v-if="imgConfigOpen" class="img-config-body">
+                <div class="form-row">
+                  <label class="form-label">API 地址</label>
+                  <input v-model="imgConfig.baseUrl" class="form-input" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div class="form-row">
+                  <label class="form-label">API Key</label>
+                  <input v-model="imgConfig.apiKey" class="form-input" type="password" placeholder="sk-..." />
+                </div>
+                <div class="form-row">
+                  <label class="form-label">模型</label>
+                  <input v-model="imgConfig.model" class="form-input" placeholder="dall-e-3 / sd 或兼容模型" />
+                </div>
+                <button class="btn btn-secondary btn-sm" @click="saveImgConfig">保存图像服务配置</button>
               </div>
-              <div class="form-row">
-                <label class="form-label">模型</label>
-                <input v-model="imgConfig.model" class="form-input" placeholder="dall-e-3 / sd 或兼容模型" />
-              </div>
-              <button class="btn btn-secondary btn-sm" @click="saveImgConfig">保存图像服务配置</button>
             </div>
-          </div>
 
-          <!-- 网络抓取：目标数据集 -->
-          <div v-if="activeTool.id === 'fetch'" class="form-row">
-            <label class="form-label">存到数据集（可选）</label>
-            <select v-model="form.datasetId" class="form-input">
-              <option value="">不存储，仅预览</option>
-              <option v-for="d in datasets" :key="d.id" :value="d.id">{{ d.name }}</option>
-            </select>
-          </div>
+            <!-- 网络抓取：目标数据集 -->
+            <div v-if="activeTool.id === 'fetch'" class="form-row">
+              <label class="form-label">存到数据集（可选）</label>
+              <select v-model="form.datasetId" class="form-input">
+                <option value="">不存储，仅预览</option>
+                <option v-for="d in datasets" :key="d.id" :value="d.id">{{ d.name }}</option>
+              </select>
+            </div>
 
-          <div class="form-actions">
-            <button class="btn btn-primary" :disabled="!canRun" @click="run">{{ activeTool.actionLabel || '开始生成' }}</button>
-          </div>
-        </div>
-
-        <!-- 生成 Tab：结果区 -->
-        <div v-else-if="activeTab === 'generate'" class="output-area">
-          <div class="output-head">
-            <span class="output-status">
-              <span class="spinner"></span>
-              {{ running ? '生成中，请稍候...' : '完成' }}
-            </span>
-            <div class="output-actions">
-              <button v-if="activeTool.id !== 'image'" class="btn btn-secondary btn-sm" @click="copyResult">复制</button>
-              <button v-if="activeTool.export" class="btn btn-secondary btn-sm" @click="exportResult">
-                {{ activeTool.exportLabel || '导出' }}
+            <div class="form-actions">
+              <!-- AI 生成类技能：运行中按钮变“取消生成” -->
+              <button
+                v-if="activeTool.usesPi"
+                class="btn btn-primary"
+                :class="{ 'btn-cancel': running }"
+                :disabled="!running && !canRun"
+                @click="running ? cancelRun() : dispatchRun()"
+              >
+                {{ running ? '取消生成' : (hasOutput ? '重新生成' : (activeTool.actionLabel || '开始生成')) }}
               </button>
-              <button class="btn btn-secondary btn-sm" @click="resetView">重新开始</button>
+              <button v-else class="btn btn-primary" :disabled="running || !canRun" @click="dispatchRun">
+                {{ running ? '处理中...' : (activeTool.actionLabel || '开始生成') }}
+              </button>
+              <span v-if="running" class="running-hint"><span class="spinner"></span>生成中，可点击取消</span>
             </div>
+
+            <!-- 操作结果提示（导出路径 / 保存路径 / 配置已保存），不污染生成内容 -->
+            <div v-if="notice" class="notice-line">✓ {{ notice }}</div>
           </div>
 
-          <div v-if="activeTool.id === 'image'" class="img-result">
-            <img v-if="imgDataUrl" :src="imgDataUrl" class="img-preview" />
-            <div v-else-if="running" class="img-placeholder">图片生成中...</div>
-            <div v-if="error" class="output-error">{{ error }}</div>
-            <div v-if="imgDataUrl && !running" class="output-actions">
-              <button class="btn btn-primary btn-sm" @click="saveImage">保存图片</button>
+          <!-- 输出区 -->
+          <div v-if="outputVisible" class="output-area">
+            <div class="output-head">
+              <span class="output-status">
+                <span v-if="running" class="spinner"></span>
+                {{ statusText }}
+              </span>
+              <div class="output-actions">
+                <template v-if="!running && outputText">
+                  <button v-if="activeTool.id !== 'image'" class="btn btn-secondary btn-sm" @click="copyResult">
+                    {{ copied ? '已复制' : '复制' }}
+                  </button>
+                  <button v-if="activeTool.export" class="btn btn-secondary btn-sm" @click="exportResult">
+                    {{ activeTool.exportLabel || '导出' }}
+                  </button>
+                </template>
+              </div>
             </div>
-          </div>
 
-          <div v-else class="output-text">{{ displayText }}</div>
+            <div v-if="activeTool.id === 'image'" class="img-result">
+              <img v-if="imgDataUrl" :src="imgDataUrl" class="img-preview" />
+              <div v-else-if="running" class="img-placeholder">图片生成中...</div>
+              <div v-if="error && !cancelled" class="output-error">{{ error }}</div>
+              <div v-if="imgDataUrl && !running" class="output-actions img-save">
+                <button class="btn btn-primary btn-sm" @click="saveImage">保存图片</button>
+              </div>
+            </div>
 
-          <!-- 历史相关操作 -->
-          <div v-if="!running && outputText" class="history-hint">
-            <button class="btn btn-secondary btn-sm" @click="switchTab('history')">查看历史记录</button>
+            <template v-else>
+              <div v-if="outputText" class="output-text">{{ displayText }}</div>
+              <div v-if="error && !cancelled" class="output-error">{{ error }}</div>
+            </template>
           </div>
         </div>
 
@@ -152,14 +171,15 @@
                 <div class="history-detail-actions">
                   <span class="history-detail-time">生成于 {{ selectedHistory.created_at }}</span>
                   <div>
-                    <button v-if="selectedHistory.result_type === 'image'" class="btn btn-secondary btn-sm" @click="copyResultText">复制路径</button>
-                    <button v-else class="btn btn-secondary btn-sm" @click="copyResultText">复制内容</button>
+                    <button class="btn btn-secondary btn-sm" @click="copyResultText">
+                      {{ selectedHistory.result_type === 'image' ? '复制路径' : '复制内容' }}
+                    </button>
                     <button v-if="selectedHistory.result_type !== 'image'" class="btn btn-secondary btn-sm" @click="exportHistory">导出</button>
                     <button class="btn btn-secondary btn-sm" @click="removeHistory">删除</button>
                   </div>
                 </div>
                 <img v-if="selectedHistory.result_type === 'image'" :src="historyImageSrc" class="img-preview" />
-                <div v-else class="history-content" v-html="renderMarkdown(selectedHistory.result)"></div>
+                <div v-else class="history-content" v-html="renderMarkdown(historyContent)"></div>
               </template>
               <div v-else class="history-empty">选择左侧一条记录查看内容</div>
             </div>
@@ -191,6 +211,8 @@ interface Tool {
   actionLabel?: string;
   export?: boolean;
   exportLabel?: string;
+  /** 是否走 pi agent 生成（支持流式与取消） */
+  usesPi?: boolean;
   fields: Field[];
 }
 
@@ -198,23 +220,23 @@ const groups = [
   {
     name: '内容生成',
     items: [
-      { id: 'ppt', name: '生成演示', icon: '📊', desc: '输入主题与详细要求，AI 基于项目笔记内容生成演示文稿，可导出 HTML 或 PPTX。', actionLabel: '生成演示大纲', export: true, exportLabel: '导出', fields: [
+      { id: 'ppt', name: '生成演示', icon: '📊', desc: '输入主题与详细要求，AI 基于项目笔记内容生成演示文稿，可导出 HTML 或 PPTX。', actionLabel: '生成演示大纲', export: true, exportLabel: '导出', usesPi: true, fields: [
         { key: 'topic', label: '主题', type: 'text', placeholder: '如：公司产品季度汇报' },
         { key: 'pages', label: '页数', type: 'number', default: 8, placeholder: '约多少页' },
         { key: 'style', label: '风格', type: 'select', options: ['商务汇报', '教学课件', '学术汇报', '产品发布', '创意提案'], default: '商务汇报' },
         { key: 'exportFormat', label: '导出格式', type: 'select', options: ['HTML 演示（单文件，浏览器打开）', 'PPTX（Office 演示文稿）', '两者都要'], default: 'HTML 演示（单文件，浏览器打开）' },
         { key: 'requirements', label: '详细要求（可选）', type: 'textarea', placeholder: '补充目标听众、重点内容、数据要求、页面结构等，如：面向投资人的融资路演，重点突出市场规模和财务数据，最后附风险提示页' },
       ] },
-      { id: 'report', name: '写周报/日报', icon: '📝', desc: '自动查询本地待办、数据集与项目笔记，生成结构化日报/周报。', actionLabel: '生成报告', export: true, exportLabel: '导出 .md', fields: [
+      { id: 'report', name: '写周报/日报', icon: '📝', desc: '自动查询本地待办、数据集与项目笔记，生成结构化日报/周报。', actionLabel: '生成报告', export: true, exportLabel: '导出 .md', usesPi: true, fields: [
         { key: 'type', label: '报告类型', type: 'select', options: ['日报', '周报'], default: '周报' },
         { key: 'period', label: '时间范围（可选）', type: 'text', placeholder: '如：2026-07-27 ~ 2026-08-02' },
         { key: 'notes', label: '补充要点（可选）', type: 'textarea', placeholder: '补充希望写进报告的进展、成果或问题...' },
       ] },
-      { id: 'mindmap', name: '思维导图', icon: '🧠', desc: '输入主题，AI 生成结构化大纲，可导出 FreeMind .mm 文件。', actionLabel: '生成导图', export: true, exportLabel: '导出 .mm', fields: [
+      { id: 'mindmap', name: '思维导图', icon: '🧠', desc: '输入主题，AI 生成结构化大纲，可导出 FreeMind .mm 文件。', actionLabel: '生成导图', export: true, exportLabel: '导出 .mm', usesPi: true, fields: [
         { key: 'topic', label: '主题', type: 'text', placeholder: '如：2026 年个人成长计划' },
         { key: 'branches', label: '主分支数', type: 'number', default: 4, placeholder: '几个主分支' },
       ] },
-      { id: 'copywriting', name: '写文案', icon: '✍️', desc: '生成公众号文章、朋友圈、短视频脚本或广告文案。', actionLabel: '生成文案', export: true, exportLabel: '导出 .md', fields: [
+      { id: 'copywriting', name: '写文案', icon: '✍️', desc: '生成公众号文章、朋友圈、短视频脚本或广告文案。', actionLabel: '生成文案', export: true, exportLabel: '导出 .md', usesPi: true, fields: [
         { key: 'kind', label: '文案类型', type: 'select', options: ['公众号文章', '朋友圈', '短视频脚本', '广告文案'], default: '公众号文章' },
         { key: 'topic', label: '主题', type: 'text', placeholder: '如：AI 工具如何提升工作效率' },
         { key: 'style', label: '风格要求（可选）', type: 'text', placeholder: '如：轻松口语化、专业严谨' },
@@ -247,10 +269,13 @@ const resetForm = () => {
 };
 
 const running = ref(false);
+const cancelled = ref(false);
 const outputText = ref('');
 const error = ref('');
+const notice = ref('');
 let streamId = '';
-let sessionSeq = 0;
+let runToken = 0; // 竞态守卫：切换工具/重置后，旧请求的结果一律丢弃
+let sessionSeqN = 0;
 
 const datasets = ref<any[]>([]);
 const imgDataUrl = ref('');
@@ -266,39 +291,97 @@ const canRun = computed(() => {
   return false;
 });
 
-/** 输出区展示：JSON（演示）转为可读大纲，其余原样 */
-const displayText = computed(() => {
-  const raw = outputText.value;
-  if (!raw) return '';
-  try {
-    const obj = JSON.parse(raw.trim());
-    if (obj && typeof obj === 'object' && (obj.pages || Array.isArray(obj))) {
-      const pages: any[] = Array.isArray(obj) ? obj : (obj.pages || []);
-      const lines: string[] = [`# ${obj.title || ''}`, ''];
-      for (const p of pages) {
-        lines.push(`## ${p.title || ''}`);
-        const pts: string[] = p.points || p.items || [];
-        for (const pt of pts) lines.push(`- ${pt}`);
-        lines.push('');
-      }
-      return lines.join('\n').trim();
-    }
-  } catch {}
-  return raw;
+const hasOutput = computed(() => !!outputText.value || !!imgDataUrl.value || !!error.value);
+const outputVisible = computed(() => running.value || hasOutput.value);
+
+const statusText = computed(() => {
+  if (running.value) return '生成中，请稍候...';
+  if (cancelled.value) return '已取消，保留已生成的部分内容';
+  if (error.value) return '生成失败';
+  return '完成';
 });
 
+/** 去掉模型输出里的 markdown 代码围栏（```json ... ```） */
+const stripCodeFence = (text: string): string => {
+  const t = (text || '').trim();
+  const m = t.match(/^```[a-zA-Z]*\s*\n([\s\S]*?)\n?```$/);
+  return m ? m[1].trim() : t;
+};
+
+/** 从模型输出中提取 JSON 字符串（容忍前后多余文字），提取失败返回 null */
+const extractJson = (raw: string): string | null => {
+  const t = stripCodeFence(raw);
+  const start = t.search(/[{[]/);
+  if (start < 0) return null;
+  const end = Math.max(t.lastIndexOf('}'), t.lastIndexOf(']'));
+  if (end <= start) return null;
+  try {
+    const obj = JSON.parse(t.slice(start, end + 1));
+    if (obj && typeof obj === 'object') return JSON.stringify(obj);
+  } catch {}
+  return null;
+};
+
+/** 工具原始输出 → 展示用 markdown（演示的 JSON 转大纲，其余原样） */
+const prettify = (tool: string, raw: string): string => {
+  if (!raw) return '';
+  if (tool === 'ppt') {
+    const jsonStr = extractJson(raw);
+    if (jsonStr) {
+      try {
+        const obj = JSON.parse(jsonStr);
+        const pages: any[] = Array.isArray(obj) ? obj : (obj.pages || []);
+        const lines: string[] = [`# ${obj.title || ''}`, ''];
+        for (const p of pages) {
+          lines.push(`## ${p.title || ''}`);
+          for (const pt of (p.points || p.items || [])) lines.push(`- ${pt}`);
+          for (const para of (p.paras || [])) lines.push(para);
+          lines.push('');
+        }
+        return lines.join('\n').trim();
+      } catch {}
+    }
+    return stripCodeFence(raw);
+  }
+  return raw;
+};
+
+/** 输出区展示 */
+const displayText = computed(() => prettify(activeTool.value.id, outputText.value));
+
+/** 历史详情展示（演示历史同样做 JSON → 大纲转换） */
+const historyContent = computed(() => {
+  if (!selectedHistory.value || selectedHistory.value.result_type === 'image') return '';
+  return prettify(activeTool.value.id, selectedHistory.value.result || '');
+});
+
+/** 导出用文本：演示优先回传原始 JSON（后端解析保真度高），失败时退回去围栏文本 */
+const exportTextFor = (tool: Tool, raw: string): string => {
+  if (tool.id === 'ppt') return extractJson(raw) || stripCodeFence(raw);
+  return raw;
+};
+
 const switchTool = (id: string) => {
-  if (running.value) return;
+  // 正在 AI 生成时先取消，再切换（切走后旧结果会被丢弃）
+  if (running.value && activeTool.value.usesPi) {
+    try { window.electronAPI.aitool.cancel(streamId); } catch {}
+  }
   activeTab.value = 'generate';
   activeId.value = id;
   resetView();
 };
 
 const resetView = () => {
+  runToken++;
   running.value = false;
+  cancelled.value = false;
   outputText.value = '';
   error.value = '';
   imgDataUrl.value = '';
+  notice.value = '';
+  selectedHistory.value = null;
+  selectedHistoryId.value = null;
+  historyImageSrc.value = '';
   resetForm();
 };
 
@@ -323,9 +406,6 @@ const historyImageSrc = ref('');
 const loadHistory = async () => {
   try {
     historyList.value = await window.electronAPI.aitool.historyList(activeTool.value.id) || [];
-    selectedHistory.value = null;
-    selectedHistoryId.value = null;
-    historyImageSrc.value = '';
   } catch {
     historyList.value = [];
   }
@@ -333,6 +413,7 @@ const loadHistory = async () => {
 
 const openHistoryItem = async (h: any) => {
   selectedHistoryId.value = h.id;
+  historyImageSrc.value = '';
   try {
     const full = await window.electronAPI.aitool.historyGet(h.id);
     selectedHistory.value = full;
@@ -349,7 +430,9 @@ const openHistoryItem = async (h: any) => {
 
 const copyResultText = async () => {
   if (!selectedHistory.value) return;
-  const text = selectedHistory.value.result_type === 'image' ? selectedHistory.value.result : selectedHistory.value.result;
+  const text = selectedHistory.value.result_type === 'image'
+    ? selectedHistory.value.result
+    : historyContent.value;
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -367,8 +450,9 @@ const exportHistory = async () => {
   const h = selectedHistory.value;
   const name = h.name || activeTool.value.name;
   try {
-    const res = await window.electronAPI.aitool.exportText(h.result, name, '.md');
+    const res = await window.electronAPI.aitool.exportText(historyContent.value || h.result, name, '.md');
     if (!res.ok && !res.canceled) error.value = res.error || '导出失败';
+    else if (res.ok) notice.value = '已导出: ' + res.path;
   } catch (e: any) {
     error.value = e.message || String(e);
   }
@@ -438,35 +522,51 @@ const buildPrompt = (): string => {
 
 const run = async () => {
   if (running.value) return;
-  if (activeTool.value.id === 'fetch') { doFetch(); return; }
-  if (activeTool.value.id === 'image') { doImage(); return; }
+  const token = ++runToken;
+  const toolId = activeTool.value.id;
   running.value = true;
+  cancelled.value = false;
   error.value = '';
+  notice.value = '';
   outputText.value = '';
-  const sid = activeTool.value.id + '_' + (++sessionSeq);
+  const sid = toolId + '_' + (++sessionSeqN);
   streamId = sid;
-  const name = form.topic || (activeTool.value.id === 'report' ? (form.type === '日报' ? '日报' : '周报') : activeTool.value.name);
+  const name = form.topic || (toolId === 'report' ? (form.type === '日报' ? '日报' : '周报') : activeTool.value.name);
   const params = JSON.stringify({ ...form });
   try {
-    const res = await window.electronAPI.aitool.generate(activeTool.value.id, buildPrompt(), sid, name, params);
+    const res = await window.electronAPI.aitool.generate(toolId, buildPrompt(), sid, name, params);
+    if (token !== runToken) return; // 期间切换了工具，丢弃
     if (res.ok) {
       outputText.value = res.text || '';
+      loadHistory(); // 静默刷新历史列表
     } else {
       error.value = res.error || '生成失败';
     }
   } catch (e: any) {
+    if (token !== runToken || cancelled.value) return;
     error.value = e.message || String(e);
   } finally {
-    running.value = false;
+    if (token === runToken) running.value = false;
   }
 };
 
+/** 取消当前 AI 生成（中止 pi 会话，保留部分输出） */
+const cancelRun = () => {
+  if (!running.value) return;
+  cancelled.value = true;
+  try { window.electronAPI.aitool.cancel(streamId); } catch {}
+};
+
 const doFetch = async () => {
+  const token = ++runToken;
   running.value = true;
+  cancelled.value = false;
   error.value = '';
+  notice.value = '';
   outputText.value = '';
   try {
     const res = await window.electronAPI.aitool.fetch(form.url);
+    if (token !== runToken) return;
     if (!res.ok) {
       error.value = res.error || '抓取失败';
       return;
@@ -481,6 +581,7 @@ const doFetch = async () => {
             for (const item of parsed.slice(0, 200)) {
               await window.electronAPI.ds.insert(Number(form.datasetId), { ...obj, ...item });
             }
+            if (token !== runToken) return;
             outputText.value += `\n\n已导入 ${Math.min(parsed.length, 200)} 条记录到数据集。`;
             return;
           }
@@ -490,50 +591,73 @@ const doFetch = async () => {
         obj.text = (res.text || '').slice(0, 3000);
       }
       await window.electronAPI.ds.insert(Number(form.datasetId), obj);
+      if (token !== runToken) return;
       outputText.value += '\n\n已存入数据集。';
     }
   } catch (e: any) {
+    if (token !== runToken) return;
     error.value = e.message || String(e);
   } finally {
-    running.value = false;
+    if (token === runToken) running.value = false;
   }
 };
 
 const doImage = async () => {
+  const token = ++runToken;
   running.value = true;
+  cancelled.value = false;
   error.value = '';
+  notice.value = '';
   imgDataUrl.value = '';
   try {
     const [w, h] = (form.size || '1024x1024').split('x').map(Number);
     const res = await window.electronAPI.aitool.imageGenerate(form.prompt, w, h, form.prompt.slice(0, 30));
+    if (token !== runToken) return;
     if (res.ok) {
       imgDataUrl.value = `data:${res.mimeType || 'image/png'};base64,${res.b64}`;
+      loadHistory();
     } else {
       error.value = res.error || '生成失败';
     }
   } catch (e: any) {
+    if (token !== runToken) return;
     error.value = e.message || String(e);
   } finally {
-    running.value = false;
+    if (token === runToken) running.value = false;
   }
 };
 
+const dispatchRun = () => {
+  if (running.value) return;
+  if (activeTool.value.id === 'fetch') { doFetch(); return; }
+  if (activeTool.value.id === 'image') { doImage(); return; }
+  run();
+};
+
+const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
 const copyResult = async () => {
+  const text = displayText.value;
   try {
-    await navigator.clipboard.writeText(outputText.value);
+    await navigator.clipboard.writeText(text);
   } catch {
     const ta = document.createElement('textarea');
-    ta.value = outputText.value;
+    ta.value = text;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
     ta.remove();
   }
+  copied.value = true;
+  if (copiedTimer) clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => { copied.value = false; }, 1500);
 };
 
 const exportResult = async () => {
   const t = activeTool.value;
   const baseName = form.topic || (t.id === 'report' ? (form.type === '日报' ? '日报' : '周报') : t.name);
+  const text = exportTextFor(t, outputText.value);
   let res: any;
   try {
     if (t.id === 'ppt') {
@@ -542,27 +666,27 @@ const exportResult = async () => {
       let wantPptx = wantBoth || fmt.includes('PPTX');
       let wantHtml = wantBoth || fmt.includes('HTML');
       if (!wantPptx && !wantHtml) wantHtml = true;
-      let paths: string[] = [];
+      const paths: string[] = [];
       if (wantPptx) {
-        res = await window.electronAPI.aitool.exportPptx(outputText.value, baseName);
+        res = await window.electronAPI.aitool.exportPptx(text, baseName);
         if (res.ok) paths.push(res.path);
         else if (!res.canceled) { error.value = res.error || '导出 PPTX 失败'; return; }
       }
       if (wantHtml) {
-        res = await window.electronAPI.aitool.exportHtml(outputText.value, baseName);
+        res = await window.electronAPI.aitool.exportHtml(text, baseName);
         if (res.ok) paths.push(res.path);
         else if (!res.canceled) { error.value = res.error || '导出 HTML 失败'; return; }
       }
       if (paths.length) {
-        outputText.value = '✓ 已导出:\n' + paths.map(p => '  ' + p).join('\n') + '\n\n' + outputText.value;
+        notice.value = '已导出: ' + paths.join('，');
       }
       return;
     }
-    if (t.id === 'mindmap') res = await window.electronAPI.aitool.exportMindmap(outputText.value, baseName);
-    else if (t.id === 'fetch') res = await window.electronAPI.aitool.exportText(outputText.value, baseName, '.txt');
-    else res = await window.electronAPI.aitool.exportText(outputText.value, baseName, '.md');
+    if (t.id === 'mindmap') res = await window.electronAPI.aitool.exportMindmap(text, baseName);
+    else if (t.id === 'fetch') res = await window.electronAPI.aitool.exportText(text, baseName, '.txt');
+    else res = await window.electronAPI.aitool.exportText(text, baseName, '.md');
     if (res.ok) {
-      outputText.value = '✓ 已导出: ' + res.path + '\n\n' + outputText.value;
+      notice.value = '已导出: ' + res.path;
     } else if (!res.canceled) {
       error.value = res.error || '导出失败';
     }
@@ -578,9 +702,7 @@ const saveImage = async () => {
   try {
     const res = await window.electronAPI.aitool.imageSave(m[2], m[1], form.prompt.slice(0, 30));
     if (res.ok) {
-      error.value = '';
-      outputText.value = '✓ 已保存: ' + res.path;
-      running.value = false;
+      notice.value = '已保存: ' + res.path;
     }
   } catch (e: any) {
     error.value = e.message || String(e);
@@ -591,7 +713,7 @@ const saveImgConfig = async () => {
   try {
     await window.electronAPI.aitool.imageSetConfig(imgConfig.baseUrl, imgConfig.apiKey, imgConfig.model);
     imgConfigOpen.value = false;
-    outputText.value = '✓ 图像服务配置已保存';
+    notice.value = '图像服务配置已保存';
   } catch (e: any) {
     error.value = e.message || String(e);
   }
@@ -703,6 +825,10 @@ const saveImgConfig = async () => {
   color: var(--text-secondary);
 }
 
+.gen-area {
+  max-width: 720px;
+}
+
 .form-area {
   max-width: 560px;
 }
@@ -743,6 +869,24 @@ const saveImgConfig = async () => {
 
 .form-actions {
   margin-top: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.running-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.notice-line {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--primary);
+  word-break: break-all;
 }
 
 .img-config {
@@ -764,7 +908,9 @@ const saveImgConfig = async () => {
 }
 
 .output-area {
-  max-width: 720px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
 }
 
 .output-head {
@@ -810,8 +956,8 @@ const saveImgConfig = async () => {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
-  min-height: 200px;
-  max-height: 60vh;
+  min-height: 120px;
+  max-height: 55vh;
   overflow-y: auto;
 }
 
@@ -840,6 +986,11 @@ const saveImgConfig = async () => {
   font-size: 14px;
 }
 
+.img-save {
+  justify-content: center;
+  margin-top: 12px;
+}
+
 .btn {
   padding: 9px 20px;
   border-radius: var(--radius-sm);
@@ -864,6 +1015,16 @@ const saveImgConfig = async () => {
   cursor: not-allowed;
 }
 
+.btn-cancel {
+  background: var(--surface);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn-cancel:hover {
+  background: color-mix(in srgb, var(--danger) 10%, white);
+}
+
 .btn-secondary {
   background: var(--surface);
   border-color: var(--border);
@@ -881,10 +1042,6 @@ const saveImgConfig = async () => {
 }
 
 /* ===== 历史记录 ===== */
-.history-hint {
-  margin-top: 12px;
-}
-
 .history-view {
   max-width: 960px;
 }

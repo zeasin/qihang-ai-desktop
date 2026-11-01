@@ -1965,7 +1965,8 @@ ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name,
 
     const text = await aitool.generateWithPi({
       prompt: kbPrompt,
-      sessionId: `${tool}_${sessionId || Date.now()}`,
+      // generateWithPi 内部会加 aitool_ 前缀；这里不再重复拼 tool，保证与 aitool:cancel 传来的 sessionId 对得上
+      sessionId: sessionId || String(Date.now()),
       customTools,
       onDelta: (delta) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1995,6 +1996,12 @@ async function saveWithDialog(defaultName: string, filters: Electron.FileFilter[
     return { ok: false, error: e.message || String(e) };
   }
 }
+
+ipcMain.handle('aitool:cancel', async (_, { sessionId }) => {
+  // 生成会话在 pi-agent 侧的 id 为 aitool_<tool>_<seq>，与渲染端传来的 sessionId 对应
+  try { await abortSession('aitool_' + (sessionId || '')); } catch {}
+  return { ok: true };
+});
 
 ipcMain.handle('aitool:exportPptx', async (_, { md, defaultName }) => {
   const name = aitool.safeFileName(defaultName || '演示文稿') + '.pptx';

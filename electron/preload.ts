@@ -252,6 +252,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aitool: {
     generate: (tool: string, prompt: string, sessionId: string, name?: string, params?: string) =>
       ipcRenderer.invoke('aitool:generate', { tool, prompt, sessionId, name, params }),
+    cancel: (sessionId: string) => ipcRenderer.invoke('aitool:cancel', { sessionId }),
     exportPptx: (md: string, defaultName: string) =>
       ipcRenderer.invoke('aitool:exportPptx', { md, defaultName }),
     exportHtml: (md: string, defaultName: string) =>

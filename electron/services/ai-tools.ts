@@ -475,7 +475,7 @@ export interface ImageGenResult {
 export async function generateImage(prompt: string, opts: { width?: number; height?: number; model?: string } = {}): Promise<ImageGenResult> {
   const cfg = getImageGenConfig();
   if (!cfg.apiKey && !cfg.baseUrl.includes('127.0.0.1') && !cfg.baseUrl.includes('localhost')) {
-    return { ok: false, error: '未配置图像服务 API Key，请在「设置」→ AI 服务中配置' };
+    return { ok: false, error: '未配置图像服务 API Key，请在「技能」→「生成图片」→「图像服务设置」中填写' };
   }
   const base = cfg.baseUrl.replace(/\/+$/, '');
   try {

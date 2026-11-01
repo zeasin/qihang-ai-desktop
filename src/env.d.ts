@@ -187,6 +187,25 @@ interface ElectronAPI {
     /** 实时扫盘得到的每项目文件统计（原先读索引表） */
     libraryStats: () => Promise<Array<{ projectId: number; name: string; isDefault: boolean; docCount: number; todayModified: number }>>;
   };
+  /** AI 工具箱（技能页） */
+  aitool: {
+    generate: (tool: string, prompt: string, sessionId: string, name?: string, params?: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
+    cancel: (sessionId: string) => Promise<{ ok: boolean }>;
+    exportPptx: (md: string, defaultName: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+    exportHtml: (md: string, defaultName: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+    exportMindmap: (md: string, defaultName: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+    exportText: (text: string, defaultName: string, ext?: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+    fetch: (url: string) => Promise<{ ok: boolean; url?: string; title?: string; text?: string; contentType?: string; error?: string }>;
+    imageGenerate: (prompt: string, width: number, height: number, name?: string) => Promise<{ ok: boolean; b64?: string; mimeType?: string; error?: string }>;
+    imageSave: (b64: string, mimeType: string, defaultName: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+    imageConfig: () => Promise<{ baseUrl: string; apiKey: string; model: string }>;
+    imageSetConfig: (baseUrl: string, apiKey: string, model: string) => Promise<{ ok: boolean }>;
+    historyList: (tool?: string) => Promise<any[]>;
+    historyGet: (id: number) => Promise<any>;
+    historyRemove: (id: number) => Promise<any>;
+    historyClear: (tool?: string) => Promise<any>;
+    historyImage: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+  };
   on: (channel: string, callback: (...args: any[]) => void) => void;
   removeAllListeners: (channel: string) => void;
 }
