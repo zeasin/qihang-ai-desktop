@@ -51,9 +51,7 @@ import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { approver } from './approval/approver';
 import logger from './services/logger';
-import { relayClient, probeRelayHealth } from './services/relay-client';
 import { extractDigest, syncCheckedDone, checkDigestTodo, checkDigestFollowup } from './services/note-digest';
-import * as relayDevice from './services/relay-device';
 import { notify } from './services/notify';
 import { createTrayIcon, getWindowIcon } from './icon';
 
@@ -1019,8 +1017,7 @@ ipcMain.handle('ds:pendingRecords', () => {
 // --- Chat / Orchestrator ---
 /**
  * 一轮对话的执行核心。
- * emit 决定这轮的增量事件播给谁：桌面走 sendToRenderer，
- * 移动端发起的轮次双播（既回中继，也让桌面窗口当场演出来）。
+ * emit 决定这轮的增量事件播给谁（桌面窗口当场演出来）。
  */
 async function runChatTurn(
   { question, sessionId, projectDir, images, agent, modelName }:
@@ -1041,12 +1038,6 @@ async function runChatTurn(
     }
 
     db.chat.addMessage(sid, 'user', question, activeAgent, images);
-
-    // 移动端实时补上这条问题气泡 + 立刻同步镜像；等 chat.done 才推的话，
-    // AI 工作期间移动端只能看到流式回答、看不到问的是什么
-    relayClient.pushEvent('chat.user', { sessionId: sid, text: question });
-    relayClient.syncSession(sid);
-    relayClient.syncRecentMessages(sid, 1);
 
     // ===== 项目前置检查 =====
     // 查询事务/笔记/记录等本地知识类问题，若未添加项目则先引导用户配置，不再调用 AI
@@ -1133,7 +1124,6 @@ ipcMain.handle('chat:send', (_, payload) => runChatTurn(payload, emitChatEvent))
 ipcMain.handle('chat:session:create', (_, { id, projectId, title, mode, source, agent }) => {
   const sid = id || 'chat_' + Date.now();
   const row = db.chat.createSession(sid, projectId, title, mode || 'general', agent, source || 'ui');
-  relayClient.syncSession(sid);
   return row;
 });
 ipcMain.handle('chat:session:list', (_, { projectId } = {}) => db.chat.sessions(projectId));
@@ -1141,7 +1131,6 @@ ipcMain.handle('chat:session:listByProject', (_, { projectId }) => db.chat.sessi
 ipcMain.handle('chat:session:listBySource', (_, { source, projectId }) => db.chat.sessionsBySource(source, projectId));
 ipcMain.handle('chat:session:updateAgent', (_, { sessionId, agent }) => {
   db.chat.updateSessionAgent(sessionId, agent);
-  relayClient.syncSession(sessionId);
 });
 ipcMain.handle('chat:session:updateProject', (_, { sessionId, projectId }) => {
   const n = (projectId === null || projectId === undefined || projectId === '') ? NaN : Number(projectId);
@@ -1151,187 +1140,20 @@ ipcMain.handle('chat:session:updateProject', (_, { sessionId, projectId }) => {
   db.chat.updateSessionProject(sessionId, Number.isFinite(n) ? Math.trunc(n) : null);
   // 工作目录换了：丢掉缓存的 pi 会话，下一轮按新目录重建（历史仍从 jsonl 续上）
   resetPiSession(sessionId);
-  relayClient.syncSession(sessionId);
   return { ok: true };
 });
 ipcMain.handle('chat:session:messages', (_, { sessionId }) => db.chat.messages(sessionId));
 ipcMain.handle('chat:session:delete', (_, { sessionId }) => {
   db.chat.deleteSession(sessionId);
-  relayClient.syncSessionDeleted(sessionId);
 });
 ipcMain.handle('chat:session:updateTitle', (_, { sessionId, title }) => {
   db.chat.updateSessionTitle(sessionId, title);
-  relayClient.syncSession(sessionId);
 });
 
-// ========== 移动端远程连接（中继） ==========
-
-/** 一轮对话的广播：桌面窗口演一遍，同时把事件推给中继转移动端并刷新服务端镜像 */
+/** 一轮对话的广播：桌面窗口演一遍 */
 function emitChatEvent(channel: string, data: any): void {
   sendToRenderer(channel, data);
-  relayClient.mirrorRendererEvent(channel, data);
 }
-
-/** 会话的真实工作目录：只认桌面这台机器上的项目记录，绝不用移动端传来的 projectDir */
-function sessionProjectDir(row: any): string {
-  if (!row || row.project_id === null || row.project_id === undefined) return '';
-  const p: any = db.project.get(row.project_id);
-  return p && p.dir ? p.dir : '';
-}
-
-/** 中继/移动端的会话形状（字段名沿用三端约定：sessionId/adapterId） */
-function toMobileSession(row: any) {
-  if (!row) return null;
-  return {
-    sessionId: row.session_id,
-    projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
-    title: row.title || '新对话',
-    adapterId: row.active_agent || 'pi',
-    modelId: row.model_id || null,
-    status: 'active',
-    kind: 'chat',
-    ended: 0,
-  };
-}
-
-/** 点通知：把窗口捞回前台并跳到那条会话 */
-function openSessionFromRemote(sessionId: string): void {
-  showWindow();
-  sendToRenderer('nav:open-session', { sessionId });
-}
-
-/** 移动端发来的一条消息：桌面窗口即时补上这条气泡，并弹系统通知 */
-function announceMobileMessage(sessionId: string, title: string, text: string): void {
-  sendToRenderer('chat:remote', { sessionId, title, text });
-  const preview = String(text || '').replace(/\s+/g, ' ').trim();
-  notify(
-    `📱 移动端消息 · ${title || '新对话'}`,
-    preview.length > 60 ? preview.slice(0, 60) + '…' : preview,
-    () => { openSessionFromRemote(sessionId); },
-  );
-}
-
-/**
- * 移动端会经中继打过来的 RPC。
- * 只实现本仓库真正具备的能力；没有对等机制的方法明确拒绝，不静默返回成功。
- */
-function registerRelayRpc(): void {
-  relayClient.registerHandler('chat.create', (p: any) => {
-    const sid = 'chat_' + Date.now();
-    const row = db.chat.createSession(sid, p?.projectId, p?.title || '新对话', 'general', p?.agent || 'pi', 'ui');
-    relayClient.syncSession(sid);
-    sendToRenderer('chat:created', { sessionId: sid });
-    return toMobileSession(row);
-  });
-
-  relayClient.registerHandler('chat.send', (p: any) => {
-    const text = String(p?.text || '').trim();
-    if (!text) throw new Error('消息内容为空');
-    let row: any = db.chat.getSession(String(p.sessionId));
-    if (!row) {
-      // 桌面删掉的会话在中继是残留的，移动端仍能点进来：按原 id 在桌面重建，用桌面自己的项目目录
-      const proj: any = p?.projectId ? db.project.get(Number(p.projectId)) : null;
-      if (!proj) throw new Error('会话在桌面端已删除，且桌面端已无该项目，无法重建');
-      row = db.chat.createSession(String(p.sessionId), proj.id, p?.title || '新对话', 'general', p?.agent || 'pi', 'ui');
-      relayClient.syncSession(String(p.sessionId));
-      sendToRenderer('chat:created', { sessionId: String(p.sessionId) });
-    }
-    announceMobileMessage(String(p.sessionId), row.title || '新对话', text);
-    void runChatTurn({
-      question: text,
-      sessionId: String(p.sessionId),
-      projectDir: sessionProjectDir(row),
-      images: Array.isArray(p?.images) ? p.images : undefined,
-      agent: p?.agent || row.active_agent || 'pi',
-      modelName: row.model_id || undefined,
-    }, emitChatEvent).finally(() => {
-      // 这一轮跑完（含出错）：让渲染层重拉该会话，桌面才补得上移动端的问答
-      sendToRenderer('chat:remote-settled', { sessionId: String(p.sessionId) });
-    });
-    // 立即回执：内容经 chat.delta/status/done 事件流回传，避免移动端 RPC 超时
-    return { ok: true };
-  });
-
-  relayClient.registerHandler('chat.switch-agent', (p: any) => {
-    db.chat.updateSessionAgent(String(p.sessionId), String(p.agent || 'pi'));
-    relayClient.syncSession(String(p.sessionId));
-    return { ok: true };
-  });
-
-  relayClient.registerHandler('chat.select-model', (p: any) => {
-    const modelId = String(p.modelId || '');
-    db.chat.updateSessionModel(String(p.sessionId), modelId === 'auto' ? '' : modelId);
-    relayClient.syncSession(String(p.sessionId));
-    return { ok: true };
-  });
-
-  relayClient.registerHandler('chat.list-models', async () => {
-    const res = await listPiModels();
-    return res.models || [];
-  });
-
-  relayClient.registerHandler('chat.stop', async (p: any) => {
-    const sid = String(p?.sessionId || '');
-    await abortSession(sid);
-    return { ok: true };
-  });
-
-  // 本仓库的对话内核不向用户反问（工具自动放行），没有待答交互
-  relayClient.registerHandler('chat.interactions', () => []);
-  relayClient.registerHandler('chat.answer', () => {
-    throw new Error('桌面端当前没有待回答的 AI 反问');
-  });
-}
-
-// 启动接线：注册 RPC + 中继事件旁路 + 按已保存的中继地址建连
-function startRelay(): void {
-  registerRelayRpc();
-  // 移动端「发测试消息给桌面端」走的是中继事件帧，不是 RPC：只弹系统通知。
-  // 渲染层只有停在设置页时才挂着，不弹系统通知的话离开那页就毫无线索。
-  relayClient.onRelayEvent((event, data) => {
-    if (event !== 'test:message') return;
-    const sentAt = Number(data?.ts) || Date.now();
-    notify(
-      '📲 收到移动端测试消息',
-      `${data?.name || '移动端'} · ${new Date(sentAt).toLocaleTimeString('zh-CN', { hour12: false })}`,
-    );
-  });
-  const saved = relayDevice.load();
-  // 从没配过中继地址就不建设备文件、不发起任何外连
-  if (!saved || !saved.relayUrl) return;
-  void relayClient.start(saved.relayUrl);
-}
-
-ipcMain.handle('relay:status', () => relayClient.status());
-ipcMain.handle('relay:probe', (_, { url }) => probeRelayHealth(String(url || '')));
-ipcMain.handle('relay:set-url', async (_, { url }) => {
-  try {
-    const device = await relayClient.setRelayUrl(String(url || ''));
-    const probed = await relayClient.waitForConnected(8000);
-    return { ok: true, device, connected: probed.connected, error: probed.error };
-  } catch (e: any) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
-});
-/** 设置/修改连接密码并开启：密码由中继判全库唯一，被拒时本机不改任何状态 */
-ipcMain.handle('relay:enable', async (_, { password, url }) => {
-  try {
-    const device = await relayClient.enableWithPassword(String(password || ''), String(url || ''));
-    const probed = await relayClient.waitForConnected(8000);
-    return { ok: true, device, connected: probed.connected, error: probed.error };
-  } catch (e: any) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
-});
-ipcMain.handle('relay:disable', async () => {
-  try {
-    return { ok: true, device: await relayClient.setRemoteEnabled(false) };
-  } catch (e: any) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
-});
-ipcMain.handle('relay:clients', () => relayClient.listMobileClients());
-ipcMain.handle('relay:kick', (_, { sessionId }) => relayClient.kickMobileClient(String(sessionId || '')));
 
 // --- Agent Radar（智能体雷达：监控本机其他 AI 工具 + 会话对话本地沉淀） ---
 ipcMain.handle('radar:status', () => agentRadar.status());
@@ -1550,16 +1372,13 @@ ipcMain.handle('project:list', (_, { type } = {}) => db.project.list(type));
 ipcMain.handle('project:get', (_, { id }) => db.project.get(id));
 ipcMain.handle('project:add', (_, { name, type, dir, description, defaultBranch }) => {
   const result = db.project.add(name, type || 'note', dir, description, defaultBranch);
-  relayClient.syncProject(result.id);
   return result;
 });
 ipcMain.handle('project:update', (_, { id, data }) => {
   db.project.update(id, data);
-  relayClient.syncProject(id);
 });
 ipcMain.handle('project:delete', (_, { id }) => {
   db.project.remove(id);
-  relayClient.syncProjectDeleted(id);
 });
 
 // --- Agent Status ---
@@ -1635,7 +1454,6 @@ ipcMain.handle('noteDigest:syncDone', () => {
   const touched = syncCheckedDone();
   if (touched.length) {
     scheduler.reloadTasks();
-    for (const id of touched) relayClient.syncTask(id);
   }
   return { touched: touched.length };
 });
@@ -1651,13 +1469,11 @@ ipcMain.handle('task:list', () => db.task.list());
 ipcMain.handle('task:add', (_, data) => {
   const r = db.task.add({ ...data, source: data.source || 'ui' });
   scheduler.reloadTasks();
-  relayClient.syncTask(r.id);
   return r;
 });
 ipcMain.handle('task:update', (_, id, data) => {
   db.task.update(id, data);
   scheduler.reloadTasks();
-  relayClient.syncTask(id);
   return true;
 });
 ipcMain.handle('task:remove', (_, id) => {
@@ -2346,7 +2162,6 @@ app.whenReady().then(async () => {
   ensureDailyReportTask();
   scheduler.start();
   backup.startAutoBackup();
-  startRelay();
   // 智能体雷达：默认关，用户在设置页显式开启
   agentRadar.onStateEvents((events) => sendToRenderer('radar:event', { type: 'state', events }));
   if (agentRadar.isEnabled()) {

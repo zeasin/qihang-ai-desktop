@@ -561,26 +561,19 @@ function bindChatEvents() {
   });
 }
 
-// ========== 移动端发起的对话 ==========
+// ========== 飞书侧发起的对话 ==========
 // 进行中的那一轮已经由全局 chat:delta/status/tool 按会话缓冲演出来了；
-// 这两个通道只补「移动端刚发来的那条问题」和「桌面没在看着它时的落库结果」。
+// 这个通道只补「飞书刚发来的那条问题」。
 async function onRemoteMessage(data: any) {
   const sid = String(data?.sessionId || '');
   if (!sid) return;
   // 先推问题气泡再 await：runChatTurn 的 chat:status 几乎同时到，
   // 等 loadSessions 回来 running 已被置真，原来的 guard 会把气泡永久跳过。
-  // 落库结果在 chat:remote-settled 时整段重拉，不会重复。
   if (sid === currentSessionId.value) {
     messages.value.push({ role: 'user', content: String(data.text || ''), time: nowLabel() });
     scrollToBottom();
   }
   await loadSessions();
-}
-
-async function onRemoteSettled(data: any) {
-  await loadSessions();
-  const sid = String(data?.sessionId || '');
-  if (sid && sid === currentSessionId.value && !currentStream.value.running) await loadMessages(sid);
 }
 
 /** 点系统通知跳过来的会话 */
@@ -657,16 +650,15 @@ onMounted(async () => {
   // 新建对话页交接的首条消息（监听已就绪，此时发出不丢流）
   consumeHandoff();
 
-  // 移动端经中继打进来的动态：全程挂着，不随切会话收放
+  // 飞书发来的消息动态：全程挂着，不随切会话收放
   API.on('chat:remote', onRemoteMessage);
-  API.on('chat:remote-settled', onRemoteSettled);
   API.on('chat:created', () => { void loadSessions(); });
   API.on('nav:open-session', onOpenSession);
 });
 
 onBeforeUnmount(() => {
   for (const channel of ['chat:delta', 'chat:status', 'chat:tool', 'chat:done', 'chat:error',
-    'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session']) {
+    'chat:remote', 'chat:created', 'nav:open-session']) {
     API.removeAllListeners(channel);
   }
 });

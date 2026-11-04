@@ -259,7 +259,7 @@ function ensureMessageExtraColumns(): void {
  * DROP 被外键挡下，异常又被 catch 吞掉 —— 库就长期停在「有 session_id、id 仍是 TEXT 主键」的半迁移状态。
  * 后果：createSession 的 INSERT 不写 id（新表结构里 id 是自增主键），在这套旧结构上 id 落成 NULL，
  * 于是给新建会话插第一条消息时撞外键，报 FOREIGN KEY constraint failed。桌面新建对话和移动端都一样。
- * 这里把两张表一起重建（消息行 id 原样保留，中继侧 messageUid 才不会变），遗留外键一并去掉。
+ * 这里把两张表一起重建（消息行 id 原样保留），遗留外键一并去掉。
  */
 function migrateSessionKeyTable(): void {
   const cols = getDb().prepare('PRAGMA table_info(prj_sessions)').all() as any[];

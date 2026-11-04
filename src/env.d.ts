@@ -80,15 +80,6 @@ interface ElectronAPI {
     updateAgent: (sessionId: string, agent: string) => Promise<void>;
     updateProject: (sessionId: string, projectId: number | null) => Promise<{ ok: boolean; error?: string }>;
   };
-  relay: {
-    status: () => Promise<{ connected: boolean; error: string; device: any }>;
-    probe: (url: string) => Promise<{ ok: boolean; error?: string; devicesOnline?: number }>;
-    setUrl: (url: string) => Promise<{ ok: boolean; device?: any; connected?: boolean; error?: string }>;
-    enable: (password: string, url?: string) => Promise<{ ok: boolean; device?: any; connected?: boolean; error?: string }>;
-    disable: () => Promise<{ ok: boolean; device?: any; error?: string }>;
-    clients: () => Promise<{ ok: boolean; clients: any[]; error?: string }>;
-    kick: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
-  };
   radar: {
     status: () => Promise<any>;
     setEnabled: (enabled: boolean | string) => Promise<{ ok: boolean; status?: any; error?: string }>;

@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const VALID_CHANNELS = [
   'chat:delta', 'chat:status', 'chat:thinking', 'chat:tool', 'chat:done', 'chat:error',
-  'chat:remote', 'chat:remote-settled', 'chat:created', 'nav:open-session',
+  'chat:remote', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
   'report:generated', 'aitool:delta', 'task:changed',
   'radar:event', 'win:maximized',
@@ -117,17 +117,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateSessionTitle: (sessionId: string, title: string) => ipcRenderer.invoke('chat:session:updateTitle', { sessionId, title }),
     updateAgent: (sessionId: string, agent: string) => ipcRenderer.invoke('chat:session:updateAgent', { sessionId, agent }),
     updateProject: (sessionId: string, projectId: number | null) => ipcRenderer.invoke('chat:session:updateProject', { sessionId, projectId }),
-  },
-
-  // 移动端远程连接（中继服务）
-  relay: {
-    status: () => ipcRenderer.invoke('relay:status'),
-    probe: (url: string) => ipcRenderer.invoke('relay:probe', { url }),
-    setUrl: (url: string) => ipcRenderer.invoke('relay:set-url', { url }),
-    enable: (password: string, url?: string) => ipcRenderer.invoke('relay:enable', { password, url }),
-    disable: () => ipcRenderer.invoke('relay:disable'),
-    clients: () => ipcRenderer.invoke('relay:clients'),
-    kick: (sessionId: string) => ipcRenderer.invoke('relay:kick', { sessionId }),
   },
 
   // 智能体雷达（监控本机其他 AI 工具 + 会话对话本地沉淀）
