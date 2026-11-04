@@ -30,6 +30,35 @@
         <button class="btn btn-secondary btn-sm" :disabled="scanning || !status.running" @click="scanNow">
           {{ scanning ? '扫描中…' : '立即扫描' }}
         </button>
+        <span v-if="pendingStatus" class="badge" :class="pendingStatus.startsWith('✅') ? 'badge-success' : 'badge-danger'">{{ pendingStatus }}</span>
+      </div>
+    </div>
+
+    <!-- 审批（雷达子功能；飞书不可用/离线时在此决策，与飞书卡片同一决策状态机） -->
+    <div v-if="pending.length" class="section approval-sec">
+      <div class="sec-title"><i class="bar bar-warn"></i>
+        待审批 · {{ pending.length }} 条
+        <span v-if="!feishuOn" class="text-muted" style="font-size:12px;font-weight:400;margin-left:6px;">（飞书未启用，仅桌面可决策）</span>
+      </div>
+      <div class="approval-table">
+        <div v-for="a in pending" :key="a.id" class="approval-row">
+          <div class="ap-main" @click="toggleDetail(a.id)">
+            <div class="ap-top">
+              <span class="badge" :class="a.agent === 'claude' ? 'badge-primary' : 'badge-success'">
+                {{ a.agent === 'claude' ? 'Claude Code' : 'DSH' }}
+              </span>
+              <span class="ap-tool">{{ a.tool }}</span>
+              <span class="ap-summary">{{ a.inputSummary }}</span>
+              <span class="ap-time">{{ fmtIso(a.createdAt) }}</span>
+            </div>
+            <pre v-if="expandedId === a.id" class="ap-detail">{{ a.detail || '（无正文）' }}</pre>
+          </div>
+          <div class="ap-actions">
+            <button class="btn btn-primary btn-sm" @click.stop="decide(a, 'allow_once')">允许一次</button>
+            <button class="btn btn-secondary btn-sm" @click.stop="decide(a, 'allow_session')">本会话放行</button>
+            <button class="btn btn-danger btn-sm" @click.stop="decide(a, 'deny')">拒绝</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -125,6 +154,34 @@ const searchResults = ref<any[]>([]);
 const keyword = ref('');
 const scanning = ref(false);
 const toggling = ref(false);
+
+// ========== 审批（雷达子功能；飞书兜底决策面，同一 ApprovalCenter 状态机） ==========
+const pending = ref<ApprovalRequest[]>([]);
+const expandedId = ref('');
+const feishuOn = ref(false);
+const pendingStatus = ref('');
+
+async function loadPending() {
+  try { pending.value = (await API.approver.pending()) || []; } catch { pending.value = []; }
+}
+function toggleDetail(id: string) {
+  expandedId.value = expandedId.value === id ? '' : id;
+}
+async function decide(a: ApprovalRequest, decision: 'allow_once' | 'allow_session' | 'deny') {
+  const r = await API.approver.decide(a.id, decision);
+  if (!r?.ok) {
+    pendingStatus.value = '❌ ' + (r?.error || '决策失败');
+  } else {
+    pendingStatus.value = '✅ 已受理：' + (a.inputSummary.slice(0, 20) || a.tool);
+  }
+  setTimeout(() => { pendingStatus.value = ''; }, 3000);
+  await loadPending();
+}
+function fmtIso(iso: string): string {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  return t ? fmtClock(t) : '';
+}
 
 const TOOL_LABELS: Record<string, string> = {
   zcode: 'ZCode', 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode',
@@ -237,13 +294,23 @@ function onRadarEvent() {
   eventTimer = window.setTimeout(() => { void loadDashboard(); }, 800);
 }
 
+// 审批事件推送：挂起/决策时刷新待审批列表（低频，直接刷）
+function onApproverEvent() {
+  void loadPending();
+}
+
 onMounted(async () => {
   API.on('radar:event', onRadarEvent);
+  API.on('approver:event', onApproverEvent);
   await loadStatus();
+  // 审批是雷达子功能，但审批通道独立于雷达开关：雷达没开也能在此决策
+  try { const s = await API.service.status(); feishuOn.value = !!s?.feishu; } catch { /* 静默 */ }
+  await loadPending();
   if (status.value.enabled) await loadDashboard();
 });
 onUnmounted(() => {
   API.removeAllListeners('radar:event');
+  API.removeAllListeners('approver:event');
   if (searchTimer) window.clearTimeout(searchTimer);
   if (eventTimer) window.clearTimeout(eventTimer);
 });
@@ -435,4 +502,68 @@ onUnmounted(() => {
   border-radius: 4px;
   flex-shrink: 0;
 }
+
+/* ===== 审批（雷达子功能） ===== */
+.bar-warn { background: var(--danger, #e5484d); }
+.approval-table {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.approval-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.approval-row:last-child { border-bottom: none; }
+.approval-row:nth-child(odd) { background: var(--danger-soft, rgba(229, 72, 77, 0.04)); }
+.ap-main { flex: 1; min-width: 0; cursor: pointer; }
+.ap-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.ap-tool {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--hover);
+  color: var(--text-secondary);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.ap-summary {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+.ap-time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.ap-detail {
+  margin: 9px 0 0;
+  padding: 10px 12px;
+  background: var(--hover);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+}
+.ap-actions { display: flex; gap: 8px; flex-shrink: 0; }
 </style>

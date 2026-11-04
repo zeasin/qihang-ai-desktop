@@ -395,6 +395,11 @@ const feishuMessageHandler = async (msg) => {
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('feishu:message', msg);
+    // 新消息提醒：最小化则恢复聚焦 + 任务栏闪烁 + 系统通知（点通知聚焦窗口）
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.flashFrame(true);
+    const preview = String(msg.text || '').trim();
+    notify('飞书新消息', preview ? preview.slice(0, 50) + (preview.length > 50 ? '…' : '') : '收到一条消息', () => showWindow());
   }
 
   // ===== 工作流指令：继续追问 =====

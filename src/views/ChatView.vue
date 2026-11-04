@@ -25,6 +25,10 @@
           </div>
         </div>
 
+        <transition name="fade">
+          <div v-if="feishuHint" class="feishu-hint">📩 飞书新消息：{{ feishuHint }}</div>
+        </transition>
+
         <div class="chat-messages" ref="messagesContainer">
           <div v-for="(msg, idx) in viewMessages" :key="idx" class="msg" :class="msg.role">
             <div class="msg-avatar">
@@ -190,6 +194,9 @@ const inputRef = ref<HTMLTextAreaElement>();
 const messagesContainer = ref<HTMLElement>();
 const pendingImages = ref<{ data: string; mimeType: string }[]>([]);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+// 飞书新消息临时提示（收到 feishu:message 时显示，几秒后淡出）
+const feishuHint = ref('');
+let feishuHintTimer: ReturnType<typeof setTimeout> | null = null;
 const piModels = ref<{ provider: string; providerLabel: string; id: string; name: string; pattern: string; configured: boolean }[]>([]);
 const selectedModel = ref('');
 const modelsLoaded = ref(false);
@@ -561,6 +568,15 @@ function bindChatEvents() {
   });
 }
 
+// 飞书新消息到达：主进程已唤醒窗口，这里刷新会话列表 + 临时横幅提示
+function onFeishuMessage(data: any) {
+  const text = String(data?.text || '').trim();
+  feishuHint.value = text ? text.slice(0, 60) + (text.length > 60 ? '…' : '') : '收到一条飞书消息';
+  if (feishuHintTimer) clearTimeout(feishuHintTimer);
+  feishuHintTimer = setTimeout(() => { feishuHint.value = ''; }, 4000);
+  void loadSessions();
+}
+
 // ========== 飞书侧发起的对话 ==========
 // 进行中的那一轮已经由全局 chat:delta/status/tool 按会话缓冲演出来了；
 // 这个通道只补「飞书刚发来的那条问题」。
@@ -652,13 +668,14 @@ onMounted(async () => {
 
   // 飞书发来的消息动态：全程挂着，不随切会话收放
   API.on('chat:remote', onRemoteMessage);
+  API.on('feishu:message', onFeishuMessage);
   API.on('chat:created', () => { void loadSessions(); });
   API.on('nav:open-session', onOpenSession);
 });
 
 onBeforeUnmount(() => {
   for (const channel of ['chat:delta', 'chat:status', 'chat:tool', 'chat:done', 'chat:error',
-    'chat:remote', 'chat:created', 'nav:open-session']) {
+    'chat:remote', 'feishu:message', 'chat:created', 'nav:open-session']) {
     API.removeAllListeners(channel);
   }
 });
@@ -711,6 +728,25 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
   background: var(--surface);
+}
+
+/* 飞书新消息临时横幅 */
+.feishu-hint {
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  background: rgba(51, 112, 255, 0.1);
+  border: 1px solid rgba(51, 112, 255, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #3370ff;
+  text-align: center;
+}
+
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
 }
 
 .chat-empty {
