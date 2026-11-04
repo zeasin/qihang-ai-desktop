@@ -24,6 +24,7 @@ import { buildApprovalCard, buildDecidedCard, buildTaskCard, DECISION_LABEL } fr
 import type { TaskFollowupRef } from './card';
 import { startApproverServer } from './server';
 import { scanLocalSessions, readLocalTranscript } from './local-sessions';
+import { DECISIONS } from './types';
 import type { Decision } from './types';
 import * as feishu from '../services/feishu';
 import * as appConfig from '../services/app-config';
@@ -58,9 +59,42 @@ class ApproverService {
   private server: http.Server | null = null;
   private runningFlag = false;
   private lastError = '';
+  /** 渲染层事件订阅（桌面审批面板）：审批挂起/决策时扇出 */
+  private readonly approvalSubs = new Set<(e: any) => void>();
 
   isRunning(): boolean {
     return this.runningFlag;
+  }
+
+  /**
+   * 订阅审批事件（桌面面板用）：只转 approval.required / approval.decided，
+   * 会话输出类事件量大且面板用不着，不进这条通道。
+   * @returns 取消订阅函数
+   */
+  onApprovalEvent(fn: (e: any) => void): () => void {
+    this.approvalSubs.add(fn);
+    return () => { this.approvalSubs.delete(fn); };
+  }
+
+  /** 当前挂起的审批（桌面面板列表；飞书不可用时的兜底决策口径） */
+  listPending(): any[] {
+    return this.center ? this.center.listPending() : [];
+  }
+
+  /** 最近已决审批（新→旧，默认 20 条；审计追溯用） */
+  history(limit = 20): any[] {
+    if (!this.center) return [];
+    return this.center.list({ status: 'decided' }).slice(0, limit);
+  }
+
+  /** 桌面端决策入口：by 固定 desktop:local，与飞书的 feishu:<openId> 在审计里可区分 */
+  decide(id: string, decision: string, by = 'desktop:local'): { ok: boolean; error?: string } {
+    if (!this.center) return { ok: false, error: '审批通道未启动' };
+    const d = decision as Decision;
+    if (!DECISIONS.includes(d)) return { ok: false, error: `无效的决策值：${decision}` };
+    const result = this.center.resolve(String(id || ''), d, by);
+    if (result === 'not_pending') return { ok: false, error: '该审批已处理或已过期' };
+    return { ok: true };
   }
 
   isEnabled(): boolean {
@@ -84,6 +118,14 @@ class ApproverService {
     const bus = new Bus();
     const history = new History(path.join(dir, 'history.jsonl'));
     this.bus = bus;
+
+    // 审批事件转发给桌面面板订阅者（approval.required / approval.decided 两类）
+    bus.subscribe((e) => {
+      if (e.type !== 'approval.required' && e.type !== 'approval.decided') return;
+      for (const fn of this.approvalSubs) {
+        try { fn({ type: e.type, request: e.request }); } catch { /* 订阅者异常不影响总线 */ }
+      }
+    });
 
     const chatId = appConfig.getConfig('feishuChatId') || '';
     const center: ApprovalCenter = new ApprovalCenter({

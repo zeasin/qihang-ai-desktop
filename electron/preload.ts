@@ -5,7 +5,7 @@ const VALID_CHANNELS = [
   'chat:remote', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
   'report:generated', 'aitool:delta', 'task:changed',
-  'radar:event', 'win:maximized',
+  'radar:event', 'win:maximized', 'approver:event',
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -190,11 +190,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reloadScheduler: () => ipcRenderer.invoke('service:reloadScheduler'),
   },
 
-  // 审批通道（Claude Code / DSH 权限拦截 + 飞书审批卡）
+  // 审批通道（Claude Code / DSH 权限拦截 + 飞书审批卡 + 桌面审批页）
   approver: {
     status: () => ipcRenderer.invoke('approver:status'),
     chats: () => ipcRenderer.invoke('approver:chats'),
     apply: () => ipcRenderer.invoke('approver:apply'),
+    pending: () => ipcRenderer.invoke('approver:pending'),
+    history: (limit?: number) => ipcRenderer.invoke('approver:history', limit ?? 20),
+    decide: (id: string, decision: string) => ipcRenderer.invoke('approver:decide', id, decision),
   },
 
   // Reminders

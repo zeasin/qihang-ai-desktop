@@ -166,6 +166,7 @@ const footMenu = computed(() => [
   { path: '/notes', label: '笔记', icon: 'library', badge: 0, badgeClass: '', beta: false },
   { path: '/tools', label: '技能', icon: 'sparkles', badge: 0, badgeClass: '', beta: true },
   { path: '/radar', label: '雷达', icon: 'radar', badge: radarRunning.value, badgeClass: 'run', beta: false },
+  { path: '/approvals', label: '审批', icon: 'check-square', badge: approverPending.value, badgeClass: 'run', beta: false },
 ]);
 
 const isActive = (path: string) => {
@@ -329,6 +330,16 @@ async function loadRadarBadge() {
   } catch { radarRunning.value = 0; }
 }
 
+/** 审批通道挂起的审批数（徽标）：仅在审批页之外显示提醒 */
+const approverPending = ref(0);
+async function loadApproverBadge() {
+  if (route.path === '/approvals') { approverPending.value = 0; return; }
+  try {
+    const list = await API.approver.pending();
+    approverPending.value = (list || []).length;
+  } catch { approverPending.value = 0; }
+}
+
 // ========== 徽标计数 ==========
 const todoOpen = ref(0);
 const taskRunning = ref(0);
@@ -349,6 +360,7 @@ function refreshAll() {
   loadServices();
   loadBadges();
   loadRadarBadge();
+  loadApproverBadge();
   loadChatTree();
   loadCurrentSid();
 }
@@ -385,6 +397,7 @@ watch(() => route.path, () => {
   engOpen.value = false;
   loadCurrentSid();
   loadChatTree();
+  loadApproverBadge();
 });
 </script>
 

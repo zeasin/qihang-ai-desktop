@@ -35,8 +35,18 @@ export class ApprovalCenter {
     for (const r of deps.history.replay()) this.all.set(r.id, r);
   }
 
-  list(): ApprovalRequest[] {
-    return [...this.all.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  /** 全量/按状态过滤的历史审批（新→旧）。无参 = 全量，保持既有调用方语义 */
+  list(opts?: { status?: 'pending' | 'decided' | 'expired' }): ApprovalRequest[] {
+    const all = [...this.all.values()];
+    const filtered = opts?.status ? all.filter((r) => r.status === opts.status) : all;
+    return filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** 当前挂起待决策的审批（新→旧）。只给桌面端列表用，避开历史噪声 */
+  listPending(): ApprovalRequest[] {
+    return [...this.pending.values()]
+      .map((e) => e.req)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   pendingCount(): number {

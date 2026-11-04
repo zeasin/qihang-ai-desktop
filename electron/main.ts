@@ -1248,6 +1248,13 @@ ipcMain.handle('approver:apply', async () => {
   }
 });
 
+// 桌面端兜底决策面（审批页）：飞书不可用时也能点按钮决策
+ipcMain.handle('approver:pending', () => approver.listPending());
+ipcMain.handle('approver:history', (_, limit: number) => approver.history(Number(limit) || 20));
+ipcMain.handle('approver:decide', (_, id: string, decision: string) =>
+  approver.decide(String(id || ''), String(decision || '')),
+);
+
 // ========== MCP 数据源（新模块：mcp-manager.ts） ==========
 ipcMain.handle('mcp:list', () => {
   try {
@@ -2167,6 +2174,8 @@ app.whenReady().then(async () => {
   if (agentRadar.isEnabled()) {
     agentRadar.start().catch((e) => logger.error('[Radar] auto start failed: %s', e?.message || e));
   }
+  // 审批事件（桌面待审批面板）：审批挂起/决策时实时刷新列表
+  approver.onApprovalEvent((e) => sendToRenderer('approver:event', e));
   startupElapsed('services started');
 
   updateTrayMenu(getServicesStatus());

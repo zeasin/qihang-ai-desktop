@@ -6,6 +6,25 @@ interface TreeNode {
   type: 'file' | 'folder';
 }
 
+/** 审批请求（桌面待审批面板 / 飞书卡片共用同一份结构） */
+interface ApprovalRequest {
+  id: string;
+  agent: 'claude' | 'dsh';
+  sessionId: string;
+  cwd: string;
+  tool: string;
+  /** 一行摘要（≤200 字符） */
+  inputSummary: string;
+  /** 正文：命令 / 文件内容 / diff（≤2000 字符） */
+  detail: string;
+  createdAt: string;
+  status: 'pending' | 'decided' | 'expired';
+  decision?: 'allow_once' | 'allow_session' | 'deny';
+  decidedAt?: string;
+  decidedBy?: string;
+  feishuMessageId?: string;
+}
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue';
   const component: DefineComponent<{}, {}, any>;
@@ -141,6 +160,9 @@ interface ElectronAPI {
     status: () => Promise<{ enabled: boolean; running: boolean; port: number; pending: number; sessions: number; lastError: string }>;
     chats: () => Promise<{ ok: boolean; error?: string; chats: { chatId: string; name: string }[] }>;
     apply: () => Promise<{ ok: boolean; error?: string }>;
+    pending: () => Promise<ApprovalRequest[]>;
+    history: (limit?: number) => Promise<ApprovalRequest[]>;
+    decide: (id: string, decision: 'allow_once' | 'allow_session' | 'deny') => Promise<{ ok: boolean; error?: string }>;
   };
   config: {
     get: () => Promise<any>;

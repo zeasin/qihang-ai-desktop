@@ -67,6 +67,11 @@ const routes = [
     component: () => import('@/views/AgentRadarView.vue')
   },
   {
+    path: '/approvals',
+    name: 'Approvals',
+    component: () => import('@/views/ApprovalsView.vue')
+  },
+  {
     path: '/radar/session/:tool/:sessionId',
     name: 'RadarSession',
     component: () => import('@/views/RadarSessionView.vue')
