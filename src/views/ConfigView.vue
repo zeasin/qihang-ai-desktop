@@ -335,6 +335,64 @@
         </div>
       </div>
 
+      <!-- Agent Approval & Radar Notify -->
+      <div class="card">
+        <h2>🛡️ 智能体审批与雷达通知</h2>
+        <div class="text-muted mb-2">
+          审批通道：拦截 Claude Code / DSH 的权限请求，推送飞书审批卡（允许一次 / 本会话放行 / 拒绝），不设超时。
+          雷达通知：智能体状态跃迁（开始运行 / 转入空闲，含 TRAE）推送到飞书。两者都要求飞书 Bot 已启动。
+        </div>
+
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
+          <div class="form-group" style="flex:1;min-width:280px;">
+            <label style="font-size:12px;">飞书接收会话 chat_id（审批卡与雷达通知都发这里；open.feishu.cn 群设置里可查）</label>
+            <input v-model="feishuChatId" type="text" class="form-control" placeholder="oc_xxxxxxxxxxxxxxxx">
+          </div>
+          <button class="btn btn-secondary" style="margin-bottom:12px;" @click="listFeishuChats" :disabled="chatListLoading">
+            {{ chatListLoading ? '查询中…' : '列出机器人所在会话' }}
+          </button>
+        </div>
+        <div v-if="feishuChatList.length" style="margin-bottom:10px;">
+          <div v-for="c in feishuChatList" :key="c.chatId"
+               style="font-size:13px;padding:4px 8px;cursor:pointer;border-radius:6px;display:inline-block;margin:2px 6px 2px 0;border:1px solid var(--border);"
+               @click="feishuChatId = c.chatId">
+            {{ c.name || c.chatId }}
+          </div>
+        </div>
+
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+            <input v-model="approverEnabled" type="checkbox"> 启用审批通道（随飞书 Bot 启停）
+          </label>
+        </div>
+
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;margin-top:10px;">
+          <div class="form-group" style="flex:1;min-width:120px;">
+            <label style="font-size:12px;">本地端口（外部会话 hook 指向它）</label>
+            <input v-model="approverPort" type="text" class="form-control" placeholder="8790">
+          </div>
+          <div class="form-group" style="flex:2;min-width:240px;">
+            <label style="font-size:12px;">dsh.cmd 路径（DSH 桌面端默认安装路径已内置，可覆盖）</label>
+            <input v-model="dshPath" type="text" class="form-control" placeholder="留空用默认路径">
+          </div>
+          <div class="form-group" style="flex:2;min-width:240px;">
+            <label style="font-size:12px;">claude 可执行文件路径（可选，留空用 SDK 内置）</label>
+            <input v-model="claudePath" type="text" class="form-control" placeholder="留空用内置 CLI">
+          </div>
+        </div>
+
+        <div class="flex" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" @click="saveApproverConfig">保存</button>
+          <button class="btn btn-secondary" @click="queryApproverStatus">查看状态</button>
+          <span v-if="approverStatusText" class="text-muted" style="font-size:12px;">{{ approverStatusText }}</span>
+        </div>
+        <div v-if="approverStatus" class="text-muted" style="font-size:12px;margin-top:6px;">
+          开关：{{ approverStatus.enabled ? '已启用' : '未启用' }} ｜ 服务：{{ approverStatus.running ? '● 运行中' : '○ 未运行' }}
+          ｜ 端口：{{ approverStatus.port }} ｜ 挂起审批：{{ approverStatus.pending }} ｜ 托管会话：{{ approverStatus.sessions }}
+          <template v-if="approverStatus.lastError"> ｜ 错误：{{ approverStatus.lastError }}</template>
+        </div>
+      </div>
+
       <!-- Backup / Restore -->
       <div class="card">
         <h2>💾 数据备份与恢复</h2>
@@ -447,6 +505,17 @@ const feishuAppId = ref('');
 const feishuAppSecret = ref('');
 const feishuRunning = ref(false);
 const feishuStatus = ref('');
+
+// 智能体审批与雷达通知
+const feishuChatId = ref('');
+const approverEnabled = ref(false);
+const approverPort = ref('8790');
+const dshPath = ref('');
+const claudePath = ref('');
+const feishuChatList = ref<{ chatId: string; name: string }[]>([]);
+const chatListLoading = ref(false);
+const approverStatus = ref<any>(null);
+const approverStatusText = ref('');
 
 const schedulerRunning = ref(false);
 
@@ -1015,7 +1084,55 @@ async function loadConfig() {
     webhookUrl.value = cfg.feishuWebhookUrl || '';
     feishuAppId.value = cfg.feishuAppId || '';
     feishuAppSecret.value = cfg.feishuAppSecret || '';
+    feishuChatId.value = cfg.feishuChatId || '';
+    approverEnabled.value = cfg.approverEnabled === '1';
+    approverPort.value = cfg.approverPort || '8790';
+    dshPath.value = cfg.dshPath || '';
+    claudePath.value = cfg.claudePath || '';
   } catch { console.warn('加载配置失败'); }
+}
+
+// 智能体审批与雷达通知：保存后按需启停审批通道（雷达通知改配置即时生效，无需重启）
+async function saveApproverConfig() {
+  try {
+    await API.config.set({
+      feishuChatId: feishuChatId.value.trim(),
+      approverEnabled: approverEnabled.value ? '1' : '0',
+      approverPort: approverPort.value.trim() || '8790',
+      dshPath: dshPath.value.trim(),
+      claudePath: claudePath.value.trim(),
+    });
+    await API.approver.apply();
+    await queryApproverStatus();
+    approverStatusText.value = '✅ 已保存并生效';
+  } catch (e: any) { approverStatusText.value = '❌ ' + (e.message || '保存失败'); }
+  setTimeout(() => approverStatusText.value = '', 4000);
+}
+
+async function listFeishuChats() {
+  chatListLoading.value = true;
+  try {
+    const res = await API.approver.chats();
+    if (!res.ok) {
+      approverStatusText.value = '❌ ' + (res.error || '查询失败');
+      setTimeout(() => approverStatusText.value = '', 4000);
+      return;
+    }
+    feishuChatList.value = res.chats || [];
+    if (!feishuChatList.value.length) {
+      approverStatusText.value = '机器人不在任何群/会话里，先把机器人拉进群';
+      setTimeout(() => approverStatusText.value = '', 5000);
+    }
+  } catch (e: any) {
+    approverStatusText.value = '❌ ' + (e.message || '查询失败');
+    setTimeout(() => approverStatusText.value = '', 4000);
+  } finally { chatListLoading.value = false; }
+}
+
+async function queryApproverStatus() {
+  try {
+    approverStatus.value = await API.approver.status();
+  } catch { approverStatus.value = null; }
 }
 
 async function loadLlmConfig() {

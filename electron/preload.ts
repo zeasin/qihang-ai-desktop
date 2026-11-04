@@ -201,6 +201,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reloadScheduler: () => ipcRenderer.invoke('service:reloadScheduler'),
   },
 
+  // 审批通道（Claude Code / DSH 权限拦截 + 飞书审批卡）
+  approver: {
+    status: () => ipcRenderer.invoke('approver:status'),
+    chats: () => ipcRenderer.invoke('approver:chats'),
+    apply: () => ipcRenderer.invoke('approver:apply'),
+  },
+
   // Reminders
   reminder: {
     list: () => ipcRenderer.invoke('reminder:list'),

@@ -127,6 +127,8 @@ async function start(configData, onMessage) {
               value: action.value,
               tag: action.tag,
               name: action.name,
+              // 表单输入框内容（form_submit 按钮回传），没有透传就是空的 → 「接着问」拿不到文本
+              formValue: action.form_value || action.formValue || {},
               messageId: context.open_message_id || event.open_message_id || '',
               chatId: context.open_chat_id || event.open_chat_id || '',
               operatorOpenId: operator.open_id || '',
@@ -270,4 +272,85 @@ function isRunning() {
   return running;
 }
 
-export { sendViaWebhook, setWebhook, getWebhook, start, stop, isRunning, sendMessage, replyMessage, replyCard, setCardActionHandler };
+// ========== 主动推送（审批通道 / 雷达状态通知：不依赖入站消息上下文） ==========
+
+/**
+ * 主动发送交互卡片到指定会话（chat_id）。
+ * cardJson 为整张卡片的 JSON 字符串（buildApprovalCard / buildTaskCard 等产物）。
+ * 返回 message_id（供后续原位更新）；未启动或发送失败返回 undefined。
+ */
+async function sendCardToChat(chatId: string, cardJson: string): Promise<string | undefined> {
+  if (!client) {
+    logger.warn('[Feishu] sendCardToChat: no client');
+    return undefined;
+  }
+  if (!chatId) {
+    logger.warn('[Feishu] sendCardToChat: no chatId');
+    return undefined;
+  }
+  try {
+    const res: any = await client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: cardJson,
+      },
+    });
+    return res?.data?.message_id;
+  } catch (e) {
+    logger.error('[Feishu] sendCardToChat error: %s', e.message);
+    if (e.response) logger.error('[Feishu] sendCardToChat response: %s', JSON.stringify(e.response).slice(0, 500));
+    return undefined;
+  }
+}
+
+/**
+ * 原位更新一张已发送的卡片（im.message.patch）。
+ * ⚠️ message_id 是 URL 路径参数，SDK 从 path 取（放 params 会报 "request miss message_id path argument"）。
+ */
+async function patchCard(messageId: string, cardJson: string): Promise<void> {
+  if (!client || !messageId) return;
+  try {
+    await client.im.message.patch({
+      path: { message_id: messageId },
+      data: { content: cardJson },
+    });
+  } catch (e) {
+    logger.error('[Feishu] patchCard error: %s', e.message);
+  }
+}
+
+/** 主动发送纯文本到指定会话（chat_id）；发送失败只记日志 */
+async function sendTextToChat(chatId: string, text: string): Promise<void> {
+  if (!client || !chatId) {
+    logger.warn('[Feishu] sendTextToChat: no client or chatId');
+    return;
+  }
+  try {
+    await client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      },
+    });
+  } catch (e) {
+    logger.error('[Feishu] sendTextToChat error: %s', e.message);
+  }
+}
+
+/** 机器人所在的会话列表（选择审批卡片接收群用） */
+async function listChats(): Promise<Array<{ chatId: string; name: string }>> {
+  if (!client) return [];
+  try {
+    const res: any = await client.im.chat.list({ params: { page_size: 50 } });
+    return (res?.data?.items || []).map((i: any) => ({ chatId: i.chat_id, name: i.name || '' }));
+  } catch (e) {
+    logger.error('[Feishu] listChats error: %s', e.message);
+    return [];
+  }
+}
+
+export { sendViaWebhook, setWebhook, getWebhook, start, stop, isRunning, sendMessage, replyMessage, replyCard, setCardActionHandler, sendCardToChat, patchCard, sendTextToChat, listChats };

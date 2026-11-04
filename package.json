@@ -13,6 +13,7 @@
     "test:router": "node scripts/test-feishu-router.cjs"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.318",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "better-sqlite3": "^12.11.1",
@@ -57,7 +58,6 @@
       "!config.json",
       "!nul",
       "!node_modules/@google/**",
-      "!node_modules/@anthropic-ai/**",
       "!node_modules/@aws/**",
       "!node_modules/@aws-sdk/**",
       "!node_modules/@smithy/**",

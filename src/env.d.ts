@@ -146,6 +146,11 @@ interface ElectronAPI {
     startScheduler: () => Promise<boolean>;
     stopScheduler: () => Promise<boolean>;
   };
+  approver: {
+    status: () => Promise<{ enabled: boolean; running: boolean; port: number; pending: number; sessions: number; lastError: string }>;
+    chats: () => Promise<{ ok: boolean; error?: string; chats: { chatId: string; name: string }[] }>;
+    apply: () => Promise<{ ok: boolean; error?: string }>;
+  };
   config: {
     get: () => Promise<any>;
     set: (config: any) => Promise<boolean>;

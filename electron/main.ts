@@ -49,6 +49,7 @@ import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPe
 import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
+import { approver } from './approval/approver';
 import logger from './services/logger';
 import { relayClient, probeRelayHealth } from './services/relay-client';
 import { extractDigest, syncCheckedDone, checkDigestTodo, checkDigestFollowup } from './services/note-digest';
@@ -234,6 +235,7 @@ function createWindow() {
 
 function stopAllServices() {
   feishu.stop();
+  void approver.stop();
   scheduler.stop();
   agentRadar.stop();
 }
@@ -335,6 +337,16 @@ feishu.setCardActionHandler(async (action: any) => {
     if (!v || typeof v !== 'object') return;
     const chatId = String(action.chatId || '');
     if (!chatId) return;
+
+    // 审批通道卡片（electron/approval/）：审批三按钮 / 「接着问」表单提交。
+    // 路由在派活链路之前：同步幂等判定 + toast，重活异步丢后台。
+    if (v.act === 'approval') {
+      return approver.handleApprovalAction(v, String(action.operatorOpenId || 'unknown')) || undefined;
+    }
+    if (v.act === 'task_followup') {
+      const formText = String(action?.formValue?.followup || action?.form_value?.followup || '');
+      return approver.handleTaskFollowup(v, formText, String(action.operatorOpenId || 'unknown')) || undefined;
+    }
 
     // 「1. 项目名」/「就用当前项目」按钮：按项目 id 派活
     if (v.act === 'pick_project') {
@@ -665,6 +677,10 @@ const feishuMessageHandler = async (msg) => {
 function startFeishu(configData) {
   appConfig.saveConfig({ feishuAppId: configData.app_id || '', feishuAppSecret: configData.app_secret || '' });
   feishu.start(configData, feishuMessageHandler);
+  // 审批通道与雷达状态推送都以飞书为决策面/通知面：飞书起来了再挂
+  if (approver.isEnabled()) {
+    approver.start().catch((e: any) => logger.error('[Approver] 启动失败: %s', e?.message || e));
+  }
   updateTrayMenu(getServicesStatus());
 }
 
@@ -1390,6 +1406,26 @@ ipcMain.handle('radar:search', (_, { q, limit }) => {
   }
 });
 
+// --- 审批通道（electron/approval/） ---
+ipcMain.handle('approver:status', () => approver.status());
+ipcMain.handle('approver:chats', async () => {
+  if (!feishu.isRunning()) return { ok: false, error: '飞书 Bot 未启动', chats: [] };
+  return { ok: true, chats: await feishu.listChats() };
+});
+// 配置保存后调用：按当前配置即时启停（雷达通知开关在 flush 时实时读，无需处理）
+ipcMain.handle('approver:apply', async () => {
+  try {
+    if (approver.isEnabled() && feishu.isRunning()) {
+      await approver.start();
+    } else {
+      await approver.stop();
+    }
+    return { ok: true, ...approver.status() };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e), ...approver.status() };
+  }
+});
+
 // ========== MCP 数据源（新模块：mcp-manager.ts） ==========
 ipcMain.handle('mcp:list', () => {
   try {
@@ -1540,6 +1576,7 @@ ipcMain.handle('service:startFeishu', async (_, configData) => {
 });
 ipcMain.handle('service:stopFeishu', () => {
   feishu.stop();
+  void approver.stop();
   updateTrayMenu(getServicesStatus());
   return true;
 });
@@ -2023,6 +2060,12 @@ ipcMain.handle('config:get', () => {
     agentRadarIntervalMs: appConfig.getConfig('agentRadarIntervalMs') || '60000',
     agentRadarMonitorMs: appConfig.getConfig('agentRadarMonitorMs') || '3000',
     agentRadarExclude: appConfig.getConfig('agentRadarExclude') || '',
+    feishuChatId: appConfig.getConfig('feishuChatId') || '',
+
+    approverEnabled: appConfig.getConfig('approverEnabled') || '0',
+    approverPort: appConfig.getConfig('approverPort') || '8790',
+    dshPath: appConfig.getConfig('dshPath') || '',
+    claudePath: appConfig.getConfig('claudePath') || '',
   };
 });
 ipcMain.handle('config:set', (_, cfg) => {
