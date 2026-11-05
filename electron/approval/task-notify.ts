@@ -99,12 +99,36 @@ async function fromClaudeStop(body: any): Promise<TaskReport | null> {
 }
 
 /**
+ * pi CLI 终端 task-done 上报（pi-approver-gate 扩展在 agent_end 时 POST）：
+ * camelCase，sessionId/cwd/task/result 由扩展从 agent_end 的 messages 提取。
+ * aborted 属用户主动中止，不通知（与 DSH 一致）。
+ */
+function fromPiHook(body: any): TaskReport | null {
+  const sessionId = str(body?.sessionId);
+  if (!sessionId) return null;
+  const ok = body?.ok !== false;
+  if (!ok && str(body?.reason) === 'aborted') return null;
+  return {
+    agent: 'pi',
+    sessionId,
+    label: `Pi 外部会话 ${shortId(sessionId)}`,
+    cwd: str(body?.cwd),
+    task: str(body?.task),
+    ok,
+    durationMs: num(body?.durationMs),
+    result: str(body?.result) || undefined,
+    error: ok ? undefined : `${str(body?.reason) || 'error'}${str(body?.errorMessage) ? `：${body.errorMessage}` : ''}`,
+  };
+}
+
+/**
  * 钩子请求体归一化：外部 agent 自己跑完一回合后 POST 过来。
  * 字段缺失/来源不认识返回 null，路由按无操作响应，不打断 agent。
  */
 export async function normalizeTaskDone(body: any): Promise<TaskReport | null> {
   if (!body || typeof body !== 'object') return null;
   if (str(body.source).toLowerCase() === 'dsh') return fromDshHook(body);
+  if (str(body.source).toLowerCase() === 'pi') return fromPiHook(body);
   if (str(body.hook_event_name) === 'Stop') return fromClaudeStop(body);
   return null;
 }

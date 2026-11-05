@@ -91,6 +91,20 @@ function sessionKey(ctx: any): string {
   }
 }
 
+/** 从一条消息里抽纯文本（user 的 content 是 string 或 text 块数组；assistant 同理） */
+function messageText(m: any): string {
+  if (!m) return "";
+  const content = m.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((c: any) => c?.type === "text")
+      .map((c: any) => c?.text ?? "")
+      .join("");
+  }
+  return "";
+}
+
 function log(msg: string): void {
   // 写到 stderr：pi TUI 不污染，排查时可见
   console.error(`[pi-approver-gate] ${msg}`);
@@ -181,5 +195,48 @@ export default function (pi: ExtensionAPI): void {
         ctx?.signal?.removeEventListener?.("abort", onAbort);
       } catch { /* ignore */ }
     }
+  });
+
+  // ---- 任务完成上报：agent_end 时 POST /api/hooks/task-done（fire-and-forget，不阻塞）----
+  // 只在外部 pi CLI 终端生效（gateEnabled()=true）；in-process 托管会话设了 PI_APPROVER_GATE=off 不上报。
+  // agent_end 在整个 agent 回合结束时触发一次（finishTurn decision=end），不是每个 tool turn。
+  let agentStartTs = 0;
+  // task-done 端点：从审批端点派生（同端口）
+  const taskDoneUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/task-done");
+
+  pi.on("agent_start", async (_event, _ctx) => {
+    if (!gateEnabled()) return;
+    agentStartTs = Date.now();
+  });
+
+  pi.on("agent_end", async (event: any, ctx) => {
+    if (!gateEnabled()) return;
+    const sid = sessionKey(ctx);
+    const messages: any[] = event?.messages || [];
+    // 任务文本：最后一条 user 消息（触发本次 agent 的 prompt）
+    let taskText = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "user") { taskText = messageText(messages[i]); break; }
+    }
+    // 结果文本：最后一条 assistant 消息
+    let resultText = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "assistant") { resultText = messageText(messages[i]); break; }
+    }
+    const durationMs = agentStartTs > 0 ? Date.now() - agentStartTs : 0;
+    agentStartTs = 0;
+    const body = JSON.stringify({
+      source: "pi",
+      sessionId: sid,
+      cwd: ctx?.cwd || "",
+      task: taskText,
+      result: resultText,
+      ok: true,
+      durationMs,
+    });
+    // fire-and-forget：工作台没起就静默失败，不阻断 agent
+    fetch(taskDoneUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body })
+      .then((res) => { if (res.ok) log(`任务完成上报 session=${sid ? sid.slice(0, 24) : "?"} ${taskText.slice(0, 40)}`); })
+      .catch((e: any) => log(`任务完成上报失败（工作台未起？）: ${String(e?.message || e).slice(0, 80)}`));
   });
 }
