@@ -122,6 +122,12 @@
       "**/node_modules/fzstd/**",
       "**/dist-electron/electron/radar/**"
     ],
+    "extraResources": [
+      {
+        "from": "pi-approver-gate/pi-approver-gate.ts",
+        "to": "pi-approver-gate.ts"
+      }
+    ],
     "win": {
       "target": "nsis"
     },

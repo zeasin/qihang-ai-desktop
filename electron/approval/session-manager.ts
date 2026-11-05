@@ -11,10 +11,17 @@ export class SessionManager {
 
   constructor(
     private bus: Bus,
-    private adapters: Record<AgentKind, AgentAdapter>,
+    /** pi 只走外部 hook 审批（无托管 adapter），故 Partial */
+    private adapters: Partial<Record<AgentKind, AgentAdapter>>,
     /** 任务回合结束（prompt 收口）时回调；aborted 不回调。result 为本轮 AI 回复正文拼接，用于飞书完成卡片 */
     private onTaskDone?: (session: AgentSession, task: string, ok: boolean, durationMs: number, result?: string) => void,
   ) {}
+
+  private adapterOf(kind: AgentKind): AgentAdapter {
+    const adapter = this.adapters[kind];
+    if (!adapter) throw new Error(`该 agent 类型不支持托管会话: ${kind}`);
+    return adapter;
+  }
 
   list(): AgentSession[] {
     return [...this.sessions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -46,7 +53,7 @@ export class SessionManager {
   }
 
   async createSession(kind: AgentKind, cwd: string, title?: string, resume?: string): Promise<AgentSession> {
-    const session = await this.adapters[kind].createSession({ cwd, title, resume });
+    const session = await this.adapterOf(kind).createSession({ cwd, title, resume });
     this.sessions.set(session.id, session);
     this.transcripts.set(session.id, []);
     this.bus.emit({ type: 'session.started', session });
@@ -62,7 +69,7 @@ export class SessionManager {
     const turnStart = this.transcripts.get(id)?.length ?? 0;
     const startedAt = Date.now();
     try {
-      await this.adapters[session.agent].prompt(id, text);
+      await this.adapterOf(session.agent).prompt(id, text);
     } finally {
       // aborted 是用户主动中止，不通知；idle/failed 都通知
       if (session.status === 'idle' || session.status === 'failed') {
@@ -80,12 +87,12 @@ export class SessionManager {
   async abort(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`会话不存在: ${id}`);
-    await this.adapters[session.agent].abort(id);
+    await this.adapterOf(session.agent).abort(id);
   }
 
   async disposeAll(): Promise<void> {
     for (const adapter of Object.values(this.adapters)) {
-      await adapter.disposeAll();
+      if (adapter) await adapter.disposeAll();
     }
   }
 }

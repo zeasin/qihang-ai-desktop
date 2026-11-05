@@ -27,6 +27,15 @@ if (process.env.QIHANG_AGENTHUB_GATE !== '1') {
   process.env.AGENTHUB_PI_TOOLS = '__qihang_disabled__';
 }
 
+// ---- 托管 pi 会话（in-process SDK）禁用 pi-approver-gate 扩展 ----
+// pi-approver-gate 扩展拦截 bash/edit/write 的 tool_call 挂起飞书审批；in-process 会话
+// （桌面对话/飞书派活/日报/定时任务）都是无人值守场景，没有人点批准，会每条命令白等。
+// 这里设 PI_APPROVER_GATE=off，扩展据此跳过拦截（自由执行）。用户单独开的 pi CLI 终端不设此变量，
+// 按原策略走飞书审批。需要恢复时用 QIHANG_APPROVER_GATE=1 启动工作台。
+if (process.env.QIHANG_APPROVER_GATE !== '1') {
+  process.env.PI_APPROVER_GATE = 'off';
+}
+
 // ---- SDK 动态导入 ----
 // SDK 是 ESM-only（package.json "type": "module"），而 Electron main 是 CJS。
 // TS 在 CommonJS 目标下会把 import() 编译成 require()，会因 ESM 包无法 require 而失败，

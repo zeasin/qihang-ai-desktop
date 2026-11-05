@@ -10,6 +10,7 @@ export const DECISION_LABEL: Record<Decision, string> = {
 const AGENT_LABEL: Record<AgentKind, string> = {
   claude: 'Claude',
   dsh: 'DSH',
+  pi: 'Pi',
 };
 
 function dirName(cwd: string): string {

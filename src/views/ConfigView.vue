@@ -347,6 +347,33 @@
           ｜ 端口：{{ approverStatus.port }} ｜ 挂起审批：{{ approverStatus.pending }} ｜ 托管会话：{{ approverStatus.sessions }}
           <template v-if="approverStatus.lastError"> ｜ 错误：{{ approverStatus.lastError }}</template>
         </div>
+
+        <!-- pi CLI 终端审批扩展自动部署 -->
+        <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg);">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px;">pi CLI 终端审批扩展</div>
+          <div class="text-muted" style="font-size:12px;margin-bottom:8px;">
+            拦截 pi CLI 终端的 bash/edit/write，推送飞书审批卡。扩展随审批通道启动自动部署到
+            <code>~/.pi/agent/extensions/pi-approver-gate.ts</code>，无需手动复制。
+          </div>
+          <div v-if="piGateStatus" class="text-muted" style="font-size:12px;margin-bottom:8px;">
+            状态：
+            <template v-if="piGateStatus.installed">
+              <span style="color:var(--green);">● 已部署</span>（{{ actionLabel(piGateStatus.action) }}）
+            </template>
+            <template v-else-if="piGateStatus.action === 'failed'">
+              <span style="color:var(--red);">● 部署失败</span>：{{ piGateStatus.error }}
+            </template>
+            <template v-else>○ 未检测（审批通道未启动或未运行）</template>
+            <template v-if="piGateStatus.target"> ｜ 路径：<code>{{ piGateStatus.target }}</code></template>
+          </div>
+          <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-secondary" style="font-size:12px;padding:4px 10px;"
+                    @click="redeployGate" :disabled="gateDeploying">
+              {{ gateDeploying ? '部署中…' : '重新部署' }}
+            </button>
+            <span v-if="gateStatusText" class="text-muted" style="font-size:12px;">{{ gateStatusText }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Backup / Restore -->
@@ -472,6 +499,11 @@ const feishuChatList = ref<{ chatId: string; name: string }[]>([]);
 const chatListLoading = ref(false);
 const approverStatus = ref<any>(null);
 const approverStatusText = ref('');
+
+// pi CLI 终端审批扩展部署
+const piGateStatus = ref<any>(null);
+const gateDeploying = ref(false);
+const gateStatusText = ref('');
 
 const schedulerRunning = ref(false);
 
@@ -1088,7 +1120,36 @@ async function listFeishuChats() {
 async function queryApproverStatus() {
   try {
     approverStatus.value = await API.approver.status();
+    if (approverStatus.value?.piGate) piGateStatus.value = approverStatus.value.piGate;
   } catch { approverStatus.value = null; }
+}
+
+function actionLabel(action: string): string {
+  switch (action) {
+    case 'installed': return '本次安装';
+    case 'updated': return '已更新到新版';
+    case 'skipped': return '已是最新（跳过）';
+    case 'failed': return '失败';
+    default: return '未检测';
+  }
+}
+
+async function redeployGate() {
+  gateDeploying.value = true;
+  gateStatusText.value = '';
+  try {
+    const res = await API.approver.deployGate();
+    if (approverStatus.value) approverStatus.value = { ...approverStatus.value, ...res };
+    if (res.piGate) piGateStatus.value = res.piGate;
+    gateStatusText.value = res.ok
+      ? `✅ 已${actionLabel(res.piGate?.action || 'installed')}`
+      : `❌ 部署失败：${res.error || '未知错误'}`;
+  } catch (e: any) {
+    gateStatusText.value = '❌ ' + (e.message || '部署失败');
+  } finally {
+    gateDeploying.value = false;
+    setTimeout(() => gateStatusText.value = '', 4000);
+  }
 }
 
 async function loadLlmConfig() {

@@ -198,6 +198,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pending: () => ipcRenderer.invoke('approver:pending'),
     history: (limit?: number) => ipcRenderer.invoke('approver:history', limit ?? 20),
     decide: (id: string, decision: string) => ipcRenderer.invoke('approver:decide', id, decision),
+    deployGate: () => ipcRenderer.invoke('approver:deployGate'),
   },
 
   // Reminders

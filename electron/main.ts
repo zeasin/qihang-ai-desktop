@@ -1264,6 +1264,11 @@ ipcMain.handle('approver:history', (_, limit: number) => approver.history(Number
 ipcMain.handle('approver:decide', (_, id: string, decision: string) =>
   approver.decide(String(id || ''), String(decision || '')),
 );
+// pi-approver-gate 扩展手动重新部署（UI「重新部署」按钮）；启动时已自动部署一次
+ipcMain.handle('approver:deployGate', () => {
+  const result = approver.deployGate();
+  return { ok: result.ok, ...approver.status() };
+});
 
 // ========== MCP 数据源（新模块：mcp-manager.ts） ==========
 ipcMain.handle('mcp:list', () => {

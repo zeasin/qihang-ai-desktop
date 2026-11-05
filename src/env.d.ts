@@ -157,12 +157,28 @@ interface ElectronAPI {
     stopScheduler: () => Promise<boolean>;
   };
   approver: {
-    status: () => Promise<{ enabled: boolean; running: boolean; port: number; pending: number; sessions: number; lastError: string }>;
+    status: () => Promise<{
+      enabled: boolean;
+      running: boolean;
+      port: number;
+      pending: number;
+      sessions: number;
+      lastError: string;
+      piGate: {
+        targetDir: string;
+        file: string;
+        installed: boolean;
+        action: 'skipped' | 'installed' | 'updated' | 'failed' | 'none';
+        target: string;
+        error?: string;
+      };
+    }>;
     chats: () => Promise<{ ok: boolean; error?: string; chats: { chatId: string; name: string }[] }>;
     apply: () => Promise<{ ok: boolean; error?: string }>;
     pending: () => Promise<ApprovalRequest[]>;
     history: (limit?: number) => Promise<ApprovalRequest[]>;
     decide: (id: string, decision: 'allow_once' | 'allow_session' | 'deny') => Promise<{ ok: boolean; error?: string }>;
+    deployGate: () => Promise<{ ok: boolean; error?: string; piGate: { installed: boolean; action: string; target: string; error?: string } }>;
   };
   config: {
     get: () => Promise<any>;

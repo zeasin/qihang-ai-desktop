@@ -4,7 +4,7 @@
  * 分工：
  *   - 雷达（electron/radar/）保持只读观测，一个字不改；
  *   - 本模块是独立的「拦截通道」：托管 Claude Code（SDK canUseTool）与 DSH（ACP 反向请求）会话，
- *     同时接收外部会话的 hook 审批（Claude Code PermissionRequest hook / DSH dsh-approver 插件）；
+ *     同时接收外部会话的 hook 审批（Claude Code PermissionRequest hook / DSH dsh-approver 插件 / pi pi-approver-gate 扩展）；
  *   - 决策面走飞书（审批卡 + 原位更新 + 接着问表单），飞书不可用时 REST 兜底。
  * 按拍板：不设审批超时——挂起一直等，直到有人决策或会话死亡按拒绝收口。
  */
@@ -26,6 +26,8 @@ import { startApproverServer } from './server';
 import { scanLocalSessions, readLocalTranscript } from './local-sessions';
 import { DECISIONS } from './types';
 import type { Decision } from './types';
+import { deployPiGate, piGateTargetDir, PI_GATE_FILENAME } from './pi-gate-deploy';
+import type { PiGateDeployResult } from './pi-gate-deploy';
 import * as feishu from '../services/feishu';
 import * as appConfig from '../services/app-config';
 import logger from '../services/logger';
@@ -61,6 +63,28 @@ function hookDetail(toolName: string, input: any): string {
   return json.slice(0, 2000);
 }
 
+/**
+ * pi 工具输入摘要/正文（pi 字段名与 Claude Code 不同：path 而非 file_path、oldText/newText 而非 old_string/new_string）。
+ * 扩展侧通常已构建 detail 传入；本函数供 REST 直发 input 时兜底构建。
+ */
+function summarizePiInput(toolName: string, input: any): { summary: string; detail: string } {
+  let json = '';
+  try { json = JSON.stringify(input) ?? ''; } catch { json = String(input); }
+  let detail = json;
+  if (toolName === 'bash' && typeof input?.command === 'string') {
+    detail = input.command;
+  } else if (toolName === 'write' && typeof input?.path === 'string') {
+    detail = `${input.path}\n${String(input.content ?? '').slice(0, 1500)}`;
+  } else if (toolName === 'edit' && typeof input?.path === 'string') {
+    const edits = Array.isArray(input.edits) ? input.edits : [];
+    const diff = edits
+      .map((e: any) => `- ${String(e?.oldText ?? '').slice(0, 500)}\n+ ${String(e?.newText ?? '').slice(0, 1000)}`)
+      .join('\n---\n');
+    detail = `${input.path}\n${diff}`;
+  }
+  return { summary: json.slice(0, 200), detail: detail.slice(0, 2000) };
+}
+
 class ApproverService {
   private bus: Bus | null = null;
   private center: ApprovalCenter | null = null;
@@ -68,6 +92,8 @@ class ApproverService {
   private server: http.Server | null = null;
   private runningFlag = false;
   private lastError = '';
+  /** 最近一次 pi-approver-gate 扩展部署结果（status() 暴露给 UI） */
+  private lastPiGateDeploy: PiGateDeployResult | null = null;
   /** 渲染层事件订阅（桌面审批面板）：审批挂起/决策时扇出 */
   private readonly approvalSubs = new Set<(e: any) => void>();
   /**
@@ -118,14 +144,31 @@ class ApproverService {
   }
 
   status(): any {
+    const port = Number(appConfig.getConfig('approverPort')) || 8790;
     return {
       enabled: this.isEnabled(),
       running: this.runningFlag,
-      port: Number(appConfig.getConfig('approverPort')) || 8790,
+      port,
       pending: this.center ? this.center.pendingCount() : 0,
       sessions: this.manager ? this.manager.list().length : 0,
       lastError: this.lastError,
+      piGate: {
+        targetDir: piGateTargetDir(),
+        file: PI_GATE_FILENAME,
+        // 未启动时 lastPiGateDeploy 为 null：UI 据此提示"未检测"
+        installed: !!this.lastPiGateDeploy && this.lastPiGateDeploy.ok,
+        action: this.lastPiGateDeploy?.action || 'none',
+        target: this.lastPiGateDeploy?.target || path.join(piGateTargetDir(), PI_GATE_FILENAME),
+        error: this.lastPiGateDeploy?.error,
+      },
     };
+  }
+
+  /** 手动重新部署 pi-approver-gate 扩展（UI「重新部署」按钮）；端口取当前配置 */
+  deployGate(): PiGateDeployResult {
+    const port = Number(appConfig.getConfig('approverPort')) || 8790;
+    this.lastPiGateDeploy = deployPiGate(port);
+    return this.lastPiGateDeploy;
   }
 
   async start(): Promise<void> {
@@ -216,6 +259,9 @@ class ApproverService {
     this.manager = manager;
 
     const port = Number(appConfig.getConfig('approverPort')) || 8790;
+    // 自动部署 pi-approver-gate 扩展到 ~/.pi/agent/extensions/：外部 pi CLI 终端审批依赖它，
+    // 漏装时拦截空转。失败不阻断启动，下次启动重试。
+    this.lastPiGateDeploy = deployPiGate(port);
     this.server = await startApproverServer({
       port,
       health: () => ({
@@ -288,6 +334,33 @@ class ApproverService {
           inputSummary: String(body.reason || '').slice(0, 200) || toolName,
           detail,
         });
+        return { decision };
+      },
+      piApprovalRequest: async (body) => {
+        // 非法/不完整输入：返回空对象（2xx 无决策），pi-approver-gate 扩展按 fail-closed 阻止
+        const toolName = body?.toolName;
+        if (!body || typeof toolName !== 'string' || !toolName) return {};
+        // 扩展侧通常已构建 inputSummary/detail；REST 直发 input 时兜底构建（pi 字段名）
+        let inputSummary = body.inputSummary;
+        let detail = body.detail;
+        if (body.input && !detail) {
+          const built = summarizePiInput(toolName, body.input);
+          inputSummary = inputSummary || built.summary;
+          detail = built.detail;
+        }
+        const decisionPromise = center.request({
+          agent: 'pi',
+          sessionId: `pi-ext-${String(body.sessionId || body.cwd || 'unknown').slice(0, 40)}`,
+          cwd: String(body.cwd || ''),
+          tool: toolName,
+          inputSummary: String(inputSummary || '').slice(0, 200),
+          detail: String(detail || '').slice(0, 2000),
+        });
+        const decision = await Promise.race([
+          decisionPromise,
+          new Promise<null>((r) => setTimeout(() => r(null), HOOK_WAIT_MS).unref?.()),
+        ]);
+        if (decision === null) return {};
         return { decision };
       },
       taskDone: async (body) => {
