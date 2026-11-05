@@ -332,8 +332,8 @@
             <input v-model="dshPath" type="text" class="form-control" placeholder="留空用默认路径">
           </div>
           <div class="form-group" style="flex:2;min-width:240px;">
-            <label style="font-size:12px;">claude 可执行文件路径（可选，留空用 SDK 内置）</label>
-            <input v-model="claudePath" type="text" class="form-control" placeholder="留空用内置 CLI">
+            <label style="font-size:12px;">claude 可执行文件路径（可选，留空用 PATH 中的 claude）</label>
+            <input v-model="claudePath" type="text" class="form-control" placeholder="留空自动找 claude">
           </div>
         </div>
 

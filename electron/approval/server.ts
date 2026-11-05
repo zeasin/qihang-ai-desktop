@@ -8,6 +8,8 @@ import logger from '../services/logger';
  *   POST /api/hooks/permission-request  Claude Code PermissionRequest hook（外部会话审批）
  *   POST /api/hooks/dsh-approval        DSH dsh-approver 插件审批转发（外部会话审批）
  *   POST /api/hooks/task-done           外部 agent 回合结束上报（Claude Stop / DSH turn/end）
+ *   POST /api/hooks/claude-stop         Claude Code Stop 快速通道：task-done 上报 + 挂起长轮询「继续」追问，
+ *                                       取到返回 {"decision":"block","reason":...} 让终端原会话继续跑
  *   GET  /api/hooks/dsh-followup        DSH 插件长轮询「接着问」追问
  *   POST /api/hooks/dsh-followup        直接暂存一条追问（调试）
  *   POST /api/hooks/debug               插件侧诊断打点透传
@@ -32,6 +34,8 @@ export interface ApproverServerDeps {
   dshApprovalRequest(body: any): Promise<any>;
   /** 外部 agent 回合结束上报：内部发完通知即返回，不等飞书 */
   taskDone(body: any): Promise<void>;
+  /** Claude Code Stop 快速通道：task-done 上报后挂起等追问，返回 Stop hook 决策（block=继续跑 / 空=正常收尾） */
+  claudeStop(body: any): Promise<any>;
   /** DSH 插件长轮询「接着问」追问：无追问等 waitMs 后返回 {} */
   dshFollowupPoll(sessionId: string): Promise<{ text?: string }>;
   /** 测试用：直接暂存一条追问（免飞书卡片回调） */
@@ -165,6 +169,13 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
           body?.reason || '?');
         void deps.taskDone(body);
         return sendJson(res, 200, {});
+      }
+
+      // Claude Code Stop 快速通道：task-done 上报 + 挂起等「继续」追问（窗口内不返回提示符属预期）
+      if (pathname === '/api/hooks/claude-stop' && req.method === 'POST') {
+        const body = await readBody(req);
+        const out = await deps.claudeStop(body);
+        return sendJson(res, 200, out ?? {});
       }
 
       // DSH 插件长轮询「接着问」追问

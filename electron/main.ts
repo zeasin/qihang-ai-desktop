@@ -345,6 +345,11 @@ feishu.setCardActionHandler(async (action: any) => {
       const formText = String(action?.formValue?.followup || action?.form_value?.followup || '');
       return approver.handleTaskFollowup(v, formText, String(action.operatorOpenId || 'unknown')) || undefined;
     }
+    // 「▶️ 继续」预设按钮：免输入的接着问，文本随按钮 value 带回，走同一条路由
+    // （终端会话在快速通道窗口内就原会话执行，否则工作台接管续跑）
+    if (v.act === 'task_followup_quick') {
+      return approver.handleTaskFollowup({ ...v, act: 'task_followup' }, String(v.text || '继续'), String(action.operatorOpenId || 'unknown')) || undefined;
+    }
 
     // 「1. 项目名」/「就用当前项目」按钮：按项目 id 派活
     if (v.act === 'pick_project') {

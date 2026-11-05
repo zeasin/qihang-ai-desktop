@@ -93,6 +93,23 @@ export function buildTaskCard(text: string, r: TaskReport, ref: TaskFollowupRef)
     },
     elements: [
       { tag: 'markdown', content: text },
+      // 外部会话专属「继续」预设按钮：免输入，终端会话还在快速通道窗口内就原会话直接执行
+      ...(ref.resume ? [{
+        tag: 'action',
+        actions: [{
+          tag: 'button',
+          text: { tag: 'plain_text', content: '▶️ 继续' },
+          type: 'primary',
+          value: {
+            act: 'task_followup_quick',
+            text: '继续',
+            agent: r.agent,
+            cwd: r.cwd,
+            sessionId: ref.sessionId || '',
+            resume: ref.resume ? '1' : '0',
+          },
+        }],
+      }] : []),
       {
         tag: 'form',
         name: 'followup_form',
@@ -121,7 +138,7 @@ export function buildTaskCard(text: string, r: TaskReport, ref: TaskFollowupRef)
           },
         ],
       },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: '输入框填写追问内容，点「接着问」继续这条会话；完成后会回新卡片' }] },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: '「▶️ 继续」原会话直接执行；输入后点「接着问」：终端在等待窗口内原会话执行，否则由工作台接管续跑，完成后回新卡片' }] },
     ],
   });
 }

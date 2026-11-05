@@ -33,6 +33,15 @@ import logger from '../services/logger';
 /** 外部会话 hook 等待上限：hook 客户端默认超时 600s，必须在它超时前给出响应；超限返回空决策回落正常权限提示 */
 const HOOK_WAIT_MS = 540_000;
 
+/**
+ * 「继续」快速通道窗口（秒，config: approverQuickWindowSec）：Claude Code Stop hook 挂起等追问的时长。
+ * 窗口内点卡片「▶️ 继续」/「接着问」→ 追问注回终端原会话执行（decision:block），不接管不 fork；
+ * 超窗无人取走 → 「接着问」自动降级 SDK resume 接管续跑。窗口期间终端提示符不返回，别配太大；
+ * 需同步把 ~/.claude/settings.json 的 Stop hook 指向 /api/hooks/claude-stop 且 timeout（秒）大于本值。
+ * 0 = 关闭快速通道，claude-stop 退化为纯 task-done。
+ */
+const DEFAULT_QUICK_WINDOW_SEC = 30;
+
 /** DSH 桌面端默认安装路径（可被 config.dshPath 覆盖） */
 const DEFAULT_DSH_PATH = 'C:/Users/ASUS/AppData/Local/Programs/DeepSeek Harness/resources/runtime/cli/bin/dsh.cmd';
 
@@ -61,6 +70,13 @@ class ApproverService {
   private lastError = '';
   /** 渲染层事件订阅（桌面审批面板）：审批挂起/决策时扇出 */
   private readonly approvalSubs = new Set<(e: any) => void>();
+  /**
+   * 正挂在 /api/hooks/claude-stop 上等追问的外部 claude 会话 id。
+   * 「接着问」据此分流：在册 → stash 交给终端原会话（快速通道）；
+   * 不在册 → SDK resume 接管。单线程事件循环下 stash 与轮询原子交接：
+   * stash 落在轮询循环睡眠期会被下一轮检查取走（取数先于超时判断），不存在孤儿。
+   */
+  private readonly quickPollers = new Set<string>();
 
   isRunning(): boolean {
     return this.runningFlag;
@@ -281,6 +297,32 @@ class ApproverService {
           logger.error('[Approver] 外部回合上报处理失败: %s', e?.message || e);
         }
       },
+      claudeStop: async (body) => {
+        // 先按 task-done 收口上报（不等飞书），再挂起等快速追问
+        try {
+          notifyTask(await normalizeTaskDone(body));
+        } catch (e: any) {
+          logger.error('[Approver] 外部回合上报处理失败: %s', e?.message || e);
+        }
+        const sessionId = String(body?.session_id || '');
+        // 注意：getConfig 对缺失键返回 ''，Number('') = 0 会被 isFinite 判为合法值，
+        // 把「未配置」误当成「显式 0=关闭」。必须用 raw 非空判断区分两者。
+        const raw = String(appConfig.getConfig('approverQuickWindowSec') || '').trim();
+        const cfg = Number(raw);
+        const windowSec = raw !== '' && Number.isFinite(cfg) && cfg >= 0 ? cfg : DEFAULT_QUICK_WINDOW_SEC;
+        if (!sessionId || windowSec <= 0) return {};
+        logger.info('[Approver] claude-stop 快速通道挂起: session=%s window=%ss',
+          sessionId.slice(0, 24), windowSec);
+        this.quickPollers.add(sessionId);
+        try {
+          const text = await takeFollowup(sessionId, windowSec * 1000);
+          // decision:block + reason → Claude Code 拿 reason 当指令在终端继续跑；
+          // 跑完再次 Stop 会重新进来，多轮追问天然成环，每轮都要人拍板不会失控
+          return text ? { decision: 'block', reason: text } : {};
+        } finally {
+          this.quickPollers.delete(sessionId);
+        }
+      },
       dshFollowupPoll: async (sessionId) => {
         const text = await takeFollowup(sessionId, 25_000);
         return text ? { text } : {};
@@ -355,12 +397,18 @@ class ApproverService {
       return { toast: { type: 'success', content: '已提交追问，DSH 插件会取走并在原会话执行' } };
     }
     if (ref.resume) {
-      // 外部 claude 会话：按 SDK resume 恢复续跑
+      // 快速通道：终端会话正挂在 claude-stop 上等追问 → stash 交给原会话取走执行，不接管不 fork
+      if (ref.agent === 'claude' && ref.sessionId && this.quickPollers.has(ref.sessionId)) {
+        stashFollowup(ref.sessionId, text.slice(0, 4000));
+        logger.info('[Approver] 追问走快速通道(终端原会话): session=%s', ref.sessionId.slice(0, 24));
+        return { toast: { type: 'success', content: '已提交，终端会话正在等待，将取走继续执行' } };
+      }
+      // 外部 claude 会话兜底：不在快速通道窗口内（超窗/终端已关），按 SDK resume 接管续跑
       void (async () => {
         const s = await this.manager!.createSession(ref.agent, ref.cwd, `飞书续聊 ${ref.sessionId?.slice(0, 8) || ''}`.trim(), ref.sessionId);
         await this.manager!.prompt(s.id, text.slice(0, 4000));
       })().catch(fail);
-      return { toast: { type: 'success', content: '已提交追问，完成后回新卡片' } };
+      return { toast: { type: 'success', content: '终端会话不在等待窗口，已由工作台接管续跑，完成后回新卡片' } };
     }
     const s = ref.sessionId ? this.manager.get(ref.sessionId) : undefined;
     if (!s) return { toast: { type: 'error', content: '原会话已不存在，请重新发起' } };
