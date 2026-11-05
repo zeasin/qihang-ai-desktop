@@ -464,31 +464,12 @@ class ApproverService {
         void feishu.sendTextToChat(chatId, `⚠️ 接着问执行失败：${String(e?.message || e).slice(0, 200)}`);
       }
     };
-    // pi 外部会话：工作台用 in-process SDK 接管续跑（新建会话，不带原外部终端上下文），完成后回飞书
+    // pi 外部会话：追问暂存，由 pi-approver-gate 扩展在终端原会话长轮询取走注入执行（与 DSH 同模式）。
+    // 不接管不 fork：用户拍板不要工作台续跑（新建会话会丢原终端上下文）；终端已关时追问按 TTL 过期
     if (ref.resume && ref.agent === 'pi') {
-      void (async () => {
-        const { runPi } = require('../services/pi-agent');
-        const sessionId = `pi-followup-${ref.sessionId?.slice(-8) || Date.now().toString(36)}`;
-        let result = '';
-        await runPi({
-          prompt: text.slice(0, 4000),
-          sessionId,
-          cwd: ref.cwd,
-          timeoutMs: 300_000,
-          onDelta: () => {},
-          onThinking: () => {},
-          onTool: () => {},
-          onDone: (t: string) => { result = t; },
-          onError: (e: string) => { fail(new Error(e)); },
-        });
-        if (result) {
-          const chatId = appConfig.getConfig('feishuChatId') || '';
-          if (chatId && feishu.isRunning()) {
-            void feishu.sendTextToChat(chatId, `【Pi 续聊结果】\n${result.slice(0, 2000)}`);
-          }
-        }
-      })().catch(fail);
-      return { toast: { type: 'success', content: 'Pi 外部会话已由工作台接管续跑，完成后回新卡片' } };
+      stashFollowup(ref.sessionId || '', text.slice(0, 4000));
+      logger.info('[Approver] pi 追问已暂存(终端原会话取走): session=%s', ref.sessionId || '(无)');
+      return { toast: { type: 'success', content: '已提交追问，pi 终端原会话将取走执行（终端需保持打开）' } };
     }
     // 外部 DSH 会话：本进程无法 resume 被桌面端占用的会话，追问暂存由插件长轮询取走
     if (ref.resume && ref.agent === 'dsh') {

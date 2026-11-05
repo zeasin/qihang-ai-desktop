@@ -13,6 +13,7 @@ import logger from '../services/logger';
  *                                       取到返回 {"decision":"block","reason":...} 让终端原会话继续跑
  *   GET  /api/hooks/dsh-followup        DSH 插件长轮询「接着问」追问
  *   POST /api/hooks/dsh-followup        直接暂存一条追问（调试）
+ *   GET  /api/hooks/pi-followup         pi 扩展长轮询「接着问」追问（与 dsh-followup 共用暂存 Map）
  *   POST /api/hooks/debug               插件侧诊断打点透传
  *   GET  /health                        健康检查
  *   GET/POST /api/sessions*、/api/approvals*、/api/local-sessions*  调试/面板用 REST
@@ -185,6 +186,13 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
         const body = await readBody(req);
         const out = await deps.claudeStop(body);
         return sendJson(res, 200, out ?? {});
+      }
+
+      // pi 扩展长轮询「接着问」追问：与 dsh-followup 共用同一暂存 Map（takeFollowup），语义一致
+      if (pathname === '/api/hooks/pi-followup' && req.method === 'GET') {
+        const sessionId = url.searchParams.get('sessionId') || '';
+        const out = await deps.dshFollowupPoll(sessionId);
+        return sendJson(res, 200, out);
       }
 
       // DSH 插件长轮询「接着问」追问

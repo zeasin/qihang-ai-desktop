@@ -197,10 +197,17 @@ export default function (pi: ExtensionAPI): void {
     }
   });
 
-  // ---- 任务完成上报：agent_end 时 POST /api/hooks/task-done（fire-and-forget，不阻塞）----
+  // ---- 任务回合上报：agent_settled 时 POST /api/hooks/task-done（fire-and-forget，不阻塞）----
   // 只在外部 pi CLI 终端生效（gateEnabled()=true）；in-process 托管会话设了 PI_APPROVER_GATE=off 不上报。
-  // agent_end 在整个 agent 回合结束时触发一次（finishTurn decision=end），不是每个 tool turn。
+  // 时机必须用 agent_settled 而非 agent_end：agent_end 是「一次低层 run 结束」，
+  // 出错自动重试/压缩恢复/排队追问都会再触发新的 run，在 agent_end 上报会收到多条中间假通知；
+  // agent_settled 表示 pi 已无任何自动续跑，才是整个回合的真正收口（官方 notify.ts 示例同此用法）。
   let agentStartTs = 0;
+  // 最后一次 agent_end 的消息快照（agent_settled 事件本身不带 messages，取这里判定成败）
+  let lastMessages: any[] = [];
+  // 「接着问」轮询循环控制：gen 作废旧循环，active 防并发
+  let pollGen = 0;
+  let pollActive = false;
   // task-done 端点：从审批端点派生（同端口）
   const taskDoneUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/task-done");
 
@@ -209,34 +216,85 @@ export default function (pi: ExtensionAPI): void {
     agentStartTs = Date.now();
   });
 
-  pi.on("agent_end", async (event: any, ctx) => {
+  pi.on("agent_end", async (event: any, _ctx) => {
     if (!gateEnabled()) return;
+    if (Array.isArray(event?.messages) && event.messages.length) lastMessages = event.messages;
+  });
+
+  pi.on("agent_settled", async (event: any, ctx) => {
+    if (!gateEnabled()) return;
+    // 用户主动中止（Esc/Ctrl+C）：与 DSH/Claude 口径一致，不通知
+    if (event?.aborted) { agentStartTs = 0; return; }
+
     const sid = sessionKey(ctx);
-    const messages: any[] = event?.messages || [];
+    const messages: any[] = lastMessages;
     // 任务文本：最后一条 user 消息（触发本次 agent 的 prompt）
     let taskText = "";
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i]?.role === "user") { taskText = messageText(messages[i]); break; }
     }
-    // 结果文本：最后一条 assistant 消息
+    // 结果文本 / 成败：最后一条 assistant 消息（stopReason=error 即回合失败）
     let resultText = "";
+    let ok = true;
+    let errorText = "";
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]?.role === "assistant") { resultText = messageText(messages[i]); break; }
+      const m = messages[i];
+      if (m?.role === "assistant") {
+        resultText = messageText(m);
+        if (m.stopReason === "error") {
+          ok = false;
+          errorText = String(m.errorMessage || "pi 处理出错");
+        }
+        break;
+      }
     }
     const durationMs = agentStartTs > 0 ? Date.now() - agentStartTs : 0;
     agentStartTs = 0;
+    lastMessages = [];
     const body = JSON.stringify({
       source: "pi",
       sessionId: sid,
       cwd: ctx?.cwd || "",
       task: taskText,
       result: resultText,
-      ok: true,
+      ok,
+      ...(ok ? {} : { reason: "error", errorMessage: errorText }),
       durationMs,
     });
     // fire-and-forget：工作台没起就静默失败，不阻断 agent
     fetch(taskDoneUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body })
-      .then((res) => { if (res.ok) log(`任务完成上报 session=${sid ? sid.slice(0, 24) : "?"} ${taskText.slice(0, 40)}`); })
-      .catch((e: any) => log(`任务完成上报失败（工作台未起？）: ${String(e?.message || e).slice(0, 80)}`));
+      .then((res) => { if (res.ok) log(`回合上报(${ok ? "完成" : "失败"}) session=${sid ? sid.slice(0, 24) : "?"} ${taskText.slice(0, 40)}`); })
+      .catch((e: any) => log(`回合上报失败（工作台未起？）: ${String(e?.message || e).slice(0, 80)}`));
+
+    // ---- 「接着问」长轮询：回合收口后取追问，注入终端原会话继续跑（与 DSH 插件同模式，不接管不 fork）----
+    // 飞书卡片提交的追问按 sessionId 暂存在工作台（TTL 10 分钟），这里轮询取走后
+    // pi.sendUserMessage() 在原会话触发新回合（上下文/工具全保留）；新回合收口后再次上报+轮询，多轮成环。
+    if (!sid) return;
+    const followupUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/pi-followup");
+    const POLL_WAIT_MS = 25_000; // 服务端长轮询挂起时长（与 DSH 插件一致）
+    const POLL_TTL_MS = 10 * 60_000; // 与服务端暂存 TTL 对齐，超时停止轮询
+    const gen = ++pollGen;
+    if (pollActive) return; // 已有轮询循环在跑（理论不可达：轮询在收口后启动、注入前自停）
+    pollActive = true;
+    void (async () => {
+      const deadline = Date.now() + POLL_TTL_MS;
+      try {
+        while (Date.now() < deadline && gen === pollGen) {
+          const res = await fetch(`${followupUrl}?sessionId=${encodeURIComponent(sid)}&waitMs=${POLL_WAIT_MS}`)
+            .catch(() => null);
+          if (gen !== pollGen) return;
+          const body = res && res.ok ? await res.json().catch(() => null) : null;
+          const text = typeof body?.text === "string" ? body.text : "";
+          if (text) {
+            pollGen++; // 作废当前循环：新回合的 agent_settled 会开启下一轮
+            log(`取走追问，注入原会话继续执行 ${text.slice(0, 40)}`);
+            pi.sendUserMessage(text);
+            return;
+          }
+        }
+      } finally {
+        if (gen === pollGen) pollActive = false;
+      }
+    })();
   });
 }
