@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   dialog: {
     openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+    openFile: (filters?: { name: string; extensions: string[] }[]) => ipcRenderer.invoke('dialog:openFile', filters),
   },
   notes: {
     tree: (dir: string) => ipcRenderer.invoke('notes:tree', { dir }),
@@ -290,6 +291,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     historyRemove: (id: number) => ipcRenderer.invoke('aitool:history:remove', { id }),
     historyClear: (tool?: string) => ipcRenderer.invoke('aitool:history:clear', { tool }),
     historyImage: (filePath: string) => ipcRenderer.invoke('aitool:history:image', { filePath }),
+  },
+
+  // 移动端本机网关（手机浏览器访问）
+  mobile: {
+    status: () => ipcRenderer.invoke('mobile:status'),
+    pairCode: () => ipcRenderer.invoke('mobile:pair-code'),
+    setEnabled: (enabled: boolean, port: number) =>
+      ipcRenderer.invoke('mobile:set-enabled', { enabled, port }),
+  },
+
+  // frpc 内网穿透（App 托管）
+  frpc: {
+    status: () => ipcRenderer.invoke('frpc:status'),
+    set: (payload: { enabled: boolean; binPath: string; configPath: string }) =>
+      ipcRenderer.invoke('frpc:set', payload),
   },
 
   // Config

@@ -289,6 +289,73 @@
           <span v-else class="badge badge-gray">○ 已停止</span>
         </div>
         <span v-if="feishuStatus" class="text-muted" :style="{ color: feishuStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ feishuStatus }}</span>
+
+        <hr class="mobile-divider">
+
+        <h3>🌐 手机网页访问（本机网关）</h3>
+        <div class="text-muted mb-2">
+          手机浏览器经 frp/nginx 打开桌面端网页对话。网关只监听 127.0.0.1，默认关闭；开启后生成一次性配对码，在手机页面输入即可。
+        </div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;">
+          <div class="form-group" style="min-width:120px;">
+            <label style="font-size:12px;">端口</label>
+            <input v-model="mobilePort" type="number" class="form-control" placeholder="8791" style="width:120px;">
+          </div>
+          <label class="flex" style="gap:6px;align-items:center;margin-bottom:18px;font-size:13px;cursor:pointer;">
+            <input v-model="mobileEnabled" type="checkbox" :disabled="mobileBusy">
+            开启移动端网关
+          </label>
+          <button class="btn btn-primary" @click="applyMobile" style="margin-bottom:12px;" :disabled="mobileBusy">应用</button>
+          <button class="btn btn-secondary" @click="genMobilePairCode" style="margin-bottom:12px;" :disabled="mobileBusy || !mobileStatus.running">生成配对码</button>
+        </div>
+        <div class="flex" style="gap:12px;flex-wrap:wrap;align-items:center;">
+          <span v-if="mobileStatus.running" class="badge badge-success">● 运行中</span>
+          <span v-else class="badge badge-gray">○ 已停止</span>
+          <span class="text-muted" style="font-size:12px;">监听：{{ mobileStatus.address || '—' }}</span>
+          <span class="text-muted" style="font-size:12px;">已配对设备：{{ mobileStatus.devices }}</span>
+        </div>
+        <div v-if="mobilePairCode" class="text-muted" style="font-size:13px;margin-top:10px;">
+          配对码 <b style="font-size:20px;letter-spacing:3px;">{{ mobilePairCode }}</b>
+          <span style="font-size:12px;">（5 分钟内有效，配对成功后作废）</span>
+        </div>
+        <div v-if="mobileStatusMsg" class="text-muted" style="font-size:12px;margin-top:6px;"
+             :style="{ color: mobileStatusMsg.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ mobileStatusMsg }}</div>
+
+        <hr class="mobile-divider">
+
+        <h3>🔗 frpc 内网穿透</h3>
+        <div class="text-muted mb-2" style="font-size:12px;">
+          由 App 托管 frpc：随 App 启动，异常退出自动重连。配置通常把本机 127.0.0.1:8791 映射到 VPS 的 18791。
+        </div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;">
+          <div class="form-group" style="flex:1;min-width:280px;">
+            <label style="font-size:12px;">frpc 程序路径</label>
+            <div class="flex" style="gap:6px;">
+              <input v-model="frpcPath" type="text" class="form-control" placeholder="…\frpc.exe">
+              <button class="btn btn-secondary" style="white-space:nowrap;" @click="pickFrpcFile('bin')" :disabled="frpcBusy">选择</button>
+            </div>
+          </div>
+          <div class="form-group" style="flex:1;min-width:280px;">
+            <label style="font-size:12px;">frpc 配置文件</label>
+            <div class="flex" style="gap:6px;">
+              <input v-model="frpcConfigPath" type="text" class="form-control" placeholder="…\frpc.toml">
+              <button class="btn btn-secondary" style="white-space:nowrap;" @click="pickFrpcFile('config')" :disabled="frpcBusy">选择</button>
+            </div>
+          </div>
+        </div>
+        <div class="flex" style="gap:12px;flex-wrap:wrap;align-items:center;">
+          <label class="flex" style="gap:6px;align-items:center;font-size:13px;cursor:pointer;">
+            <input v-model="frpcEnabled" type="checkbox" :disabled="frpcBusy">
+            随 App 启动 frpc
+          </label>
+          <button class="btn btn-primary" @click="applyFrpc" :disabled="frpcBusy">应用 / 重启</button>
+          <span v-if="frpcStatus.running" class="badge badge-success">● 运行中{{ frpcStatus.pid ? ' · PID ' + frpcStatus.pid : '' }}</span>
+          <span v-else class="badge badge-gray">○ 已停止</span>
+          <span v-if="frpcStatus.restarts" class="text-muted" style="font-size:12px;">自动重连 {{ frpcStatus.restarts }} 次</span>
+        </div>
+        <div v-if="frpcStatus.lastError" class="text-muted" style="font-size:12px;margin-top:6px;color:var(--danger);">{{ frpcStatus.lastError }}</div>
+        <div v-if="frpcMsg" class="text-muted" style="font-size:12px;margin-top:6px;"
+             :style="{ color: frpcMsg.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }">{{ frpcMsg }}</div>
       </div>
 
       <!-- Agent Approval & Radar Notify -->
@@ -488,6 +555,25 @@ const feishuAppId = ref('');
 const feishuAppSecret = ref('');
 const feishuRunning = ref(false);
 const feishuStatus = ref('');
+
+// 移动端本机网关
+const mobileEnabled = ref(false);
+const mobilePort = ref('8791');
+const mobileStatus = ref<any>({ running: false, port: 0, address: '', devices: 0, clients: 0 });
+const mobilePairCode = ref('');
+const mobileBusy = ref(false);
+const mobileStatusMsg = ref('');
+
+// frpc 内网穿透托管
+const frpcEnabled = ref(false);
+const frpcPath = ref('');
+const frpcConfigPath = ref('');
+const frpcStatus = ref<any>({
+  running: false, pid: null, enabled: false, binPath: '', configPath: '',
+  startedAt: 0, restarts: 0, lastError: '', lastExit: '',
+});
+const frpcBusy = ref(false);
+const frpcMsg = ref('');
 
 // 智能体审批与雷达通知
 const feishuChatId = ref('');
@@ -1384,6 +1470,90 @@ async function toggleLaunchAtStartup() {
   setTimeout(() => { if (startupStatus.value.startsWith('✅')) startupStatus.value = ''; }, 3000);
 }
 
+// ===== 移动端本机网关 =====
+async function loadMobile(): Promise<void> {
+  try {
+    const s = await API.mobile.status();
+    mobileStatus.value = s;
+    mobileEnabled.value = !!s?.running;
+    if (s?.port) mobilePort.value = String(s.port);
+  } catch {}
+}
+
+async function applyMobile(): Promise<void> {
+  mobileBusy.value = true;
+  mobileStatusMsg.value = '';
+  mobilePairCode.value = '';
+  try {
+    const port = Math.trunc(Number(mobilePort.value)) || 8791;
+    const r = await API.mobile.setEnabled(mobileEnabled.value, port);
+    if (r?.status) mobileStatus.value = r.status;
+    mobileEnabled.value = !!r?.status?.running;
+    if (r?.ok) {
+      mobileStatusMsg.value = mobileEnabled.value ? '✅ 移动端网关已开启' : '✅ 移动端网关已关闭';
+      setTimeout(() => { mobileStatusMsg.value = ''; }, 3000);
+    } else {
+      mobileStatusMsg.value = '❌ ' + (r?.error || '操作失败');
+    }
+  } catch (e: any) {
+    mobileStatusMsg.value = '❌ ' + (e?.message || e);
+  } finally {
+    mobileBusy.value = false;
+  }
+}
+
+async function genMobilePairCode(): Promise<void> {
+  try {
+    const r = await API.mobile.pairCode();
+    mobilePairCode.value = r?.code || '';
+  } catch (e: any) {
+    mobileStatusMsg.value = '❌ ' + (e?.message || e);
+  }
+}
+
+async function loadFrpc(): Promise<void> {
+  try {
+    const s = await API.frpc.status();
+    frpcStatus.value = s;
+    frpcEnabled.value = !!s?.enabled;
+    frpcPath.value = s?.binPath || '';
+    frpcConfigPath.value = s?.configPath || '';
+  } catch {}
+}
+
+async function pickFrpcFile(kind: 'bin' | 'config'): Promise<void> {
+  const filters = kind === 'bin'
+    ? [{ name: 'frpc 程序', extensions: ['exe'] }]
+    : [{ name: 'frpc 配置', extensions: ['toml', 'ini', 'json', 'yaml', 'yml'] }];
+  const picked = await API.dialog.openFile(filters);
+  if (!picked) return;
+  if (kind === 'bin') frpcPath.value = picked;
+  else frpcConfigPath.value = picked;
+}
+
+async function applyFrpc(): Promise<void> {
+  frpcBusy.value = true;
+  frpcMsg.value = '';
+  try {
+    const r = await API.frpc.set({
+      enabled: frpcEnabled.value,
+      binPath: frpcPath.value.trim(),
+      configPath: frpcConfigPath.value.trim(),
+    });
+    if (r?.status) frpcStatus.value = r.status;
+    if (r?.ok) {
+      frpcMsg.value = frpcStatus.value.running ? '✅ frpc 已在运行' : '✅ 已停止 frpc';
+      setTimeout(() => { frpcMsg.value = ''; }, 3000);
+    } else {
+      frpcMsg.value = '❌ ' + (r?.error || '启动失败');
+    }
+  } catch (e: any) {
+    frpcMsg.value = '❌ ' + (e?.message || e);
+  } finally {
+    frpcBusy.value = false;
+  }
+}
+
 onMounted(async () => {
   await loadConfig();
   await loadStartupSetting();
@@ -1396,6 +1566,8 @@ onMounted(async () => {
   await loadBackups();
   await loadAutoBackup();
   await loadRadarCfg();
+  await loadMobile();
+  await loadFrpc();
   try {
     const svc = await API.service.status();
     feishuRunning.value = svc.feishu;

@@ -50,6 +50,8 @@ import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { approver } from './approval/approver';
+import { startMobileGateway, stopMobileGateway, mobileGatewayStatus, requestMobilePairCode, broadcastMobileEvent } from './mobile/gateway';
+import { startFrpc, stopFrpc, restartFrpc, frpcStatus, resolveFrpcPaths } from './mobile/frpc';
 import logger from './services/logger';
 import { extractDigest, syncCheckedDone, checkDigestTodo, checkDigestFollowup } from './services/note-digest';
 import { notify } from './services/notify';
@@ -236,6 +238,8 @@ function stopAllServices() {
   void approver.stop();
   scheduler.stop();
   agentRadar.stop();
+  void stopMobileGateway();
+  void stopFrpc();
 }
 
 function getServicesStatus() {
@@ -1160,10 +1164,89 @@ ipcMain.handle('chat:session:updateTitle', (_, { sessionId, title }) => {
   db.chat.updateSessionTitle(sessionId, title);
 });
 
-/** 一轮对话的广播：桌面窗口演一遍 */
+/** 一轮对话的广播：桌面窗口演一遍，同时推给在线手机 */
 function emitChatEvent(channel: string, data: any): void {
   sendToRenderer(channel, data);
+  broadcastMobileEvent(channel, data);
 }
+
+// ========== 移动端本机网关 ==========
+
+/** 移动端发来消息：桌面即时补气泡 + 系统通知 */
+function announceMobileMessage(sessionId: string, title: string, text: string): void {
+  sendToRenderer('chat:remote', { sessionId, title, text });
+  const preview = String(text || '').replace(/\s+/g, ' ').trim();
+  notify(
+    `📱 移动端消息 · ${title || '新对话'}`,
+    preview.length > 60 ? preview.slice(0, 60) + '…' : preview,
+    () => {
+      showWindow();
+      sendToRenderer('nav:open-session', { sessionId });
+    },
+  );
+}
+
+function startMobileGatewayFromConfig() {
+  const port = Number(appConfig.getConfig('mobilePort')) || 8791;
+  return startMobileGateway(port, {
+    runTurn: (payload) => runChatTurn(payload, emitChatEvent),
+    notifyDesktop: announceMobileMessage,
+  });
+}
+
+ipcMain.handle('mobile:status', () => mobileGatewayStatus());
+ipcMain.handle('mobile:pair-code', () => requestMobilePairCode());
+ipcMain.handle('mobile:set-enabled', async (_, { enabled, port }) => {
+  try {
+    const on = enabled === true || String(enabled) === '1';
+    const p = Math.trunc(Number(port)) || 8791;
+    appConfig.saveConfig({ mobileEnabled: on ? '1' : '0', mobilePort: String(p) });
+    if (on) {
+      const r = await startMobileGatewayFromConfig();
+      if (!r.ok) return { ok: false, error: r.error || '启动失败', status: mobileGatewayStatus() };
+    } else {
+      await stopMobileGateway();
+    }
+    return { ok: true, status: mobileGatewayStatus() };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ? e.message : String(e), status: mobileGatewayStatus() };
+  }
+});
+
+function frpcFullStatus() {
+  return {
+    ...frpcStatus(),
+    enabled: appConfig.getConfig('frpcEnabled') === '1',
+    ...resolveFrpcPaths(),
+  };
+}
+
+async function applyFrpcSettings(enabled: boolean, binPath: string, configPath: string) {
+  appConfig.saveConfig({
+    frpcEnabled: enabled ? '1' : '0',
+    frpcPath: binPath,
+    frpcConfigPath: configPath,
+  });
+  if (!enabled) {
+    await stopFrpc();
+    return { ok: true, status: frpcFullStatus() };
+  }
+  const r = await restartFrpc(resolveFrpcPaths());
+  return { ok: r.ok, error: r.error, status: frpcFullStatus() };
+}
+
+ipcMain.handle('frpc:status', () => frpcFullStatus());
+ipcMain.handle('frpc:set', async (_, payload) => {
+  try {
+    return await applyFrpcSettings(
+      payload?.enabled === true || String(payload?.enabled) === '1',
+      String(payload?.binPath || '').trim(),
+      String(payload?.configPath || '').trim(),
+    );
+  } catch (e: any) {
+    return { ok: false, error: e?.message ? e.message : String(e), status: frpcFullStatus() };
+  }
+});
 
 // --- Agent Radar（智能体雷达：监控本机其他 AI 工具 + 会话对话本地沉淀） ---
 ipcMain.handle('radar:status', () => agentRadar.status());
@@ -1769,6 +1852,14 @@ ipcMain.handle('dialog:openDirectory', async () => {
   });
   return result.canceled ? null : result.filePaths[0];
 });
+ipcMain.handle('dialog:openFile', async (_, filters?: { name: string; extensions: string[] }[]) => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: filters && filters.length ? filters : undefined,
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
 
 // --- App ---
 ipcMain.handle('app:version', () => app.getVersion());
@@ -2192,6 +2283,19 @@ app.whenReady().then(async () => {
   // 审批事件（桌面待审批面板）：审批挂起/决策时实时刷新列表
   approver.onApprovalEvent((e) => sendToRenderer('approver:event', e));
   startupElapsed('services started');
+
+  // 移动端本机网关：默认关，设置页开启后随启动自启
+  if (appConfig.getConfig('mobileEnabled') === '1') {
+    void startMobileGatewayFromConfig().then((r) => {
+      if (!r.ok) logger.error('[Mobile] 自动启动失败: %s', r.error);
+    });
+  }
+  // frpc 内网穿透：随 App 托管，异常退出自动重连
+  if (appConfig.getConfig('frpcEnabled') === '1') {
+    void startFrpc(resolveFrpcPaths()).then((r) => {
+      if (!r.ok) logger.error('[Frpc] 自动启动失败: %s', r.error);
+    });
+  }
 
   updateTrayMenu(getServicesStatus());
 

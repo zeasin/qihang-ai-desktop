@@ -50,6 +50,7 @@ interface ElectronAPI {
   };
   dialog: {
     openDirectory: () => Promise<string | null>;
+    openFile: (filters?: { name: string; extensions: string[] }[]) => Promise<string | null>;
   };
   notes: {
     tree: (dir: string) => Promise<TreeNode[]>;
@@ -180,9 +181,52 @@ interface ElectronAPI {
     decide: (id: string, decision: 'allow_once' | 'allow_session' | 'deny') => Promise<{ ok: boolean; error?: string }>;
     deployGate: () => Promise<{ ok: boolean; error?: string; piGate: { installed: boolean; action: string; target: string; error?: string } }>;
   };
+  frpc: {
+    status: () => Promise<{
+      running: boolean;
+      pid: number | null;
+      enabled: boolean;
+      binPath: string;
+      configPath: string;
+      startedAt: number;
+      restarts: number;
+      lastError: string;
+      lastExit: string;
+    }>;
+    set: (payload: { enabled: boolean; binPath: string; configPath: string }) => Promise<{
+      ok: boolean;
+      error?: string;
+      status: {
+        running: boolean;
+        pid: number | null;
+        enabled: boolean;
+        binPath: string;
+        configPath: string;
+        startedAt: number;
+        restarts: number;
+        lastError: string;
+        lastExit: string;
+      };
+    }>;
+  };
   config: {
     get: () => Promise<any>;
     set: (config: any) => Promise<boolean>;
+  };
+  mobile: {
+    status: () => Promise<{
+      running: boolean;
+      port: number;
+      address: string;
+      devices: number;
+      clients: number;
+    }>;
+    pairCode: () => Promise<{ code: string; expiresAt: number }>;
+    setEnabled: (enabled: boolean, port: number) => Promise<{
+      ok: boolean;
+      error?: string;
+      status: { running: boolean; port: number; address: string; devices: number; clients: number };
+    }>;
   };
   archive: {
     report: (moduleId: string) => Promise<{ ok: boolean; content?: string; error?: string }>;
