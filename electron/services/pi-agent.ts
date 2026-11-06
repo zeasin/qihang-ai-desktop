@@ -449,9 +449,11 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
       source: 'interactive',
     };
     if (images && images.length) {
+      // SDK ImageContent 是扁平结构 {type:'image', data, mimeType}，嵌套 Anthropic 风格会导致 data 读成 undefined
       promptOptions.images = images.map((img) => ({
-        type: 'image',
-        source: { type: 'base64', mediaType: img.mimeType || 'image/png', data: img.data },
+        type: 'image' as const,
+        data: img.data,
+        mimeType: img.mimeType || 'image/png',
       }));
     }
     await handle.tail; // 等上一个 prompt 完成（串行化）

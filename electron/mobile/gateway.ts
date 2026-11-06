@@ -17,7 +17,9 @@ import logger from '../services/logger';
 
 const BIND_HOST = '127.0.0.1';
 const DEVICE_FILE = path.join(os.homedir(), '.qihang-ai-desktop', 'mobile-devices.json');
-const MAX_BODY = 1024 * 1024;
+// 图片走 base64 进请求体：多张压缩图 + 文本，给到 8MB 余量
+const MAX_BODY = 8 * 1024 * 1024;
+const MAX_IMAGES_PER_TURN = 6;
 const PAIR_CODE_TTL_MS = 5 * 60 * 1000;
 const HEARTBEAT_MS = 15 * 1000;
 const PAIR_FAIL_WINDOW_MS = 60 * 1000;
@@ -204,6 +206,35 @@ function serveMobilePage(res: http.ServerResponse): void {
   }
 }
 
+/** 移动端页面静态资源：文件名白名单，杜绝路径穿越 */
+function serveMobileVendor(res: http.ServerResponse, fileName: string): void {
+  if (!/^[\w.-]+\.js$/.test(fileName)) {
+    return sendJson(res, 404, { ok: false, error: '资源不存在' });
+  }
+  const file = path.join(app.getAppPath(), 'resources', 'mobile', 'vendor', fileName);
+  try {
+    const js = fs.readFileSync(file, 'utf-8');
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'max-age=86400' });
+    res.end(js);
+  } catch (e: any) {
+    logger.warn('[Mobile] 读取静态资源失败: %s', e?.message || e);
+    sendJson(res, 404, { ok: false, error: '资源不存在' });
+  }
+}
+
+/** 手机端发来的图片收敛成桌面端同款 {data, mimeType}，data 是不带前缀的 base64 */
+function normalizeImages(raw: any): any[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list = raw
+    .slice(0, MAX_IMAGES_PER_TURN)
+    .map((img: any) => ({
+      data: String(img?.data || '').replace(/^data:image\/[\w+.-]+;base64,/, ''),
+      mimeType: String(img?.mimeType || 'image/jpeg'),
+    }))
+    .filter((img: { data: string; mimeType: string }) => img.data.length > 0 && /^image\//.test(img.mimeType));
+  return list.length ? list : undefined;
+}
+
 async function handlePair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   if (tooManyPairFailures()) {
     return sendJson(res, 429, { ok: false, error: '尝试次数过多，请 1 分钟后再试' });
@@ -254,7 +285,8 @@ async function handleSendMessage(
   const sid = decodeURIComponent(rawSessionId);
   const body = await readBody(req);
   const text = String(body?.question ?? body?.text ?? '').trim();
-  if (!text) return sendJson(res, 400, { ok: false, error: '消息内容为空' });
+  const images = normalizeImages(body?.images);
+  if (!text && !images) return sendJson(res, 400, { ok: false, error: '消息内容为空' });
 
   const row: any = db.chat.getSession(sid);
   if (!row) return sendJson(res, 404, { ok: false, error: '会话不存在，请在手机上重新创建' });
@@ -279,7 +311,7 @@ async function handleSendMessage(
         question: text,
         sessionId: sid,
         projectDir: projectDir || undefined,
-        images: Array.isArray(body?.images) ? body.images : undefined,
+        images,
         agent: row.active_agent || 'pi',
         modelName: row.model_id || undefined,
       });
@@ -295,9 +327,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   const pathname = url.pathname;
 
-  // 公开端点：页面、健康检查、配对
+  // 公开端点：页面、静态资源、健康检查、配对
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     return serveMobilePage(res);
+  }
+  const vendorMatch = pathname.match(/^\/vendor\/([^/]+)$/);
+  if (req.method === 'GET' && vendorMatch) {
+    return serveMobileVendor(res, vendorMatch[1]);
   }
   if (req.method === 'GET' && pathname === '/api/health') {
     return sendJson(res, 200, {
@@ -380,6 +416,36 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return sendJson(res, 200, { ok: true, messages: db.chat.messages(sid).map(toMessage) });
     }
     if (req.method === 'POST') return handleSendMessage(req, res, messagesMatch[1]);
+  }
+
+  // 会话重命名 / 删除
+  const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionMatch) {
+    const sid = decodeURIComponent(sessionMatch[1]);
+    if (!db.chat.getSession(sid)) return sendJson(res, 404, { ok: false, error: '会话不存在' });
+    if (req.method === 'PATCH' || req.method === 'POST') {
+      const body = await readBody(req);
+      const titleRaw = body?.title;
+      const modelRaw = body?.modelId;
+      if (titleRaw === undefined && modelRaw === undefined) {
+        return sendJson(res, 400, { ok: false, error: '没有需要更新的字段' });
+      }
+      if (titleRaw !== undefined) {
+        const title = String(titleRaw || '').trim().slice(0, 60);
+        if (!title) return sendJson(res, 400, { ok: false, error: '标题不能为空' });
+        db.chat.updateSessionTitle(sid, title);
+      }
+      if (modelRaw !== undefined) {
+        // 空字符串表示回到默认模型
+        db.chat.updateSessionModel(sid, String(modelRaw || '').trim());
+      }
+      return sendJson(res, 200, { ok: true, session: toSession(db.chat.getSession(sid)) });
+    }
+    if (req.method === 'DELETE') {
+      if (runningSessions.has(sid)) return sendJson(res, 409, { ok: false, error: '这一轮还在回答中，稍后再删' });
+      db.chat.deleteSession(sid);
+      return sendJson(res, 200, { ok: true });
+    }
   }
 
   sendJson(res, 404, { ok: false, error: '接口不存在' });
