@@ -232,6 +232,78 @@
         <p class="text-muted" style="margin-top:8px;">未订阅回调时按钮点击无响应，但回复序号 /「/项目 名称」不受影响，功能不丢。</p>
       </div>
 
+      <div class="card" id="sec-mobile">
+        <h2>📱 手机访问与内网穿透（frp）</h2>
+        <p class="text-muted mb-2">
+          用手机浏览器直接访问本机工作台：手机 → 公网入口（云服务器 frps）→ 家里电脑 frpc（<b>由 App 托管</b>）→ 本机网关 <code>127.0.0.1:8791</code>。
+          网关只监听本机，不直接暴露公网；frpc 随 App 自启，异常退出会自动重连（3s 起、最长 60s 退避）。
+        </p>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">一、下载安装 frp</p>
+        <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>打开 <a href="#" @click.prevent="openExternal('https://github.com/fatedier/frp/releases')">frp Releases</a>，按平台下载发行包（以 <code>frp_0.72.0</code> 为例）
+            <ul style="margin:4px 0;padding-left:18px;">
+              <li>云服务器：<code>frp_0.72.0_linux_amd64.tar.gz</code>（服务端 <code>frps</code>）</li>
+              <li>家里电脑：<code>frp_0.72.0_windows_amd64.zip</code>（客户端 <code>frpc.exe</code>）</li>
+            </ul>
+          </li>
+          <li>解压后只需要可执行文件与各自的 <code>*.toml</code> 配置。</li>
+        </ol>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">二、服务端 frps（云服务器）</p>
+        <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>上传 <code>frps</code> 与 <code>frps.toml</code> 到服务器，如 <code>/opt/frp/</code></li>
+          <li>安全组 + 系统防火墙放行 <code>7000</code>（控制端口）与 <code>18791</code>（对外映射端口）</li>
+          <li>启动：<code>./frps -c frps.toml</code>；常驻建议用 systemd（<code>Restart=always</code>）</li>
+        </ol>
+        <pre class="help-pre">bindPort = 7000
+# 两端必须一致，请改成你自己的强随机串
+auth.token = "YOUR_STRONG_TOKEN"
+
+# 可选管理面板，建议只绑 127.0.0.1
+webServer.addr = "127.0.0.1"
+webServer.port = 7500</pre>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">三、客户端 frpc（运行工作台的电脑）</p>
+        <pre class="help-pre">serverAddr = "你的云服务器IP"
+serverPort = 7000
+auth.token = "YOUR_STRONG_TOKEN"
+
+[[proxies]]
+name = "qihang-mobile"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8791
+remotePort = 18791</pre>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">四、在 App 内开启（推荐，不用手动跑 frpc）</p>
+        <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>「设置 → 📱 移动端」打开「启用移动端网关」，端口保持 <code>8791</code></li>
+          <li>「🔗 frpc 内网穿透」里选择 <code>frpc.exe</code> 路径与 <code>frpc.toml</code> 路径，勾选「随 App 启动 frpc」，点「应用 / 重启」</li>
+          <li>状态区显示「运行中 + PID」即成功；关闭 App 会一并关闭 frpc</li>
+          <li>点「生成配对码」，手机访问 <code>http://公网IP:18791/</code> 输入 6 位配对码（5 分钟有效、一次性）</li>
+        </ol>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">五、安全建议</p>
+        <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li><code>frpc.toml</code> 是本机私密配置，不要提交到代码仓库（文档中的 token 均为占位符）</li>
+          <li>公网 <code>18791</code> 适合联调期，长期建议域名 + HTTPS（nginx 反代到 18791）后关闭公网端口</li>
+          <li>更换/丢失手机：清空 <code>~/.qihang-ai-desktop/mobile-devices.json</code> 撤销全部设备，再重新配对</li>
+        </ul>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">六、常见问题</p>
+        <table class="help-table">
+          <thead><tr><th>现象</th><th>原因</th><th>处理</th></tr></thead>
+          <tbody>
+            <tr><td>frpc 显示未运行</td><td>程序/配置路径不存在</td><td>检查两个路径，查看日志中的 <code>[Frpc]</code> 行</td></tr>
+            <tr><td><code>token in login doesn't match</code></td><td>两端 token 不一致</td><td>统一 <code>auth.token</code> 后重启 frps / frpc</td></tr>
+            <tr><td><code>port already used</code></td><td><code>remotePort</code> 被占用</td><td>改 <code>remotePort</code> 或停掉占用进程</td></tr>
+            <tr><td>手机打不开页面</td><td>端口未放行或未连通</td><td>先测 <code>http://IP:18791/api/health</code>，再查安全组/防火墙</td></tr>
+            <tr><td>frpc 反复重启</td><td>网络抖动或地址错误</td><td>自动退避重连；持续失败看设置页 <code>lastError</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="card" id="sec-log">
         <h2>📋 日志</h2>
         <p class="text-muted mb-2">查看应用运行日志，用于排查问题。</p>
@@ -298,6 +370,7 @@ const sections = [
   { id: 'sec-tools', icon: '🔧', label: '工具箱' },
   { id: 'sec-config', icon: '⚙️', label: '系统配置' },
   { id: 'sec-feishu-card', icon: '📩', label: '飞书卡片交互' },
+  { id: 'sec-mobile', icon: '📱', label: '手机访问（frp）' },
   { id: 'sec-log', icon: '📋', label: '日志' },
   { id: 'sec-faq', icon: '❓', label: '常见问题' },
   { id: 'sec-privacy', icon: '🔒', label: '数据与隐私' },
@@ -411,6 +484,18 @@ onMounted(async () => {
   font-weight: 600;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.help-pre {
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 4px 0 12px;
 }
 
 .help-table code {

@@ -85,6 +85,119 @@
 - **结果卡片**：执行结果标注「本条发到：X」，点「💬 接着问」可在飞书里继续该话题（同一会话续聊 30 分钟窗口），不点则每条消息都是新话题。
 - **前置条件**：需在飞书开放平台为应用订阅「卡片回调」（`card.action.trigger`）事件；未订阅时按钮不可用，回复序号/指令仍然有效。
 
+## 手机访问与内网穿透（frp）
+
+出差不带电脑也能用：手机浏览器直接访问家里电脑上的工作台，对话、选项目、看历史都走 App 自带的本机网关。公网入口通过 [frp](https://github.com/fatedier/frp) 打通，**服务端装在云服务器，客户端由 App 托管**。
+
+### 链路
+
+```text
+手机浏览器
+   │  http(s)://<公网IP或域名>:18791
+   ▼
+frps（云服务器，常驻）
+   ▲  出站长连接（7000）
+   │
+frpc（家里电脑，由 App 启动和守护）
+   │
+工作台本机网关 127.0.0.1:8791
+```
+
+- App 网关只监听 `127.0.0.1:8791`，不直接暴露到公网
+- frpc 随 App 自启、异常退出自动重连（3s 起、最长 60s 退避），关闭 App 即断开
+- 手机首次访问需输入配对码（6 位、5 分钟有效、一次性），换取该设备的随机 token
+
+### 一、下载安装 frp
+
+1. 打开 <https://github.com/fatedier/frp/releases>，下载对应平台的发行包（以 `frp_0.72.0` 为例）
+   - Windows（家里电脑）：`frp_0.72.0_windows_amd64.zip`
+   - Linux（云服务器）：`frp_0.72.0_linux_amd64.tar.gz`
+2. 解压后只需要 `frpc`/`frpc.exe`、`frps`/`frps.exe` 和各自的 `*.toml` 配置文件，其余可删。
+
+### 二、服务端 frps（云服务器）
+
+1. 把 `frps` 与 `frps.toml` 上传到服务器，例如 `/opt/frp/`
+2. `frps.toml` 示例：
+
+```toml
+bindPort = 7000
+# 鉴权 token，客户端必须一致，请改成你自己的强随机串
+auth.token = "YOUR_STRONG_TOKEN"
+
+# 可选：管理面板（建议只绑 127.0.0.1，通过 SSH 隧道查看）
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+```
+
+3. 放行端口：云厂商安全组和系统防火墙都要放行 `7000`（frps 控制端口）和 `18791`（对外映射端口）
+4. 启动：
+   - Linux：`chmod +x frps && ./frps -c frps.toml`
+   - Windows：`frps.exe -c frps.toml`
+5. 常驻用 systemd（可选）：
+
+```ini
+[Unit]
+Description=frps
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/frp/frps -c /opt/frp/frps.toml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl enable --now frps
+```
+
+### 三、客户端 frpc（运行工作台的电脑）
+
+`frpc.toml` 示例，端口与工作台默认网关一致：
+
+```toml
+serverAddr = "你的云服务器IP"
+serverPort = 7000
+auth.token = "YOUR_STRONG_TOKEN"
+
+[[proxies]]
+name = "qihang-mobile"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8791
+remotePort = 18791
+```
+
+### 四、在 App 内开启（推荐，不用手动跑 frpc）
+
+1. 「设置 → 📱 移动端」打开「启用移动端网关」，端口保持 `8791`
+2. 在「🔗 frpc 内网穿透」中：
+   - **frpc 程序路径**：选择 `frpc.exe` 实际位置
+   - **frpc 配置文件**：选择上面的 `frpc.toml`
+   - 勾选「随 App 启动 frpc」，点「应用 / 重启」
+3. 状态区显示「运行中 + PID」即成功；App 退出时会一并关闭 frpc
+4. 点「生成配对码」，手机打开 `http://<公网IP>:18791/`，输入 6 位配对码绑定
+
+之后每次启动 App，网关和 frpc 都会自动拉起，无需再手动运行或保留终端脚本。
+
+### 五、安全建议
+
+- `frpc.toml` 属于本机私密配置，不要提交到仓库（本文档中的 token 一律为占位符）
+- 公网 `18791` 适合联调期；长期方案建议域名 + HTTPS（nginx 反代到 18791），随后关闭公网端口
+- 手机丢失或更换：清空 `~/.qihang-ai-desktop/mobile-devices.json` 可撤销全部配对设备，再重新生成配对码
+
+### 六、常见问题
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 设置页 frpc 显示未运行 | 程序或配置文件路径不存在 | 检查两个路径是否存在，查看日志中的 `[Frpc]` 行 |
+| 日志 `token in login doesn't match` | 客户端与服务端 token 不一致 | 两端 `auth.token` 保持一致后重启 |
+| 日志 `port already used` | `remotePort` 被其他进程占用 | 改 `remotePort`，或停掉占用进程 |
+| 手机打不开页面 | 端口未放行或 frpc 未连上 | 先测 `http://IP:18791/api/health`，再查安全组/防火墙 |
+| frpc 反复重启 | 网络抖动或地址错误 | App 会自动退避重连；持续失败看设置页 `lastError` |
+
 ## 配置指南
 
 ### 1. AI 模型
