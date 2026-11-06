@@ -51,6 +51,30 @@
   }
   .add-btn { background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 7px 12px; font-size: 13px; }
 
+  /* 右下角悬浮「新对话」按钮（挂在 app 里时顶栏隐藏，靠它新建对话） */
+  .fab {
+    position: fixed; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom));
+    width: 54px; height: 54px; border-radius: 50%; border: 0;
+    background: #2563eb; color: #fff; font-size: 28px; font-weight: 300;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, .45); z-index: 30;
+  }
+  .fab:active { transform: scale(.94); }
+
+  /* Android app 内嵌模式（?app=1）：app 自带顶栏，H5 隐藏黑栏，返回改为悬浮钮 */
+  body.app-mode .topbar { display: none; }
+  body.app-mode #messages { padding-top: 58px; }
+  body.app-mode .nc-body { padding-top: 70px; }
+  .float-back {
+    display: none;
+    position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 12px;
+    width: 38px; height: 38px; border-radius: 50%; border: 0;
+    background: rgba(15, 23, 42, .55); color: #fff; font-size: 20px;
+    align-items: center; justify-content: center; z-index: 30;
+  }
+  body.app-mode #chatView.active .float-back,
+  body.app-mode #composeView.active .float-back { display: flex; }
+
   /* 会话列表 */
   #sessionList { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .session {
@@ -167,9 +191,9 @@
 <div id="listView" class="screen">
   <div class="topbar">
     <div class="title">对话</div>
-    <button id="newChatBtn" class="add-btn">+ 新对话</button>
   </div>
   <div id="sessionList"></div>
+  <button id="newChatBtn" class="fab">+</button>
 </div>
 
 <!-- 聊天 -->
@@ -178,6 +202,7 @@
     <button id="backBtn" class="icon-btn">‹</button>
     <div id="chatTitle" class="title">对话</div>
   </div>
+  <button id="backBtnFloat" class="float-back">‹</button>
   <div id="messages"></div>
   <div id="statusLine"></div>
   <div class="composer">
@@ -192,6 +217,7 @@
     <button id="composeBackBtn" class="icon-btn">‹</button>
     <div class="title">新建对话</div>
   </div>
+  <button id="composeBackBtnFloat" class="float-back">‹</button>
   <div class="nc-body">
     <div class="nc-hero">
       <div class="nc-mark">⛵</div>
@@ -222,6 +248,11 @@
 
   var TOKEN_KEY = 'qihang_mobile_token';
   var NAME_KEY = 'qihang_mobile_name';
+
+  // Android app 内嵌模式：WebView 默认 UA 带 "; wv" 标记，此时隐藏 H5 顶栏（app 自带顶栏）
+  if (/;\s*wv\)/.test(navigator.userAgent)) {
+    document.body.classList.add('app-mode');
+  }
 
   var state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
@@ -255,6 +286,22 @@
   function show(view) {
     [pairView, listView, chatView, composeView].forEach(function (el) { el.classList.remove('active'); });
     view.classList.add('active');
+  }
+
+  // 进入聊天/新建页时压一条浏览器历史：Android app 返回手势/按键触发 webView.goBack()
+  // → popstate → 回列表页；已在列表/配对页时无历史可退，由 app 正常退出
+  function pushScreen(screen) {
+    history.pushState({ screen: screen }, '', location.href);
+  }
+  window.addEventListener('popstate', function () {
+    show(listView);
+    loadSessions();
+  });
+
+  // 页内返回钮：有历史则走 history.back()（保持历史栈一致），否则直接回列表
+  function backToList() {
+    if (history.state && history.state.screen) history.back();
+    else { show(listView); loadSessions(); }
   }
 
   // ---------- 接口 ----------
@@ -373,7 +420,7 @@
     if (!state.sessions.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = '还没有对话，点右上角「+ 新对话」开始。';
+      empty.textContent = '还没有对话，点右下角「+」开始。';
       sessionListEl.appendChild(empty);
       return;
     }
@@ -463,12 +510,15 @@
     projectSelect.innerHTML = '<option value="">不绑定项目</option>';
     modelSelect.innerHTML = '<option value="">默认模型</option>';
     show(composeView);
+    pushScreen('compose');
     setTimeout(function () { composeInput.focus(); }, 60);
     loadCreateOptions();
   }
 
   document.getElementById('newChatBtn').addEventListener('click', enterCompose);
-  document.getElementById('composeBackBtn').addEventListener('click', function () { show(listView); });
+  document.getElementById('composeBackBtn').addEventListener('click', backToList);
+  document.getElementById('backBtnFloat').addEventListener('click', backToList);
+  document.getElementById('composeBackBtnFloat').addEventListener('click', backToList);
 
   composeInput.addEventListener('input', function () {
     composeInput.style.height = 'auto';
@@ -523,13 +573,11 @@
     resizeInput();
     updateSendState();
     show(chatView);
+    pushScreen('chat');
     if (!skipLoad) loadMessages();
   }
 
-  document.getElementById('backBtn').addEventListener('click', function () {
-    show(listView);
-    loadSessions();
-  });
+  document.getElementById('backBtn').addEventListener('click', backToList);
 
   function loadMessages() {
     if (!state.current) return Promise.resolve();
