@@ -427,11 +427,14 @@ const project = {
 
 // ========== Sessions & Messages ==========
 const chat = {
-  sessions: (projectId) => {
+  sessions: (projectId, limit?, offset?) => {
     try {
       const pid = (projectId !== null && projectId !== undefined && projectId !== '') ? Number(projectId) : NaN;
-      if (Number.isFinite(pid)) return q("SELECT s.*, (SELECT content FROM prj_messages WHERE session_id = s.session_id ORDER BY id DESC LIMIT 1) as last_message FROM prj_sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC", Math.trunc(pid));
-      return q("SELECT s.*, (SELECT content FROM prj_messages WHERE session_id = s.session_id ORDER BY id DESC LIMIT 1) as last_message FROM prj_sessions s ORDER BY s.updated_at DESC");
+      const page = (limit !== undefined && Number(limit) > 0)
+        ? ` LIMIT ${Math.trunc(Number(limit))} OFFSET ${Math.max(0, Math.trunc(Number(offset) || 0))}`
+        : '';
+      if (Number.isFinite(pid)) return q(`SELECT s.*, (SELECT content FROM prj_messages WHERE session_id = s.session_id ORDER BY id DESC LIMIT 1) as last_message FROM prj_sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC${page}`, Math.trunc(pid));
+      return q(`SELECT s.*, (SELECT content FROM prj_messages WHERE session_id = s.session_id ORDER BY id DESC LIMIT 1) as last_message FROM prj_sessions s ORDER BY s.updated_at DESC${page}`);
     } catch { return []; }
   },
   sessionsBySource: (source, projectId) => {

@@ -357,7 +357,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, 200, { ok: true, models, error: result.error });
   }
   if (req.method === 'GET' && pathname === '/api/sessions') {
-    return sendJson(res, 200, { ok: true, sessions: db.chat.sessions(undefined).map(toSession) });
+    // 移动端分页：?limit=&offset=；多取一条判断 hasMore，不带 limit 时保持旧行为返回全部
+    const limit = Number(url.searchParams.get('limit'));
+    const offset = Number(url.searchParams.get('offset'));
+    const page = Number.isFinite(limit) && limit > 0
+      ? { limit: Math.min(Math.trunc(limit), 100), offset: Math.max(0, Math.trunc(offset) || 0) }
+      : null;
+    const rows: any[] = db.chat.sessions(undefined, page ? page.limit + 1 : undefined, page ? page.offset : undefined);
+    const hasMore = !!page && rows.length > page.limit;
+    const sessions = (hasMore ? rows.slice(0, page.limit) : rows).map(toSession);
+    return sendJson(res, 200, { ok: true, hasMore, sessions });
   }
   if (req.method === 'POST' && pathname === '/api/sessions') {
     return handleCreateSession(req, res);

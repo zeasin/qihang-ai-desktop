@@ -76,7 +76,23 @@
   body.app-mode #composeView.active .float-back { display: flex; }
 
   /* 会话列表 */
+  #listView { position: relative; }
   #sessionList { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  /* 下拉刷新指示器：藏在顶栏下方，下拉时被拉出来 */
+  #ptrIndicator {
+    position: absolute; top: 0; left: 0; right: 0; height: 44px; margin-top: -44px;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    color: #64748b; font-size: 12px; z-index: 5; pointer-events: none;
+    transition: transform .25s;
+  }
+  .ptr-spinner {
+    display: none; width: 15px; height: 15px; border-radius: 50%;
+    border: 2px solid #cbd5e1; border-top-color: #2563eb;
+    animation: ptr-spin .8s linear infinite;
+  }
+  #ptrIndicator.refreshing .ptr-spinner { display: block; }
+  @keyframes ptr-spin { to { transform: rotate(360deg); } }
+  .load-more { padding: 14px 0 18px; text-align: center; color: #9ca3af; font-size: 12px; }
   .session {
     display: flex; flex-direction: column; gap: 4px; padding: 13px 16px;
     background: #fff; border-bottom: 1px solid #e5e7eb;
@@ -192,6 +208,7 @@
   <div class="topbar">
     <div class="title">对话</div>
   </div>
+  <div id="ptrIndicator"><span class="ptr-spinner"></span><span id="ptrText">下拉刷新</span></div>
   <div id="sessionList"></div>
   <button id="newChatBtn" class="fab">+</button>
 </div>
@@ -258,6 +275,9 @@
     token: localStorage.getItem(TOKEN_KEY) || '',
     name: localStorage.getItem(NAME_KEY) || '',
     sessions: [],
+    sessionsHasMore: false,
+    sessionsLoadingMore: false,
+    sessionsRefreshing: false,
     current: '',
     messages: [],
     streaming: false,
@@ -282,6 +302,8 @@
   var composeInput = document.getElementById('composeInput');
   var composeSendBtn = document.getElementById('composeSendBtn');
   var composeStatus = document.getElementById('composeStatus');
+  var ptrIndicator = document.getElementById('ptrIndicator');
+  var ptrText = document.getElementById('ptrText');
 
   function show(view) {
     [pairView, listView, chatView, composeView].forEach(function (el) { el.classList.remove('active'); });
@@ -397,12 +419,93 @@
     var hit = cachedProjects.filter(function (p) { return Number(p.id) === Number(session.projectId); })[0];
     return hit ? hit.name : ('项目 ' + session.projectId);
   }
+  var SESSIONS_PAGE_SIZE = 20;
+
+  // 首屏/下拉刷新：重置到第一页
   function loadSessions() {
-    return request('/api/sessions').then(function (data) {
+    state.sessionsRefreshing = true;
+    ptrText.textContent = '刷新中…';
+    ptrIndicator.classList.add('refreshing');
+    return request('/api/sessions?limit=' + SESSIONS_PAGE_SIZE + '&offset=0').then(function (data) {
       state.sessions = data.sessions || [];
+      state.sessionsHasMore = !!data.hasMore;
       renderSessions();
-    }).catch(function () {});
+    }).catch(function () {}).then(function () {
+      state.sessionsRefreshing = false;
+      ptrIndicator.classList.remove('refreshing');
+      setPull(0);
+    });
   }
+
+  // 上拉翻页：从已加载条数处继续取
+  function loadMoreSessions() {
+    if (state.sessionsLoadingMore || state.sessionsRefreshing || !state.sessionsHasMore) return;
+    state.sessionsLoadingMore = true;
+    renderSessions();
+    request('/api/sessions?limit=' + SESSIONS_PAGE_SIZE + '&offset=' + state.sessions.length).then(function (data) {
+      var more = data.sessions || [];
+      state.sessions = state.sessions.concat(more);
+      state.sessionsHasMore = !!data.hasMore && more.length > 0;
+      renderSessions();
+    }).catch(function () {}).then(function () {
+      state.sessionsLoadingMore = false;
+      renderSessions();
+    });
+  }
+
+  // ---------- 下拉刷新手势 ----------
+  var PTR_THRESHOLD = 60;
+  var ptr = { startY: 0, pulling: false, dist: 0 };
+
+  function setPull(px) {
+    ptrIndicator.style.transition = px > 0 ? 'none' : '';
+    ptrIndicator.style.transform = 'translateY(' + px + 'px)';
+  }
+
+  sessionListEl.addEventListener('touchstart', function (e) {
+    if (sessionListEl.scrollTop <= 0 && !state.sessionsRefreshing) {
+      ptr.startY = e.touches[0].clientY;
+      ptr.pulling = true;
+      ptr.dist = 0;
+    }
+  }, { passive: true });
+
+  sessionListEl.addEventListener('touchmove', function (e) {
+    if (!ptr.pulling) return;
+    var d = e.touches[0].clientY - ptr.startY;
+    if (d <= 0) {
+      ptr.dist = 0;
+      setPull(0);
+      ptrText.textContent = '下拉刷新';
+      return;
+    }
+    // 阻尼：越拉越费劲，最多 110px
+    ptr.dist = Math.min(d * 0.5, 110);
+    setPull(ptr.dist);
+    ptrText.textContent = ptr.dist >= PTR_THRESHOLD ? '松开刷新' : '下拉刷新';
+  }, { passive: true });
+
+  function ptrRelease() {
+    if (!ptr.pulling) return;
+    ptr.pulling = false;
+    if (ptr.dist >= PTR_THRESHOLD) {
+      setPull(44);
+      loadSessions();
+    } else {
+      setPull(0);
+    }
+    ptr.dist = 0;
+  }
+  sessionListEl.addEventListener('touchend', ptrRelease);
+  sessionListEl.addEventListener('touchcancel', ptrRelease);
+
+  // 滚动到底部附近自动加载下一页
+  sessionListEl.addEventListener('scroll', function () {
+    if (!state.sessionsHasMore || state.sessionsLoadingMore || state.sessionsRefreshing) return;
+    if (sessionListEl.scrollTop + sessionListEl.clientHeight >= sessionListEl.scrollHeight - 200) {
+      loadMoreSessions();
+    }
+  });
 
   function timeLabel(value) {
     if (!value) return '';
@@ -461,6 +564,17 @@
       item.addEventListener('click', function () { openSession(s.sessionId, s.title); });
       sessionListEl.appendChild(item);
     });
+    if (state.sessionsLoadingMore) {
+      var more = document.createElement('div');
+      more.className = 'load-more';
+      more.textContent = '加载中…';
+      sessionListEl.appendChild(more);
+    } else if (!state.sessionsHasMore && state.sessions.length > SESSIONS_PAGE_SIZE) {
+      var end = document.createElement('div');
+      end.className = 'load-more';
+      end.textContent = '没有更多了';
+      sessionListEl.appendChild(end);
+    }
   }
 
   // 新建对话页：先选项目/模型，收到第一条消息并点发送时才创建会话
