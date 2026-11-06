@@ -62,6 +62,13 @@
   .session .name { font-size: 15px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .session .time { font-size: 11px; color: #9ca3af; flex-shrink: 0; }
   .session .preview { font-size: 12px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session .meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .session .meta .preview { flex: 1; min-width: 0; }
+  .session .proj {
+    font-size: 11px; color: #6b7280; background: #f3f4f6; border-radius: 6px;
+    padding: 1px 6px; flex-shrink: 0; max-width: 46%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .session .tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: #eff6ff; color: #2563eb; flex-shrink: 0; }
   .session .tag.mobile { background: #ecfdf5; color: #059669; }
   .empty { padding: 48px 24px; text-align: center; color: #9ca3af; font-size: 13px; line-height: 1.8; }
@@ -97,6 +104,43 @@
   .composer textarea:focus { border-color: #2563eb; }
   .composer .send { width: 62px; height: 42px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; font-size: 14px; font-weight: 600; }
   .composer .send:disabled { background: #93c5fd; }
+
+  /* 新建对话页：参考桌面端 NewChatView 的居中问候 + 卡片式输入框 */
+  #composeView { background: #f8fafc; display: flex; flex-direction: column; }
+  .nc-body {
+    flex: 1; display: flex; flex-direction: column; justify-content: center;
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom)); overflow-y: auto;
+  }
+  .nc-hero { text-align: center; margin-bottom: 22px; }
+  .nc-mark { font-size: 54px; line-height: 1; opacity: 0.18; }
+  .nc-greet { margin: 10px 0 0; font-size: 20px; font-weight: 500; color: #111827; letter-spacing: .01em; }
+  .nc-card {
+    width: 100%; background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, .06); display: flex; flex-direction: column;
+  }
+  .nc-card:focus-within { border-color: #2563eb; }
+  .nc-top { padding: 10px 12px 0; display: flex; align-items: center; gap: 4px; }
+  .nc-pick-wrap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #6b7280; }
+  .nc-pick {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent;
+    font: inherit; font-size: 12.5px; font-weight: 500; color: #6b7280;
+    outline: none; max-width: 240px; cursor: pointer;
+  }
+  .nc-pick:focus { color: #111827; }
+  .nc-textarea {
+    width: 100%; border: 0; outline: none; resize: none; background: transparent;
+    font: inherit; font-size: 15px; line-height: 1.7; color: #111827;
+    padding: 10px 14px 4px; min-height: 84px;
+  }
+  .nc-textarea::placeholder { color: #9ca3af; }
+  .nc-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 10px; }
+  .nc-sp { flex: 1; }
+  .nc-send {
+    width: 36px; height: 36px; border: 0; border-radius: 50%; background: #2563eb; color: #fff;
+    font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .nc-send:disabled { opacity: .4; }
+  #composeStatus { min-height: 16px; margin-top: 10px; text-align: center; font-size: 12px; color: #64748b; }
 </style>
 </head>
 <body>
@@ -142,6 +186,36 @@
   </div>
 </div>
 
+<!-- 新建对话（独立页面）：参考桌面端布局，选项目/模型 + 首条消息，发送后才创建会话 -->
+<div id="composeView" class="screen">
+  <div class="topbar">
+    <button id="composeBackBtn" class="icon-btn">‹</button>
+    <div class="title">新建对话</div>
+  </div>
+  <div class="nc-body">
+    <div class="nc-hero">
+      <div class="nc-mark">⛵</div>
+      <h1 class="nc-greet" id="composeGreeting">开始新对话</h1>
+    </div>
+    <div class="nc-card">
+      <div class="nc-top">
+        <span class="nc-pick-wrap">📁
+          <select id="projectSelect" class="nc-pick"></select>
+        </span>
+      </div>
+      <textarea id="composeInput" class="nc-textarea" rows="3" placeholder="描述这次对话要做的事，Enter 发送…"></textarea>
+      <div class="nc-bar">
+        <span class="nc-pick-wrap">
+          <select id="modelSelect" class="nc-pick"></select>
+        </span>
+        <span class="nc-sp"></span>
+        <button id="composeSendBtn" class="nc-send" disabled>↑</button>
+      </div>
+    </div>
+    <div id="composeStatus"></div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -171,9 +245,15 @@
   var sendBtn = document.getElementById('sendBtn');
   var chatTitleEl = document.getElementById('chatTitle');
   var pairErrorEl = document.getElementById('pairError');
+  var projectSelect = document.getElementById('projectSelect');
+  var modelSelect = document.getElementById('modelSelect');
+  var composeView = document.getElementById('composeView');
+  var composeInput = document.getElementById('composeInput');
+  var composeSendBtn = document.getElementById('composeSendBtn');
+  var composeStatus = document.getElementById('composeStatus');
 
   function show(view) {
-    [pairView, listView, chatView].forEach(function (el) { el.classList.remove('active'); });
+    [pairView, listView, chatView, composeView].forEach(function (el) { el.classList.remove('active'); });
     view.classList.add('active');
   }
 
@@ -251,10 +331,25 @@
     state.stopped = false;
     show(listView);
     loadSessions();
+    loadProjects();
     connectEvents();
   }
 
   // ---------- 会话 ----------
+  var cachedProjects = [];
+
+  function loadProjects() {
+    return request('/api/projects').then(function (data) {
+      cachedProjects = data.projects || [];
+      renderSessions();
+    }).catch(function () {});
+  }
+
+  function projectNameOf(session) {
+    if (session.projectId === null || session.projectId === undefined) return '';
+    var hit = cachedProjects.filter(function (p) { return Number(p.id) === Number(session.projectId); })[0];
+    return hit ? hit.name : ('项目 ' + session.projectId);
+  }
   function loadSessions() {
     return request('/api/sessions').then(function (data) {
       state.sessions = data.sessions || [];
@@ -301,27 +396,122 @@
         tag.textContent = s.source === 'mobile' ? '手机' : (s.source === 'feishu' ? '飞书' : '桌面');
         row1.appendChild(tag);
       }
+      var meta = document.createElement('div');
+      meta.className = 'meta';
+      var projName = projectNameOf(s);
+      if (projName) {
+        var proj = document.createElement('span');
+        proj.className = 'proj';
+        proj.textContent = '📁 ' + projName;
+        meta.appendChild(proj);
+      }
       var preview = document.createElement('div');
       preview.className = 'preview';
       preview.textContent = (s.lastMessage || '').replace(/\s+/g, ' ').slice(0, 60) || '暂无消息';
+      meta.appendChild(preview);
       item.appendChild(row1);
-      item.appendChild(preview);
+      item.appendChild(meta);
       item.addEventListener('click', function () { openSession(s.sessionId, s.title); });
       sessionListEl.appendChild(item);
     });
   }
 
-  document.getElementById('newChatBtn').addEventListener('click', function () {
-    postJson('/api/sessions', { title: '新对话' }).then(function (data) {
-      var s = data.session;
-      state.sessions.unshift(s);
-      renderSessions();
-      openSession(s.sessionId, s.title);
-    }).catch(function (e) { alert(e.message || '创建失败'); });
+  // 新建对话页：先选项目/模型，收到第一条消息并点发送时才创建会话
+  function loadCreateOptions() {
+    return Promise.all([
+      request('/api/projects').then(function (d) { return d.projects || []; }).catch(function () { return []; }),
+      request('/api/models').then(function (d) { return d.models || []; }).catch(function () { return []; })
+    ]).then(function (r) {
+      var projects = r[0] || [];
+      var models = r[1] || [];
+      projectSelect.innerHTML = '<option value="">不绑定项目</option>';
+      projects.forEach(function (p) {
+        var opt = document.createElement('option');
+        opt.value = String(p.id);
+        opt.textContent = p.name + (p.isDefault ? '（默认）' : '');
+        projectSelect.appendChild(opt);
+      });
+      var def = projects.filter(function (p) { return p.isDefault; })[0];
+      if (def) projectSelect.value = String(def.id);
+
+      modelSelect.innerHTML = '<option value="">默认模型</option>';
+      models.forEach(function (m) {
+        var opt = document.createElement('option');
+        opt.value = m.pattern;
+        opt.textContent = (m.providerLabel ? m.providerLabel + ' · ' : '') + (m.name || m.pattern);
+        modelSelect.appendChild(opt);
+      });
+    });
+  }
+
+  var composeBusy = false;
+
+  function enterCompose() {
+    composeInput.value = '';
+    composeInput.style.height = 'auto';
+    composeStatus.textContent = '';
+    composeSendBtn.disabled = true;
+    composeBusy = false;
+    // 问候语与桌面端 NewChatView 保持一致
+    var hour = new Date().getHours();
+    document.getElementById('composeGreeting').textContent =
+      hour < 6 ? '夜深啦，别忘了照顾好自己哦'
+      : hour < 12 ? '早上好，准备好开始今天了吗'
+      : hour < 14 ? '中午好，劳逸结合更重要'
+      : hour < 18 ? '下午好，继续保持节奏'
+      : '晚上好，今天辛苦了';
+    projectSelect.innerHTML = '<option value="">不绑定项目</option>';
+    modelSelect.innerHTML = '<option value="">默认模型</option>';
+    show(composeView);
+    setTimeout(function () { composeInput.focus(); }, 60);
+    loadCreateOptions();
+  }
+
+  document.getElementById('newChatBtn').addEventListener('click', enterCompose);
+  document.getElementById('composeBackBtn').addEventListener('click', function () { show(listView); });
+
+  composeInput.addEventListener('input', function () {
+    composeInput.style.height = 'auto';
+    composeInput.style.height = Math.min(120, composeInput.scrollHeight) + 'px';
+    composeSendBtn.disabled = !composeInput.value.trim() || composeBusy;
   });
+  composeInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitCompose();
+    }
+  });
+  composeSendBtn.addEventListener('click', submitCompose);
+
+  function submitCompose() {
+    var text = composeInput.value.trim();
+    if (!text || composeBusy) return;
+    composeBusy = true;
+    composeSendBtn.disabled = true;
+    composeStatus.textContent = '正在创建对话…';
+    var title = text.length > 24 ? text.slice(0, 24) + '…' : text;
+    var payload = { title: title };
+    if (projectSelect.value) payload.projectId = Number(projectSelect.value);
+    if (modelSelect.value) payload.modelId = modelSelect.value;
+    postJson('/api/sessions', payload).then(function (data) {
+      var s = data.session;
+      composeBusy = false;
+      state.sessions.unshift(s);
+      // 新会话还没有任何消息，直接进聊天页并发送首条消息（此时才真正落库）
+      openSession(s.sessionId, s.title, true);
+      inputEl.value = text;
+      resizeInput();
+      sendMessage();
+      loadSessions();
+    }).catch(function (e) {
+      composeBusy = false;
+      composeSendBtn.disabled = false;
+      composeStatus.textContent = e.message || '创建失败';
+    });
+  }
 
   // ---------- 聊天 ----------
-  function openSession(sessionId, title) {
+  function openSession(sessionId, title, skipLoad) {
     state.current = sessionId;
     state.messages = [];
     state.live = null;
@@ -333,7 +523,7 @@
     resizeInput();
     updateSendState();
     show(chatView);
-    loadMessages();
+    if (!skipLoad) loadMessages();
   }
 
   document.getElementById('backBtn').addEventListener('click', function () {

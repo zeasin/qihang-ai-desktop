@@ -12,6 +12,7 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { app } from 'electron';
 import * as db from '../services/database';
+import { listPiModels } from '../services/pi-agent';
 import logger from '../services/logger';
 
 const BIND_HOST = '127.0.0.1';
@@ -235,9 +236,14 @@ async function handlePair(req: http.IncomingMessage, res: http.ServerResponse): 
 async function handleCreateSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await readBody(req);
   const title = String(body?.title || '').trim().slice(0, 60) || '新对话';
+  // 移动端新建对话时选定项目与模型：项目决定 AI 的工作目录/可用工具，模型决定这一轮用哪个接入点
+  const projectNum = Number(body?.projectId);
+  const projectId = Number.isFinite(projectNum) ? Math.trunc(projectNum) : null;
+  const modelId = String(body?.modelId || '').trim();
   const sid = 'mobile_' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
-  const row = db.chat.createSession(sid, null, title, 'general', 'pi', 'mobile');
-  sendJson(res, 200, { ok: true, session: toSession(row) });
+  db.chat.createSession(sid, projectId, title, 'general', 'pi', 'mobile');
+  if (modelId) db.chat.updateSessionModel(sid, modelId);
+  sendJson(res, 200, { ok: true, session: toSession(db.chat.getSession(sid)) });
 }
 
 async function handleSendMessage(
@@ -332,6 +338,24 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/api/projects') {
+    const projects = db.project.list().map((p: any) => ({
+      id: Number(p.id),
+      name: p.name,
+      dir: p.dir || '',
+      isDefault: !!p.is_default,
+    }));
+    return sendJson(res, 200, { ok: true, projects });
+  }
+  if (req.method === 'GET' && pathname === '/api/models') {
+    const result = await listPiModels();
+    const models = (result.models || []).map((m: any) => ({
+      pattern: m.pattern,
+      name: m.name,
+      providerLabel: m.providerLabel || m.provider || '',
+    }));
+    return sendJson(res, 200, { ok: true, models, error: result.error });
+  }
   if (req.method === 'GET' && pathname === '/api/sessions') {
     return sendJson(res, 200, { ok: true, sessions: db.chat.sessions(undefined).map(toSession) });
   }

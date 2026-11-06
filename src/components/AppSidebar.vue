@@ -65,6 +65,7 @@
           >
             <AppIcon name="message-square" :size="13" class="l-ic" />
             <span v-if="s.source === 'feishu'" class="fs-badge" title="来自飞书">飞书</span>
+            <span v-else-if="s.source === 'mobile'" class="fs-badge" title="来自移动端">手机</span>
             <span class="nm">{{ s.title || '新对话' }}</span>
             <span class="tm">{{ fmtRelTime(s) }}</span>
             <button class="leaf-del" title="删除对话" @click.stop="removeSession(s)">×</button>
@@ -293,13 +294,14 @@ async function removeSession(s: any) {
 
 async function loadChatTree() {
   try {
-    const [ui, feishu] = await Promise.all([
+    const [ui, feishu, mobile] = await Promise.all([
       API.chat.getSessionsBySource('ui'),
       API.chat.getSessionsBySource('feishu'),
+      API.chat.getSessionsBySource('mobile'),
     ]);
     // 与 ChatView 同一口径：ui 来源的 kb 模式后台会话不进树
-    sessions.value = [...(ui || []), ...(feishu || [])].filter(
-      (s: any) => s.source === 'feishu' || s.mode === 'general' || !s.project_id,
+    sessions.value = [...(ui || []), ...(feishu || []), ...(mobile || [])].filter(
+      (s: any) => s.source === 'feishu' || s.source === 'mobile' || s.mode === 'general' || !s.project_id,
     );
   } catch { sessions.value = []; }
   try { projects.value = (await API.project.list()) || []; } catch { projects.value = []; }
@@ -367,7 +369,7 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   refreshAll();
-  timer = window.setInterval(refreshAll, 60_000);
+  timer = window.setInterval(refreshAll, 5_000);
   document.addEventListener('click', onDocClick);
   document.addEventListener('keydown', onKeydown);
   // ChatView 选定会话后广播，同步树上的当前会话高亮

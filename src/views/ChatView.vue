@@ -336,13 +336,14 @@ async function onGateReady() {
 
 async function loadSessions() {
   try {
-    // 统一收件箱：UI 发起 + 飞书发起的会话合并展示（飞书会话带「飞书」徽标）。
+    // 统一收件箱：UI 发起 + 飞书发起 + 移动端发起的会话合并展示。
     // ui 来源的 kb 模式会话（后台任务会话）仍按原规则排除。
-    const [ui, feishu] = await Promise.all([
+    const [ui, feishu, mobile] = await Promise.all([
       API.chat.getSessionsBySource('ui'),
       API.chat.getSessionsBySource('feishu'),
+      API.chat.getSessionsBySource('mobile'),
     ]);
-    const all = [...(ui || []), ...(feishu || [])];
+    const all = [...(ui || []), ...(feishu || []), ...(mobile || [])];
     sessions.value = all.filter((s: any) => s.source === 'feishu' || s.mode === 'general' || !s.project_id);
   } catch { sessions.value = []; }
 }
