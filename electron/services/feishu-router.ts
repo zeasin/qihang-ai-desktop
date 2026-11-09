@@ -335,17 +335,18 @@ export function projectDirOf(project: any): string {
 // 仅存于内存（30 分钟过期）——飞书侧对话在桌面进程存活期间连续发生。
 
 const PENDING_BODY_TTL = 30 * 60 * 1000;
-const pendingBodies = new Map<string, { text: string; at: number }>();
+// images：图片消息挂起时随正文一并暂存，用户选定项目后图片才能跟着执行
+const pendingBodies = new Map<string, { text: string; images?: any[]; at: number }>();
 /** 机器人已就本会话问过「落哪个项目」——允许用户只回一个裸数字 */
 const askedChoice = new Map<string, number>();
 
-export function stashPendingBody(chatId: string, text: string): void {
-  if (!chatId || !text) return;
+export function stashPendingBody(chatId: string, text: string, images?: any[]): void {
+  if (!chatId || (!text && !(images && images.length))) return;
   const now = Date.now();
   for (const [k, v] of pendingBodies) {
     if (now - v.at > PENDING_BODY_TTL) pendingBodies.delete(k);
   }
-  pendingBodies.set(chatId, { text, at: now });
+  pendingBodies.set(chatId, { text, images, at: now });
 }
 
 /** 该会话是否有待指派的正文（机器人刚问过「落哪个项目」） */
@@ -377,14 +378,14 @@ export function clearAskedChoice(chatId: string): void {
   if (chatId) askedChoice.delete(chatId);
 }
 
-/** 取出并清除某会话待指派的正文；没有或已过期返回 null */
-export function takePendingBody(chatId: string): string | null {
+/** 取出并清除某会话待指派的正文（含随行图片）；没有或已过期返回 null */
+export function takePendingBody(chatId: string): { text: string; images?: any[] } | null {
   if (!chatId) return null;
   const v = pendingBodies.get(chatId);
   if (!v) return null;
   pendingBodies.delete(chatId);
   if (Date.now() - v.at > PENDING_BODY_TTL) return null;
-  return v.text;
+  return { text: v.text || '', images: v.images };
 }
 
 /** 查某会话当前绑定的项目 id；没有绑定返回 null */

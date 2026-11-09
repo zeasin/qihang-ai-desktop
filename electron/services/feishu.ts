@@ -41,6 +41,54 @@ function getWebhook() {
   return webhookUrl;
 }
 
+// ========== 图片消息解析 ==========
+
+/** 按文件头识别图片 MIME（飞书图片资源不带类型信息，统一靠魔数嗅探，兜底 jpeg） */
+function sniffImageMime(buf: Buffer): string {
+  if (!buf || buf.length < 12) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+  return 'image/jpeg';
+}
+
+/**
+ * 下载消息里的图片资源，转成桌面端/移动端同款 {data, mimeType}（data 为不带前缀 base64）。
+ * 下载失败返回 null：上层按无图处理并保留文本，不让整条消息卡死。
+ */
+async function downloadMessageImage(messageId: string, fileKey: string): Promise<{ data: string; mimeType: string } | null> {
+  if (!client || !messageId || !fileKey) return null;
+  try {
+    const res: any = await client.im.messageResource.get({
+      path: { message_id: messageId, file_key: fileKey },
+      params: { type: 'image' },
+    });
+    const stream = res && typeof res.getReadableStream === 'function' ? res.getReadableStream() : null;
+    if (!stream) {
+      logger.warn('[Feishu] Image resource returned no stream: messageId=%s', messageId);
+      return null;
+    }
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      stream.on('data', (c: Buffer) => chunks.push(c));
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+    const buf = Buffer.concat(chunks);
+    if (!buf.length) {
+      logger.warn('[Feishu] Image resource empty: messageId=%s', messageId);
+      return null;
+    }
+    const mimeType = sniffImageMime(buf);
+    logger.info('[Feishu] Image downloaded: %s bytes, type=%s', buf.length, mimeType);
+    return { data: buf.toString('base64'), mimeType };
+  } catch (e: any) {
+    logger.error('[Feishu] Download image failed: %s', e?.message || e);
+    return null;
+  }
+}
+
 // ========== Event Subscription via SDK (WebSocket long connection) ==========
 
 async function start(configData, onMessage) {
@@ -93,19 +141,31 @@ async function start(configData, onMessage) {
             const chatType = message.chat_type || 'p2p';
             const messageId = message.message_id || '';
             logger.info('[Feishu] Parsed message - text: "%s", openId: %s, chatId: %s, chatType: %s, messageId: %s', text.slice(0, 200), openId, chatId, chatType, messageId);
-            logger.info('[Feishu] Receive check: text=%s openId=%s chatType=%s hasHandler=%s', !!text, !!openId, chatType, !!messageHandler);
-            if (text && openId && messageHandler) {
+
+            // 图片消息：content 是 {"image_key":"..."}，没有 text；下载后随消息一起下发
+            const msgType = message.msg_type || message.message_type || '';
+            let images: Array<{ data: string; mimeType: string }> | undefined;
+            if (msgType === 'image' && content.image_key) {
+              logger.info('[Feishu] Image message received, downloading: messageId=%s', messageId);
+              const img = await downloadMessageImage(messageId, content.image_key);
+              if (img) images = [img];
+              else logger.warn('[Feishu] Image download failed, message will be handled without image');
+            }
+
+            logger.info('[Feishu] Receive check: text=%s images=%s openId=%s chatType=%s hasHandler=%s', !!text, !!(images && images.length), !!openId, chatType, !!messageHandler);
+            if ((text || (images && images.length)) && openId && messageHandler) {
               const cleaned = text.replace(/@_user_\d+/g, '').trim();
-              logger.info('[Feishu] Dispatching to messageHandler: "%s"', cleaned);
+              logger.info('[Feishu] Dispatching to messageHandler: "%s" (images=%s)', cleaned, images ? images.length : 0);
               messageHandler({
                 text: cleaned,
+                images,
                 sender: openId,
                 chatId: chatId,
                 chatType: chatType,
                 messageId: messageId,
               });
             } else {
-              logger.warn('[Feishu] Missing text/openId/handler: text=%s, openId=%s, handler=%s', !!text, !!openId, !!messageHandler);
+              logger.warn('[Feishu] Missing text/images/openId/handler: text=%s, images=%s, openId=%s, handler=%s', !!text, !!(images && images.length), !!openId, !!messageHandler);
             }
           } catch (e) {
             logger.error('[Feishu] Event handler error: %s', e.message);

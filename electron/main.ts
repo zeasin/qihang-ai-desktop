@@ -400,6 +400,9 @@ const feishuMessageHandler = async (msg) => {
   logger.info(' 内容: %s', msg.text);
   logger.info(' ChatId: %s', msg.chatId);
   logger.info('═══════════════════════════════════════');
+  // 图片消息：feishu.ts 已下载好，随消息一起进入对话（落库 + 发给模型）
+  const msgImages: any[] = Array.isArray(msg.images) && msg.images.length ? msg.images : [];
+  if (msgImages.length) logger.info(' 图片: %s 张', msgImages.length);
   if (msg.chatId) feishuChatTypes.set(msg.chatId, msg.chatType || 'p2p');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -535,9 +538,11 @@ const feishuMessageHandler = async (msg) => {
         }
         feishuRunningSessions.add(followupSid);
         // 飞书续聊的问题也要在桌面正在看的会话里即时出气泡（chat:done 会整段重拉兜底）
-        sendToRenderer('chat:remote', { sessionId: followupSid, title: followSession.title || '', text: cmd });
+        const followQuestion = cmd || (msgImages.length ? '请查看这张图片' : '');
+        sendToRenderer('chat:remote', { sessionId: followupSid, title: followSession.title || '', text: followQuestion });
         emitChatEvent('chat:status', { sessionId: followupSid, text: '飞书追加追问' });
-        const ok = await followUpFeishuSession(followupSid, cmd, db, {
+        const ok = await followUpFeishuSession(followupSid, followQuestion, db, {
+          images: msgImages.length ? msgImages : undefined,
           onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: followupSid, text: delta }),
           onTool: (toolEvent: any) => emitChatEvent('chat:tool', { sessionId: followupSid, ...toolEvent }),
           onDone: (text, meta) => {
@@ -582,7 +587,8 @@ const feishuMessageHandler = async (msg) => {
       // 注意措辞不是「继续对话」：点它只是沿用绑定的项目执行本条消息，仍会新开会话；
       // 真正接着原会话聊的是结果卡片的「💬 接着问」按钮（continue_task）。
       const pendingBody = String(target.cleanText || '').trim();
-      if (pendingBody && !/^\d{1,4}$/.test(pendingBody)) stashPendingBody(msg.chatId, pendingBody);
+      // 图片消息（可能没有正文）也要挂起：用户选定项目后图片才能跟着执行
+      if ((pendingBody || msgImages.length) && !/^\d{1,4}$/.test(pendingBody)) stashPendingBody(msg.chatId, pendingBody, msgImages);
       markAskedChoice(msg.chatId);
       const boundId = boundProjectId(db, msg.chatId);
       const boundProj = boundId ? db.project.get(boundId) : null;
@@ -604,10 +610,16 @@ const feishuMessageHandler = async (msg) => {
     const projectDir = String(feishuProject.dir || '');
     clearAskedChoice(msg.chatId);   // 项目已确定，不再处于「等待选择」状态
 
-    // 正文：命令里带了正文就用它；只给了「/项目 N」则执行上一条被挂起的消息
-    const stashedBody = msg.chatId ? takePendingBody(msg.chatId) : null;
+    // 正文：命令里带了正文就用它；只给了「/项目 N」则执行上一条被挂起的消息（含随行图片）
+    const stashed = msg.chatId ? takePendingBody(msg.chatId) : null;
     let bodyText = String(target.cleanText || '').trim();
-    if (!bodyText) bodyText = stashedBody || '';
+    let turnImages: any[] = msgImages;
+    if (!bodyText && stashed) {
+      bodyText = String(stashed.text || '').trim();
+      if (stashed.images && stashed.images.length) turnImages = stashed.images;
+    }
+    // 纯图片消息：给模型一个明确的指令行，图片本体随 runPi 的 images 传入
+    if (!bodyText && turnImages.length) bodyText = '请查看这张图片，并结合项目上下文处理。';
     if (!bodyText) {
       // 纯项目切换命令且没有待执行正文 → 回一句确认绑定结果即可
       feishu.replyCard(
@@ -630,7 +642,7 @@ const feishuMessageHandler = async (msg) => {
     // 对话页合并展示并带「飞书」徽标；任务页从此只保留后台调度任务。
     const sessionId = 'feishu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     db.chat.createSession(sessionId, feishuProjectId, bodyText.slice(0, 30), 'kb', 'pi', 'feishu', msg.chatId || '');
-    db.chat.addMessage(sessionId, 'user', bodyText, 'general');
+    db.chat.addMessage(sessionId, 'user', bodyText, 'general', turnImages.length ? turnImages : undefined);
     feishuRunningSessions.add(sessionId);
     activeSessionId = sessionId;
     logger.info(' SessionId: %s | project: %s (%s)', sessionId, feishuProject.name, feishuProjectId);
@@ -653,6 +665,7 @@ const feishuMessageHandler = async (msg) => {
       sessionId,
       cwd: projectDir || undefined,
       customTools: toolDefs,
+      images: turnImages.length ? turnImages : undefined,
       // 不设超时（2026-10-31 用户决策）：300 秒硬超时会掐断活跃的长任务——
       // 曾把「查 4 个数据集 + 读笔记」任务干到一半的旁白当结果发出（[PiAgent] timeout 300000ms）。
       // 代价：模型限流(429)无限退避时会一直挂着，飞书端等不到回应；对话页列表会一直显示 ⏳。

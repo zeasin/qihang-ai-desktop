@@ -45,6 +45,8 @@ export interface FollowupTurnOptions {
   originLabel?: string;
   /** 显式模型 pattern */
   model?: string;
+  /** 随本轮问题一起发给模型的图片（飞书/移动端图片消息续聊） */
+  images?: Array<{ data: string; mimeType: string }>;
   onDelta?: (delta: string) => void;
   onTool?: (t: any) => void;
   onDone?: (text: string, meta?: { incomplete?: boolean }) => void;
@@ -63,7 +65,7 @@ export async function runFollowupTurn(db: any, sessionId: string, question: stri
   const noteProj: any = project || db.qOne("SELECT * FROM prj_projects ORDER BY is_default DESC, id ASC LIMIT 1");
   const notesDir = projectDirOf(project) || (noteProj && noteProj.dir) || appConfig.getConfig('notesDir') || '';
 
-  db.chat.addMessage(sessionId, 'user', question, 'general');
+  db.chat.addMessage(sessionId, 'user', question, 'general', opts.images);
 
   let reply = '';
   const onDelta = (delta: string) => {
@@ -94,6 +96,7 @@ export async function runFollowupTurn(db: any, sessionId: string, question: stri
     cwd: notesDir || undefined,
     modelPattern: opts.model || undefined,
     customTools,
+    images: opts.images,
     // 不设超时（2026-10-31 用户决策）：300 秒硬超时会掐断活跃的长任务——
     // 曾把「查 4 个数据集 + 读笔记」任务干到一半的旁白当结果发出。
     // 代价：模型限流(429)无限退避时会一直挂着，需用户在界面主动停止。

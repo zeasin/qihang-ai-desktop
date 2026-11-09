@@ -7,6 +7,7 @@
 <title>启航AI工作台</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root { --tab-h: 56px; }
   html, body { margin: 0; height: 100%; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -60,15 +61,30 @@
   }
   .add-btn { background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 7px 12px; font-size: 13px; }
 
-  /* 右下角悬浮「新对话」按钮（挂在 app 里时顶栏隐藏，靠它新建对话） */
+  /* 右下角悬浮「新对话」按钮（挂在 app 里时顶栏隐藏，靠它新建对话）；底部导航常驻，故上移让位 */
   .fab {
-    position: fixed; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom));
+    position: fixed; right: 18px; bottom: calc(var(--tab-h) + 14px + env(safe-area-inset-bottom));
     width: 54px; height: 54px; border-radius: 50%; border: 0;
     background: #2563eb; color: #fff; font-size: 28px; font-weight: 300;
     display: flex; align-items: center; justify-content: center;
     box-shadow: 0 4px 14px rgba(37, 99, 235, .45); z-index: 30;
   }
   .fab:active { transform: scale(.94); }
+
+  /* 底部常驻导航（对话 / 笔记）：顶栏在 Android app 内嵌模式会隐藏，导航放底部保证可达 */
+  .tab-bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+    display: flex; background: #fff; border-top: 1px solid #e5e7eb;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tab-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    height: var(--tab-h); justify-content: center;
+    border: 0; background: transparent; color: #9ca3af; font-size: 11px; font-family: inherit;
+  }
+  .tab-item .tab-ico { font-size: 20px; line-height: 1; }
+  .tab-item.active { color: #2563eb; font-weight: 600; }
+  .tab-item:active { background: #f8fafc; }
 
   /* Android app 内嵌模式（?app=1）：app 自带顶栏，H5 隐藏黑栏，返回改为悬浮钮 */
   body.app-mode .topbar { display: none; }
@@ -82,11 +98,12 @@
     align-items: center; justify-content: center; z-index: 30;
   }
   body.app-mode #chatView.active .float-back,
-  body.app-mode #composeView.active .float-back { display: flex; }
+  body.app-mode #composeView.active .float-back,
+  body.app-mode #notesView.active .float-back { display: flex; }
 
   /* 会话列表 */
   #listView { position: relative; }
-  #sessionList { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #sessionList { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 8px); }
   /* 下拉刷新指示器：藏在顶栏下方，下拉时被拉出来 */
   #ptrIndicator {
     position: absolute; top: 0; left: 0; right: 0; height: 44px; margin-top: -44px;
@@ -249,7 +266,7 @@
   }
 
   /* 新建对话页：参考桌面端 NewChatView 的居中问候 + 卡片式输入框 */
-  #composeView { background: #f8fafc; display: flex; flex-direction: column; }
+  #composeView { background: #f8fafc; }
   .nc-body {
     flex: 1; display: flex; flex-direction: column; justify-content: center;
     padding: 24px 16px calc(24px + env(safe-area-inset-bottom)); overflow-y: auto;
@@ -284,6 +301,91 @@
   }
   .nc-send:disabled { opacity: .4; }
   #composeStatus { min-height: 16px; margin-top: 10px; text-align: center; font-size: 12px; color: #64748b; }
+
+  /* 笔记库：左侧树面板（项目条 + 搜索 + 可展开目录树）+ 右侧全屏阅读器。
+     打开文件后树面板收起到左侧，露出把手；顶部 ☰ 或把手随时唤回（不关闭文件）。 */
+  .notes-main {
+    flex: 1; display: flex; position: relative; overflow: hidden; min-height: 0; background: #fff;
+  }
+  .notes-pane {
+    position: absolute; left: 0; top: 0; bottom: 0; z-index: 2;
+    width: 100%; max-width: 560px;
+    display: flex; flex-direction: column; background: #fff; min-height: 0;
+    transition: transform .25s ease;
+  }
+  .notes-pane.collapsed { transform: translateX(-100%); }
+  .notes-proj-bar {
+    display: flex; gap: 8px; padding: 10px 14px 4px;
+    background: #fff; flex-shrink: 0;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .notes-proj-bar::-webkit-scrollbar { display: none; }
+  .notes-chip {
+    flex-shrink: 0; border: 0; border-radius: 14px; background: #f1f5f9;
+    color: #475569; font-size: 13px; padding: 5px 12px; font-family: inherit;
+    max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .notes-chip.active { background: #2563eb; color: #fff; }
+  .notes-query { padding: 8px 14px 10px; background: #fff; flex-shrink: 0; }
+  .notes-query input {
+    width: 100%; height: 38px; border: 1px solid #d1d5db; border-radius: 10px;
+    padding: 0 12px; font-size: 14px; outline: none; font-family: inherit; background: #f8fafc;
+  }
+  .notes-query input:focus { border-color: #2563eb; background: #fff; }
+  #notesList { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fff; }
+  .notes-row {
+    display: flex; align-items: center; gap: 8px; position: relative; user-select: none;
+    border-bottom: 1px solid #f1f5f9; background: #fff;
+  }
+  .notes-row.info-row { padding: 11px 14px; }
+  .notes-row.sub-row { padding: 11px 12px 11px 12px; }
+  .notes-row:active { background: #f1f5f9; }
+  .notes-row .icon { width: 24px; flex-shrink: 0; font-size: 15px; text-align: center; }
+  .notes-row .name { font-size: 14.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notes-row .name .ext { font-size: 11px; color: #9ca3af; margin-left: 4px; }
+  .notes-row .sub { font-size: 11px; color: #9ca3af; flex-shrink: 0; }
+  .notes-row .arrow { width: 14px; flex-shrink: 0; font-size: 10px; color: #94a3b8; transition: transform .18s ease; display: inline-block; }
+  .notes-row .arrow.open { transform: rotate(90deg); }
+  .notes-row .count { font-size: 10.5px; color: #9ca3af; flex-shrink: 0; min-width: 40px; text-align: right; }
+  .notes-children { display: none; background: #fbfcfe; }
+  .notes-children.open { display: block; }
+
+  /* 阅读器：打开文件时占满右侧全屏，顶部为阅读栏（‹ 关闭 | 文件名 | ☰ 唤回树） */
+  #notesReader {
+    flex: 1 1 auto; overflow: hidden;
+    display: flex; flex-direction: column; background: #fff;
+  }
+  .reader-hdr {
+    display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    background: #f8fafc; border-bottom: 1px solid #e5e7eb; flex-shrink: 0;
+  }
+  .reader-hdr .reader-title {
+    flex: 1; font-size: 15px; font-weight: 600; color: #111827;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .reader-hdr .icon-btn { color: #475569; }
+  #readerBody {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 14px 16px calc(var(--tab-h) + env(safe-area-inset-bottom) + 24px); background: #fff;
+  }
+  .reader-plain {
+    position: relative;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+    font-size: 12.5px; line-height: 1.6; background: #0f172a; color: #e2e8f0;
+    padding: 30px 14px 34px; border-radius: 8px; margin: 0 0 8px;
+  }
+  .reader-plain .copy-btn { position: absolute; top: 6px; right: 6px; }
+
+  /* 树收起时左侧露出的唤回把手 */
+  .notes-handle {
+    display: none; position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 96px; border-radius: 10px; background: #2563eb; color: #fff;
+    font-size: 15px; align-items: center; justify-content: center; z-index: 6;
+    writing-mode: vertical-rl; cursor: pointer;
+  }
+  .notes-handle.show { display: flex; }
 </style>
 </head>
 <body>
@@ -368,6 +470,39 @@
   </div>
 </div>
 
+<!-- 笔记库：左树面板（项目条 + 搜索 + 目录树，文件夹点按原地展开）+ 右全屏阅读器 -->
+<div id="notesView" class="screen">
+  <div class="topbar">
+    <button id="notesBackBtn" class="icon-btn">‹</button>
+    <div class="title" id="notesTitle">笔记库</div>
+  </div>
+  <button id="notesBackBtnFloat" class="float-back">‹</button>
+  <div class="notes-main">
+    <div id="notesPane" class="notes-pane">
+      <div id="notesProjBar" class="notes-proj-bar"></div>
+      <div class="notes-query">
+        <input id="notesQuery" type="search" placeholder="搜索笔记关键词…">
+      </div>
+      <div id="notesList"></div>
+    </div>
+    <div id="notesReader">
+      <div class="reader-hdr">
+        <button id="readerCloseBtn" class="icon-btn" type="button" title="关闭笔记">‹</button>
+        <div class="reader-title" id="readerTitle">笔记</div>
+        <button id="readerToggleBtn" class="icon-btn" type="button" title="展开/收起笔记树">☰</button>
+      </div>
+      <div id="readerBody"></div>
+    </div>
+  </div>
+  <div id="notesHandle" class="notes-handle" title="唤出笔记树">☰</div>
+</div>
+
+<!-- 底部常驻导航：仅会话列表/笔记库两个主屏显示（show() 控制），聊天/新建/配对页隐藏 -->
+<nav id="tabBar" class="tab-bar hidden">
+  <button id="tabList" class="tab-item active" type="button"><span class="tab-ico">💬</span>对话</button>
+  <button id="tabNotes" class="tab-item" type="button"><span class="tab-ico">📁</span>笔记</button>
+</nav>
+
 <!-- 模型切换弹层 -->
 <div id="modelSheet" class="sheet-mask">
   <div class="sheet">
@@ -423,6 +558,8 @@
   var pairView = document.getElementById('pairView');
   var listView = document.getElementById('listView');
   var chatView = document.getElementById('chatView');
+  var composeView = document.getElementById('composeView');
+  var notesView = document.getElementById('notesView');
   var sessionListEl = document.getElementById('sessionList');
   var messagesEl = document.getElementById('messages');
   var statusEl = document.getElementById('statusLine');
@@ -450,6 +587,22 @@
   var modelSheet = document.getElementById('modelSheet');
   var modelList = document.getElementById('modelList');
   var modelCancel = document.getElementById('modelCancel');
+  var tabBar = document.getElementById('tabBar');
+  var tabList = document.getElementById('tabList');
+  var tabNotes = document.getElementById('tabNotes');
+  var notesBackBtn = document.getElementById('notesBackBtn');
+  var notesBackBtnFloat = document.getElementById('notesBackBtnFloat');
+  var notesTitle = document.getElementById('notesTitle');
+  var notesProjBar = document.getElementById('notesProjBar');
+  var notesQuery = document.getElementById('notesQuery');
+  var notesList = document.getElementById('notesList');
+  var notesReader = document.getElementById('notesReader');
+  var notesPane = document.getElementById('notesPane');
+  var notesHandle = document.getElementById('notesHandle');
+  var readerBody = document.getElementById('readerBody');
+  var readerTitle = document.getElementById('readerTitle');
+  var readerCloseBtn = document.getElementById('readerCloseBtn');
+  var readerToggleBtn = document.getElementById('readerToggleBtn');
 
   // ---------- Markdown ----------
   function escHtml(s) {
@@ -535,8 +688,13 @@
   });
 
   function show(view) {
-    [pairView, listView, chatView, composeView].forEach(function (el) { el.classList.remove('active'); });
+    [pairView, listView, chatView, composeView, notesView].forEach(function (el) { el.classList.remove('active'); });
     view.classList.add('active');
+    // 底部导航只在两个主屏（会话列表 / 笔记库）常驻；聊天/新建/配对页隐藏
+    var onRoot = (view === listView || view === notesView);
+    tabBar.classList.toggle('hidden', !onRoot);
+    tabList.classList.toggle('active', view === listView);
+    tabNotes.classList.toggle('active', view === notesView);
   }
 
   // 进入聊天/新建页时压一条浏览器历史：Android app 返回手势/按键触发 webView.goBack()
@@ -547,6 +705,12 @@
   window.addEventListener('popstate', function () {
     show(listView);
     loadSessions();
+  });
+  // 从 bfcache 恢复时 DOM 是导航离开那一刻的冻结快照，可能与当前代码/状态不一致
+  // （曾出现笔记 tab 高亮却显示新建对话页的脏快照）；强制重载拿一份一致的新文档。
+  // persisted 仅在 bfcache 恢复时为 true，正常重载为 false，不会造成循环重载。
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted) location.reload();
   });
 
   // 页内返回钮：有历史则走 history.back()（保持历史栈一致），否则直接回列表
@@ -1331,40 +1495,74 @@
   var pendingImages = [];
 
   imgBtn.addEventListener('click', function () { imgInput.click(); });
+
+  // 有些安卓选图器返回的 file.type 为空：退回按扩展名判断，MIME 兜底 jpeg
+  function isImageFile(file) {
+    if (file.type && file.type.indexOf('image/') === 0) return true;
+    return /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(file.name || '');
+  }
+
+  function handleImageFile(file) {
+    if (!file) return;
+    if (!isImageFile(file)) { toast('请选择图片文件'); return; }
+    if (pendingImages.length >= MAX_PENDING_IMAGES) { toast('一次最多带 ' + MAX_PENDING_IMAGES + ' 张图'); return; }
+    compressImage(file, function (img) {
+      if (!img || !img.data) { toast('图片处理失败，请换一张试试'); return; }
+      pendingImages.push(img);
+      renderPending();
+      updateSendState();
+    });
+  }
+
   imgInput.addEventListener('change', function () {
     var files = [].slice.call(imgInput.files || []);
     imgInput.value = '';
-    files.forEach(function (file) {
-      if (!file.type || file.type.indexOf('image/') !== 0) return;
-      if (pendingImages.length >= MAX_PENDING_IMAGES) return;
-      compressImage(file, function (img) {
-        pendingImages.push(img);
-        renderPending();
-        updateSendState();
-      });
+    files.forEach(handleImageFile);
+  });
+
+  // 部分内嵌 WebView 不支持 <input type=file> 弹选择器：支持长按粘贴图片（截图/复制的图）
+  [inputEl, document.getElementById('messages')].forEach(function (el) {
+    el.addEventListener('paste', function (e) {
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      var picked = false;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file' && items[i].type.indexOf('image/') === 0) {
+          var f = items[i].getAsFile();
+          if (f) { handleImageFile(f); picked = true; }
+        }
+      }
+      if (picked) e.preventDefault();
     });
   });
 
-  // 压到最长边 1600、JPEG 0.85，控制 base64 体积
+  // 压到最长边 1600、JPEG 0.85，控制 base64 体积；解码/画布失败时退回原图 base64
   function compressImage(file, cb) {
     var reader = new FileReader();
+    reader.onerror = function () { cb(null); };
     reader.onload = function (e) {
       var dataUrl = String(e.target.result || '');
+      if (!dataUrl) { cb(null); return; }
       var img = new Image();
       img.onload = function () {
-        var MAX = 1600;
-        var scale = Math.min(1, MAX / Math.max(img.width, img.height));
-        var w = Math.round(img.width * scale);
-        var h = Math.round(img.height * scale);
-        var canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        var out = canvas.toDataURL('image/jpeg', 0.85);
-        cb({ data: out.split(',')[1] || '', mimeType: 'image/jpeg' });
+        try {
+          var MAX = 1600;
+          var scale = Math.min(1, MAX / Math.max(img.width, img.height));
+          var w = Math.round(img.width * scale);
+          var h = Math.round(img.height * scale);
+          var canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          var out = canvas.toDataURL('image/jpeg', 0.85);
+          cb({ data: out.split(',')[1] || '', mimeType: 'image/jpeg' });
+        } catch (err) {
+          // 画布异常（老内核/内存不足）：退回原图，MIME 兜底 jpeg
+          cb({ data: dataUrl.split(',')[1] || '', mimeType: file.type || 'image/jpeg' });
+        }
       };
       img.onerror = function () {
-        cb({ data: dataUrl.split(',')[1] || '', mimeType: file.type });
+        cb({ data: dataUrl.split(',')[1] || '', mimeType: file.type || 'image/jpeg' });
       };
       img.src = dataUrl;
     };
@@ -1506,6 +1704,397 @@
       scrollBottom();
     }
   }
+
+  // ---------- 笔记库 ----------
+  // 左侧树面板：文件夹点按原地展开（懒加载子层），文件点开 → 全屏阅读器，树收起到左侧；
+  // 阅读栏 ☰ 或左侧把手唤回树面板（不关闭文件）。
+  // 搜索从项目根目录全文检索（与桌面端一致），结果带相对路径，直接可点开。
+  var notes = {
+    projects: [],
+    dir: '',        // 当前笔记项目目录（绝对路径，来自 /api/projects）
+    projName: '笔记库',  // 当前笔记项目名（顶部标题）
+    searchTimer: null,
+    readerOpen: false
+  };
+
+  // 树面板收至左侧 / 唤回（阅读器是否打开不受影响）
+  function setPaneHidden(hidden) {
+    notesPane.classList.toggle('collapsed', hidden);
+    notesHandle.classList.toggle('show', hidden);
+  }
+
+  function toggleNotesPane() {
+    setPaneHidden(!notesPane.classList.contains('collapsed'));
+  }
+
+  function enterNotes() {
+    show(notesView);
+    pushScreen('notes');
+    notesTitle.textContent = notes.projName;
+    setPaneHidden(false);
+    if (notes.readerOpen) closeNoteReader();
+    notesQuery.value = '';
+    notesList.innerHTML = '';
+    notesList.appendChild(emptyNode('加载中…'));
+    loadNotesProjects();
+  }
+
+  // 关闭阅读器：文件留白、笔记树回到视野
+  function closeNoteReader() {
+    notes.readerOpen = false;
+    notesReader.classList.remove('show');
+    readerBody.innerHTML = '';
+    setPaneHidden(false);
+    notesTitle.textContent = notes.projName;
+    readerTitle.textContent = '笔记';
+  }
+
+  function resetNotes() {
+    notes.readerOpen = false;
+    notesQuery.value = '';
+    notesReader.classList.remove('show');
+    readerBody.innerHTML = '';
+    readerTitle.textContent = '笔记';
+  }
+
+  function loadNotesProjects() {
+    request('/api/projects').then(function (data) {
+      notes.projects = data.projects || [];
+      renderNotesProjects();
+    }).catch(function () {
+      notesList.innerHTML = '';
+      notesList.appendChild(emptyNode('加载笔记项目失败'));
+    });
+  }
+
+  function emptyNode(text) {
+    var d = document.createElement('div');
+    d.className = 'empty';
+    text.split('\n').forEach(function (line, i) {
+      if (i) d.appendChild(document.createElement('br'));
+      d.appendChild(document.createTextNode(line));
+    });
+    return d;
+  }
+
+  function renderNotesProjects() {
+    notesProjBar.innerHTML = '';
+    notesTitle.textContent = notes.projName;
+    if (notes.readerOpen) closeNoteReader();
+    if (!notes.projects.length) {
+      notes.dir = '';
+      resetNotes();
+      notesList.innerHTML = '';
+      notesList.appendChild(emptyNode('还没有笔记项目\n先在桌面端添加一个笔记项目'));
+      return;
+    }
+    notes.projects.forEach(function (p, i) {
+      var chip = document.createElement('button');
+      chip.className = 'notes-chip' + (i === 0 ? ' active' : '');
+      chip.type = 'button';
+      chip.textContent = p.name;
+      chip.addEventListener('click', function () { selectNotesProject(i); });
+      notesProjBar.appendChild(chip);
+    });
+    selectNotesProject(0);
+  }
+
+  function selectNotesProject(index) {
+    var p = notes.projects[index];
+    if (!p) return;
+    var chips = notesProjBar.children;
+    for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', i === index);
+    notes.projName = p.name || notes.projName;
+    notesTitle.textContent = notes.projName;
+    if (notes.readerOpen) closeNoteReader();
+    if (!p.dir) {
+      notes.dir = '';
+      resetNotes();
+      notesList.innerHTML = '';
+      notesList.appendChild(emptyNode('该项目没有可用目录'));
+      return;
+    }
+    notes.dir = p.dir;
+    resetNotes();
+    loadTreeRoot(notes.dir, notesList);
+  }
+
+  function loadTreeRoot(dir, host) {
+    host.innerHTML = '';
+    host.appendChild(notesHeader(dir));
+    host.appendChild(emptyNode('加载中…'));
+    request('/api/notes/tree?dir=' + encodeURIComponent(dir)).then(function (data) {
+      host.innerHTML = '';
+      host.appendChild(notesHeader(dir));
+      if (!data.entries.length) {
+        host.appendChild(emptyNode('这个目录是空的'));
+        return;
+      }
+      buildTree(host, notes.dir, '', data.entries, 0);
+    }).catch(function (e) {
+      host.innerHTML = '';
+      host.appendChild(notesHeader(dir));
+      host.appendChild(emptyNode(e.message || '读取目录失败'));
+    });
+  }
+
+  function notesHeader(dir) {
+    // 顶部信息行：当前笔记项目名 + 目录绝对路径（只展示，不再承担目录回退）
+    var h = document.createElement('div');
+    h.className = 'notes-row info-row';
+    var icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '🗂️';
+    var t = document.createElement('span');
+    t.className = 'name';
+    t.textContent = notes.projName || '笔记库';
+    var sub = document.createElement('span');
+    sub.className = 'sub';
+    sub.textContent = dir || '（未选择目录）';
+    h.appendChild(icon);
+    h.appendChild(t);
+    h.appendChild(sub);
+    return h;
+  }
+
+  // 目录树：文件夹懒加载子层，点按原地展开/收起；文件点开 → 全屏阅读器。
+  // rel 为相对项目根目录的路径；dirBase 为当前层实际目录（接口参数）。
+  function buildTree(host, dirBase, relBase, entries, depth) {
+    sortEntries(entries);
+    entries.forEach(function (e) {
+      var rel = relBase ? relBase + '/' + e.name : e.name;
+      var node = entryNode(e, rel, dirBase, depth);
+      host.appendChild(node.row);
+      if (node.wrap) host.appendChild(node.wrap);
+    });
+  }
+
+  function sortEntries(entries) {
+    entries.sort(function (a, b) {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  function fileNode(e, relPath, parentDir, depth) {
+    var row = document.createElement('div');
+    row.className = 'notes-row sub-row';
+    row.style.paddingLeft = (12 + depth * 14) + 'px';
+    var icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '📄';
+    var name = document.createElement('span');
+    name.className = 'name';
+    name.appendChild(document.createTextNode(e.name));
+    var extMatch = e.name.match(/\.[a-z0-9]+$/i);
+    if (extMatch) {
+      var ext = extMatch[0].toLowerCase();
+      // 文件名已带该扩展名时再贴一个 txt 标签反而重复（随手记.txt.txt），仅对无扩展名的补类型标签
+      var nameLower = e.name.toLowerCase();
+      if (nameLower.slice(-ext.length) !== ext) {
+        var extBadge = document.createElement('span');
+        extBadge.className = 'ext';
+        extBadge.textContent = ext.replace('.', '');
+        name.appendChild(extBadge);
+      }
+    }
+    row.appendChild(icon);
+    row.appendChild(name);
+    row.addEventListener('click', function () {
+      openNoteReader(relPath, parentDir, e.name);
+    });
+    return { row: row, wrap: null };
+  }
+
+  function entryNode(e, relPath, parentDir, depth) {
+    if (e.type !== 'folder') return fileNode(e, relPath, notes.dir, depth);
+    var row = document.createElement('div');
+    row.className = 'notes-row sub-row';
+    row.style.paddingLeft = (12 + depth * 14) + 'px';
+    var arrow = document.createElement('span');
+    arrow.className = 'arrow';
+    arrow.textContent = '▸';
+    var icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '📁';
+    var name = document.createElement('span');
+    name.className = 'name';
+    name.appendChild(document.createTextNode(e.name));
+    var count = document.createElement('span');
+    count.className = 'count';
+    row.appendChild(arrow);
+    row.appendChild(icon);
+    row.appendChild(name);
+    row.appendChild(count);
+
+    // 子层容器：收起时 display:none 但内容保留（再展开秒开，懒加载只会请求一次）
+    var wrap = document.createElement('div');
+    wrap.className = 'notes-children';
+    var loaded = false;
+
+    function expand() {
+      arrow.classList.add('open');
+      wrap.classList.add('open');
+      if (loaded) return;
+      loaded = true;
+      wrap.appendChild(emptyNode('加载中…'));
+      request('/api/notes/tree?dir=' + encodeURIComponent(parentDir + '/' + e.name))
+        .then(function (data) {
+          wrap.innerHTML = '';
+          count.textContent = data.entries.length + ' 项';
+          if (!data.entries.length) {
+            wrap.appendChild(emptyNode('（空文件夹）'));
+            return;
+          }
+          buildTree(wrap, parentDir + '/' + e.name, relPath, data.entries, depth + 1);
+        })
+        .catch(function (err) {
+          loaded = false;
+          wrap.innerHTML = '';
+          wrap.appendChild(emptyNode(err.message || '读取子目录失败'));
+        });
+    }
+
+    function collapse() {
+      arrow.classList.remove('open');
+      wrap.classList.remove('open');
+    }
+
+    row.addEventListener('click', function () {
+      if (wrap.classList.contains('open')) {
+        collapse();
+      } else {
+        expand();
+      }
+    });
+    return { row: row, wrap: wrap };
+  }
+
+  function openNoteReader(relPath, baseDir, name) {
+    // relPath 相对 baseDir；接口 dir 传 baseDir。打开后阅读器全屏、笔记树收起到左侧
+    var dir = baseDir || notes.dir;
+    notes.readerOpen = true;
+    notesTitle.textContent = name || '笔记';
+    readerTitle.textContent = name || '笔记';
+    readerBody.innerHTML = '';
+    readerBody.appendChild(emptyNode('加载中…'));
+    notesReader.classList.add('show');
+    setPaneHidden(true);
+    request('/api/notes/file?dir=' + encodeURIComponent(dir) + '&path=' + encodeURIComponent(relPath))
+      .then(function (data) {
+        readerBody.innerHTML = '';
+        readerTitle.textContent = data.name || name || '未命名';
+        var body;
+        if (data && (data.ext === '.md' || data.ext === '.markdown')) {
+          body = document.createElement('div');
+          body.className = 'content md';
+          body.innerHTML = mdRender(data.content);
+          decorateCode(body);
+        } else {
+          // 非 md：等宽纯文本整体展示，保留换行
+          body = document.createElement('div');
+          body.className = 'reader-plain';
+          body.textContent = data.content;
+          var copy = document.createElement('button');
+          copy.className = 'copy-btn';
+          copy.type = 'button';
+          copy.textContent = '复制全文';
+          body.appendChild(copy);
+        }
+        readerBody.appendChild(body);
+        readerBody.scrollTop = 0;
+      }).catch(function (e) {
+        notes.readerOpen = false;
+        readerBody.innerHTML = '';
+        readerBody.appendChild(emptyNode(e.message || '读取文件失败'));
+      });
+  }
+
+  function clearSearch() {
+    notesQuery.value = '';
+    loadTreeRoot(notes.dir, notesList);
+  }
+
+  function onNotesSearch() {
+    if (notes.searchTimer) clearTimeout(notes.searchTimer);
+    notes.searchTimer = setTimeout(doNotesSearch, 320);
+  }
+
+  function doNotesSearch() {
+    var q = notesQuery.value.trim();
+    // 搜索只针对项目根目录：与桌面端 ⌘K 一致，不随目录树展开收窄
+    var rootDir = notes.dir;
+    if (!rootDir) return;
+    if (notes.readerOpen) closeNoteReader();
+    if (!q) {
+      clearSearch();
+      return;
+    }
+    request('/api/notes/search?dir=' + encodeURIComponent(rootDir) + '&q=' + encodeURIComponent(q)).then(function (data) {
+      notesList.innerHTML = '';
+      var h = document.createElement('div');
+      h.className = 'notes-row info-row';
+      var t = document.createElement('span');
+      t.className = 'name';
+      t.textContent = '搜索结果';
+      var count = document.createElement('span');
+      count.className = 'sub';
+      count.textContent = '关键词「' + q + '」命中 ' + (data.results || []).length + ' 条';
+      h.appendChild(t);
+      h.appendChild(count);
+      notesList.appendChild(h);
+      if (!data.results.length) {
+        notesList.appendChild(emptyNode('没有匹配的笔记\n换个关键词试试'));
+        return;
+      }
+      data.results.forEach(function (r) {
+        // r.path 相对项目根目录；阅读器 dir 传根目录
+        var node = fileNode({ name: r.name, type: 'file' }, r.path, rootDir, 0);
+        notesList.appendChild(node.row);
+      });
+    }).catch(function (e) {
+      notesList.innerHTML = '';
+      notesList.appendChild(emptyNode(e.message || '搜索失败'));
+    });
+  }
+
+  function backNotes() {
+    // 阅读器打开中 → 先退出阅读器（笔记树回到视野）
+    if (notesReader.classList.contains('show')) {
+      closeNoteReader();
+      return;
+    }
+    backToList();
+  }
+
+  // 阅读器内复制（decorateCode 的 pre 复制 + 纯文本复制共用一个入口）
+  notesReader.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest('.copy-btn') : null;
+    if (!btn) return;
+    var host = btn.parentNode;
+    if (host && host.classList && host.classList.contains('reader-plain')) {
+      copyText(host.innerText || '', function () {
+        btn.textContent = '已复制';
+        setTimeout(function () { btn.textContent = '复制全文'; }, 1200);
+      });
+      return;
+    }
+    var pre = host;
+    var code = pre.querySelector ? pre.querySelector('code') : null;
+    copyText(((code || pre).innerText || '').replace(/\n$/, ''), function () {
+      btn.textContent = '已复制';
+      setTimeout(function () { btn.textContent = '复制'; }, 1200);
+    });
+  });
+
+  tabNotes.addEventListener('click', enterNotes);
+  tabList.addEventListener('click', backToList);
+  notesBackBtn.addEventListener('click', backNotes);
+  notesBackBtnFloat.addEventListener('click', backNotes);
+  notesQuery.addEventListener('input', onNotesSearch);
+  readerCloseBtn.addEventListener('click', function () { closeNoteReader(); });
+  readerToggleBtn.addEventListener('click', toggleNotesPane);
+  notesHandle.addEventListener('click', toggleNotesPane);
 
   // ---------- 启动 ----------
   document.getElementById('nameInput').value = state.name || '';

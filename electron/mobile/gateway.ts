@@ -235,6 +235,178 @@ function normalizeImages(raw: any): any[] | undefined {
   return list.length ? list : undefined;
 }
 
+/**
+ * 笔记库读取：手机与桌面读的是同一个目录，但把规则收紧一层——
+ * 目录必须是已注册项目的根，或已注册项目下的子目录（子目录经 realpath
+ * 判界，防链接逃逸、防盘符/越界），
+ * 文件必须落在该目录内（realpath 再校验一次），二进制不收。
+ */
+const NOTES_SEARCH_EXTS = ['.md', '.txt', '.json', '.csv', '.js', '.ts', '.vue', '.css', '.py', '.sh', '.yml', '.yaml', '.toml'];
+const NOTES_MAX_FILE_SIZE = 4 * 1024 * 1024;
+const NOTES_MAX_SEARCH_RESULTS = 20;
+const NOTES_MAX_SEARCH_FILE = 1 * 1024 * 1024;
+
+function resolveProjectDir(dirParam: string): string | null {
+  const raw = String(dirParam || '').trim();
+  if (!raw) return null;
+  const resolved = path.resolve(raw);
+  const registered = db.project.list()
+    .map((p: any) => (String(p.dir || '').trim() ? path.resolve(String(p.dir)) : ''))
+    .filter((d: string) => d.length > 0);
+  if (!registered.length) return null;
+  if (registered.includes(resolved)) return resolved;
+  // 非项目根：realpath 兜住盘符大小写和链接差异后，必须落在某个项目根内才放行
+  let realResolved: string;
+  try {
+    realResolved = fs.realpathSync(resolved);
+  } catch {
+    return null;
+  }
+  for (const root of registered) {
+    let realRoot: string;
+    try {
+      realRoot = fs.realpathSync(root);
+    } catch {
+      continue; // 项目目录已失效
+    }
+    if (realResolved === realRoot || realResolved.startsWith(realRoot + path.sep)) return realResolved;
+  }
+  return null;
+}
+
+function isHiddenName(name: string): boolean {
+  return name.startsWith('.') || name === 'node_modules' || name === '.git';
+}
+
+function listNoteDir(dir: string): { ok: true; entries: Array<{ name: string; path: string; type: string }> } | { ok: false; error: string } {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return { ok: false, error: '目录不存在或不可访问' };
+  }
+  const entries: Array<{ name: string; path: string; type: string }> = [];
+  for (const name of names) {
+    if (isHiddenName(name)) continue;
+    const full = path.join(dir, name);
+    let stat: fs.Stats;
+    try {
+      // lstat：符号链接一律跳过（可能指向库外），与 realpath 校验共同收紧
+      stat = fs.lstatSync(full);
+    } catch {
+      continue; // 扫描中途被删的文件，跳过
+    }
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) entries.push({ name, path: full, type: 'folder' });
+    else if (stat.isFile()) entries.push({ name, path: full, type: 'file' });
+  }
+  // 目录在前、名称排序：与桌面笔记树一致
+  entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1));
+  return { ok: true, entries };
+}
+
+function readNoteFile(dir: string, rawPath: string):
+  | { ok: true; name: string; ext: string; size: number; content: string }
+  | { ok: false; error: string; status: number } {
+  const requested = String(rawPath || '').trim();
+  if (!requested) return { ok: false, error: '缺少文件路径', status: 400 };
+  // 去盘符/前导分隔符后拼到 dir 下，防盘符或绝对路径逃逸
+  const fullPath = path.resolve(dir, requested.replace(/^[a-zA-Z]:/, '').replace(/^[\\/]+/, ''));
+  if (!fullPath.startsWith(dir + path.sep)) return { ok: false, error: '路径越权', status: 403 };
+  let realFile: string;
+  let realDir: string;
+  try {
+    realFile = fs.realpathSync(fullPath);
+    realDir = fs.realpathSync(dir);
+  } catch {
+    return { ok: false, error: '文件不存在', status: 404 };
+  }
+  if (!realFile.startsWith(realDir + path.sep)) return { ok: false, error: '路径越权', status: 403 };
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(realFile);
+  } catch {
+    return { ok: false, error: '文件不存在', status: 404 };
+  }
+  if (!stat.isFile()) return { ok: false, error: '不是文件', status: 400 };
+  if (stat.size > NOTES_MAX_FILE_SIZE) return { ok: false, error: '文件过大，请在桌面端查看', status: 400 };
+
+  const buffer = fs.readFileSync(realFile);
+  if (buffer.slice(0, 2048).includes(0)) return { ok: false, error: '二进制文件不支持预览', status: 400 };
+  return { ok: true, name: realFile.split(path.sep).pop() || realFile, ext: path.extname(realFile).toLowerCase(), size: stat.size, content: buffer.toString('utf-8') };
+}
+
+interface NoteSearchHit {
+  name: string;
+  path: string;
+  text: string;
+}
+
+function searchNotes(dir: string, query: string): { ok: true; results: NoteSearchHit[] } | { ok: false; error: string } {
+  const q = String(query || '').trim();
+  if (!q) return { ok: false, error: '请输入关键词' };
+  const ql = q.toLowerCase();
+  const results: NoteSearchHit[] = [];
+
+  const walk = (abs: string): boolean => {
+    if (results.length >= NOTES_MAX_SEARCH_RESULTS) return true;
+    let names: string[];
+    try {
+      names = fs.readdirSync(abs);
+    } catch {
+      return false;
+    }
+    // .git 等隐藏目录整棵跳过，与桌面端一致
+    const ordered = names.filter((n) => !isHiddenName(n));
+    ordered.sort((a, b) => a.localeCompare(b));
+    for (const name of ordered) {
+      // 中途命中上限就停：外层 for 与内层递归前都检查，剪枝
+      if (results.length >= NOTES_MAX_SEARCH_RESULTS) return true;
+      const full = path.join(abs, name);
+      let stat: fs.Stats;
+      try {
+        // lstat：符号链接跳过（可能指向库外），与读文件的 realpath 校验配套
+        stat = fs.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) {
+        if (walk(full)) return true;
+        continue;
+      }
+      if (!stat.isFile()) continue;
+      if (!NOTES_SEARCH_EXTS.includes(path.extname(name).toLowerCase())) continue;
+      if (stat.size > NOTES_MAX_SEARCH_FILE) continue;
+      try {
+        const text = fs.readFileSync(full, 'utf-8');
+        const lower = text.toLowerCase();
+        const at = lower.indexOf(ql);
+        if (at === -1) continue;
+        // 命中行前后各带一行上下文
+        const lines = text.split(/\r?\n/);
+        let lineIdx = 0;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].toLowerCase().includes(ql)) { lineIdx = i; break; }
+        }
+        const around = lines.slice(Math.max(0, lineIdx - 1), lineIdx + 2).join('\n');
+        results.push({ name, path: path.relative(dir, full), text: around.slice(0, 200) });
+      } catch {
+        // 编码异常的文件读不了就当作不在库内
+      }
+    }
+    return results.length >= NOTES_MAX_SEARCH_RESULTS;
+  };
+
+  try {
+    walk(dir);
+  } catch {
+    return { ok: false, error: '目录不存在或不可访问' };
+  }
+  return { ok: true, results };
+}
+
 async function handlePair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   if (tooManyPairFailures()) {
     return sendJson(res, 429, { ok: false, error: '尝试次数过多，请 1 分钟后再试' });
@@ -391,6 +563,28 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       providerLabel: m.providerLabel || m.provider || '',
     }));
     return sendJson(res, 200, { ok: true, models, error: result.error });
+  }
+  // ---------- 笔记库（与桌面端读同一个目录，规则收紧一层） ----------
+  if (req.method === 'GET' && pathname === '/api/notes/tree') {
+    const dir = resolveProjectDir(String(url.searchParams.get('dir') || ''));
+    if (!dir) return sendJson(res, 400, { ok: false, error: '目录未注册，请在桌面端添加笔记项目' });
+    const listed = listNoteDir(dir);
+    if (!listed.ok) return sendJson(res, 400, { ok: false, error: listed.error });
+    return sendJson(res, 200, { ok: true, dir, entries: listed.entries });
+  }
+  if (req.method === 'GET' && pathname === '/api/notes/file') {
+    const dir = resolveProjectDir(String(url.searchParams.get('dir') || ''));
+    if (!dir) return sendJson(res, 400, { ok: false, error: '目录未注册，请在桌面端添加笔记项目' });
+    const result = readNoteFile(dir, String(url.searchParams.get('path') || ''));
+    if (!result.ok) return sendJson(res, result.status, { ok: false, error: result.error });
+    return sendJson(res, 200, { ok: true, name: result.name, ext: result.ext, size: result.size, content: result.content });
+  }
+  if (req.method === 'GET' && pathname === '/api/notes/search') {
+    const dir = resolveProjectDir(String(url.searchParams.get('dir') || ''));
+    if (!dir) return sendJson(res, 400, { ok: false, error: '目录未注册，请在桌面端添加笔记项目' });
+    const result = searchNotes(dir, String(url.searchParams.get('q') || ''));
+    if (!result.ok) return sendJson(res, 400, { ok: false, error: result.error });
+    return sendJson(res, 200, { ok: true, results: result.results });
   }
   if (req.method === 'GET' && pathname === '/api/sessions') {
     // 移动端分页：?limit=&offset=；多取一条判断 hasMore，不带 limit 时保持旧行为返回全部
