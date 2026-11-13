@@ -157,7 +157,7 @@ export class DshAdapter implements AgentAdapter {
     const init: any = await this.request(ds, 'initialize', {
       protocolVersion: 1,
       clientCapabilities: {},
-      clientInfo: { name: 'qihang-ai-desktop', title: '启航AI工作台', version: '0.13.0' },
+      clientInfo: { name: 'qihang-ai-desktop', title: '启航AI工作台', version: '0.14.0' },
     });
     if (init?.protocolVersion && Number(init.protocolVersion) !== 1) {
       logger.warn('[Approver][dsh] ACP protocolVersion=%s（按 v1 兼容处理）', init.protocolVersion);
