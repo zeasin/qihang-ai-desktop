@@ -79,6 +79,22 @@ export interface ClaudeTaskTail {
   cwd: string;
   task: string;
   durationMs: number;
+  /** 转录尾部检测到的回合错误（API 报错等）；正常收口为 undefined */
+  error?: string;
+}
+
+/**
+ * Claude Code 的 API 错误在转录里是「整条即报错」的 assistant 消息（以 API Error 开头）。
+ * 特征收窄到报错开头形态，避免把讨论 429/超时的正常任务文本误判成失败。
+ */
+export function detectClaudeErrorText(text: string): string | null {
+  const t = (text || '').trim();
+  if (!t) return null;
+  if (/^API Error[: ]/i.test(t)) return t.slice(0, 200);
+  if (/^(Error|错误)[:：]\s/.test(t) && /rate.?limit|429|overloaded|invalid|auth|credit|billing|quota/i.test(t)) {
+    return t.slice(0, 200);
+  }
+  return null;
 }
 
 /**
@@ -109,6 +125,8 @@ export async function readClaudeTaskTail(transcriptPath: string): Promise<Claude
   }
 
   let cwd = '';
+  // 尾部最后一条 assistant 消息文本：API 报错时整条即错误信息，做失败判定用
+  let lastAssistantText = '';
   const lines = buf.toString('utf8').split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
@@ -116,6 +134,10 @@ export async function readClaudeTaskTail(transcriptPath: string): Promise<Claude
     let j: any;
     try { j = JSON.parse(line); } catch { continue; }
     if (!cwd && typeof j.cwd === 'string') cwd = j.cwd;
+    if (!lastAssistantText && j.type === 'assistant' && !j.isSidechain) {
+      const t = cleanText(contentToText(j.message?.content));
+      if (t) lastAssistantText = t;
+    }
     if (j.type !== 'user' || j.isMeta || j.isSidechain) continue;
     const text = cleanText(contentToText(j.message?.content));
     if (!text) continue;
@@ -124,6 +146,7 @@ export async function readClaudeTaskTail(transcriptPath: string): Promise<Claude
       cwd,
       task: text.slice(0, 500),
       durationMs: Number.isFinite(at) ? Math.max(0, Date.now() - at) : 0,
+      error: detectClaudeErrorText(lastAssistantText) || undefined,
     };
   }
   // 长会话里原始任务可能已被挤出尾窗：回退读文件头部，取第一条真实用户消息当任务

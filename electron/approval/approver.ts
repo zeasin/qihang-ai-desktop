@@ -109,6 +109,11 @@ class ApproverService {
     return this.runningFlag;
   }
 
+  /** 外部 claude 会话是否正挂在 claude-stop 上等追问（快速通道窗口内）——雷达端继续对话的准入校验 */
+  isQuickPoller(sessionId: string): boolean {
+    return this.quickPollers.has(String(sessionId || ''));
+  }
+
   /**
    * 订阅审批事件（桌面面板用）：只转 approval.required / approval.decided，
    * 会话输出类事件量大且面板用不着，不进这条通道。

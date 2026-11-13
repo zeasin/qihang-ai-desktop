@@ -1,4 +1,4 @@
-import { readClaudeTaskTail } from './local-sessions';
+import { readClaudeTaskTail, detectClaudeErrorText } from './local-sessions';
 import type { AgentKind } from './types';
 
 /** 一条「任务回合结束」的归一化描述（从 qihang-code-approver 移植）：托管会话与外部 agent 钩子共用 */
@@ -80,21 +80,24 @@ function fromDshHook(body: any): TaskReport | null {
   };
 }
 
-/** Claude Code Stop 钩子（snake_case 原生载荷）：任务文本与耗时从转录尾部还原 */
+/** Claude Code Stop 钩子（snake_case 原生载荷）：任务文本/耗时/成败从转录尾部还原 */
 async function fromClaudeStop(body: any): Promise<TaskReport | null> {
   const sessionId = str(body?.session_id);
   if (!sessionId) return null;
   const transcriptPath = str(body?.transcript_path);
   const tail = await readClaudeTaskTail(transcriptPath);
+  // 失败判定：转录尾部整条即 API 报错（hook 机制拿不到 stopReason，启发式兜底）；last_assistant_message 同规则复核
+  const error = tail.error || detectClaudeErrorText(str(body?.last_assistant_message)) || undefined;
   return {
     agent: 'claude',
     sessionId,
     label: `Claude 外部会话 ${shortId(sessionId)}`,
     cwd: str(body?.cwd) || tail.cwd,
     task: tail.task,
-    ok: true,
+    ok: !error,
     durationMs: tail.durationMs,
-    result: str(body?.last_assistant_message),
+    result: error ? undefined : str(body?.last_assistant_message),
+    error,
   };
 }
 

@@ -224,13 +224,15 @@ function parseTools(json: string): any[] {
 // ========== 插入对话（pi / DSH 外部会话追问） ==========
 // 文本按 sessionId 暂存到审批通道（TTL 10 分钟），由原终端会话的扩展/插件长轮询取走注入执行，
 // 不接管不 fork：pi 走 pi-approver-gate，DSH 走 dsh-approver 插件；终端已关时按 TTL 过期。
-const FOLLOWUP_LABELS: Record<string, string> = { pi: 'Pi', dsh: 'DSH' };
+const FOLLOWUP_LABELS: Record<string, string> = { pi: 'Pi', dsh: 'DSH', 'claude-code': 'Claude Code' };
 const followupSupported = computed(() => !!FOLLOWUP_LABELS[tool.value]);
-const followupHint = computed(() =>
-  followupSupported.value
-    ? `消息将在 10 分钟内被 ${FOLLOWUP_LABELS[tool.value]} 原终端会话取走执行（终端需保持打开）`
-    : ''
-);
+const followupHint = computed(() => {
+  if (!followupSupported.value) return '';
+  if (tool.value === 'claude-code') {
+    return '仅回合收口后的等待窗口（约 30 秒）内能送达终端，超窗请用飞书卡片';
+  }
+  return `消息将在 10 分钟内被 ${FOLLOWUP_LABELS[tool.value]} 原终端会话取走执行（终端需保持打开）`;
+});
 const followupText = ref('');
 const sending = ref(false);
 const followupTip = ref('');

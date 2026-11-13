@@ -1334,19 +1334,24 @@ ipcMain.handle('radar:search', (_, { q, limit }) => {
     return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
   }
 });
-// 雷达详情页「插入对话」：把追问文本按 sessionId 暂存，由外部 agent 的扩展/插件长轮询取走注入原会话
-// （pi → pi-approver-gate /api/hooks/pi-followup；dsh → dsh-approver 插件 /api/hooks/dsh-followup，共用暂存 Map）
+// 雷达详情页/通知栈「插入对话」：把追问文本按 sessionId 暂存，由外部 agent 的扩展/插件取走注入原会话
+// （pi → pi-approver-gate /api/hooks/pi-followup；dsh → dsh-approver 插件；claude → claude-stop 挂起快速通道）
 ipcMain.handle('radar:followup', (_, { tool, sessionId, text }) => {
-  const FOLLOWUP_TOOLS = new Set(['pi', 'dsh']);
   const sid = String(sessionId || '').trim();
   const body = String(text || '').trim();
-  if (!FOLLOWUP_TOOLS.has(String(tool || ''))) {
-    return { ok: false, error: '该工具暂不支持插入对话（仅 pi / DSH 外部会话）' };
+  const toolName = String(tool || '');
+  if (!['pi', 'dsh', 'claude'].includes(toolName)) {
+    return { ok: false, error: '该工具暂不支持插入对话（仅 pi / DSH / Claude Code 外部会话）' };
   }
   if (!sid || !body) return { ok: false, error: '需要 sessionId 和消息内容' };
+  // claude 没有常驻长轮询：只有会话正挂在 claude-stop 上等追问（默认 30 秒窗口）时暂存才会被取走，
+  // 窗口外暂存只会躺到 TTL 过期，直接拒绝并提示
+  if (toolName === 'claude' && !approver.isQuickPoller(sid)) {
+    return { ok: false, error: '终端会话不在等待窗口（回合收口后约 30 秒内），请用飞书卡片继续' };
+  }
   try {
     stashFollowup(sid, body.slice(0, 4000));
-    logger.info('[Radar] 追问已暂存: tool=%s session=%s %s字', tool, sid.slice(0, 24), body.length);
+    logger.info('[Radar] 追问已暂存: tool=%s session=%s %s字', toolName, sid.slice(0, 24), body.length);
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e && e.message ? e.message : String(e) };

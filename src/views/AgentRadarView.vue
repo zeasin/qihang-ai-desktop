@@ -238,8 +238,13 @@ interface Notice {
   tipOk?: boolean;
 }
 const notices = ref<Notice[]>([]);
-const FOLLOWUP_AGENTS = new Set(['pi', 'dsh']); // 外部会话追问走暂存长轮询，原终端取走执行
+const FOLLOWUP_AGENTS = new Set(['pi', 'dsh', 'claude']); // 外部会话追问走暂存，由原终端取走执行
 const canFollowup = (a: string) => FOLLOWUP_AGENTS.has(a);
+// claude 无常驻长轮询，只有回合收口后的等待窗口（默认 30 秒）能接住追问；pi/DSH 扩展收口后轮询 10 分钟
+const followupHint = (a: string) =>
+  a === 'claude'
+    ? '终端会话正在等待（约 30 秒窗口），超窗请用飞书卡片'
+    : '原终端会话将在 10 分钟内取走执行（终端需保持打开）';
 
 function dirName(cwd: string): string {
   return (cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd || '?';
@@ -301,7 +306,7 @@ async function sendNoticeFollowup(n: Notice, text: string) {
     // 提示常驻，等该会话下一轮 task-done 到达时整条收掉（见 onApproverNotice）
     n.sent = true;
     n.text = '';
-    n.tip = '已发送，等待原终端会话取走执行（10 分钟内有效，新结果到达后本通知自动关闭）';
+    n.tip = '已发送，' + followupHint(n.agent);
     n.tipOk = true;
   } else {
     n.tip = '提交失败：' + (r?.error || '未知错误');
