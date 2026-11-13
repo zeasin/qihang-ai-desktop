@@ -2,6 +2,8 @@
   <div class="chat-home">
     <!-- ========== 对话视图 ========== -->
     <div class="chat-body">
+    <!-- 页面内对话列表（可折叠，全局侧栏已固定为图标栏） -->
+    <ChatListPanel />
     <!-- ========== 对话区 ========== -->
     <div class="chat-main">
       <!-- 未添加项目：AI 功能门禁 -->
@@ -140,6 +142,7 @@ import { ref, computed, watch, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
+import ChatListPanel from '@/components/ChatListPanel.vue';
 import AppIcon from '@/components/AppIcon.vue';
 
 // 配置 marked 以启用换行和 GFM

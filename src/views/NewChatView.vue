@@ -6,6 +6,9 @@
 -->
 <template>
   <div class="new-chat-view">
+    <!-- 页面内对话列表（可折叠，全局侧栏已固定为图标栏） -->
+    <ChatListPanel />
+
     <!-- 未添加项目：AI 功能门禁 -->
     <NotesGate v-if="kbLoaded && !kbLibraries.length" @ready="onGateReady" />
 
@@ -69,6 +72,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import NotesGate from '@/components/NotesGate.vue';
+import ChatListPanel from '@/components/ChatListPanel.vue';
 import AppIcon from '@/components/AppIcon.vue';
 
 const API = window.electronAPI;
@@ -258,12 +262,13 @@ onMounted(async () => {
   min-height: 0;
   overflow-y: auto;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   background: var(--bg-main);
 }
 .nc-inner {
   width: 100%;
   max-width: 640px;
+  margin: 0 auto;
   padding: 13vh 24px 40px;
   display: flex;
   flex-direction: column;

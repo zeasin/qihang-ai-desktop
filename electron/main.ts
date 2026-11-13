@@ -49,6 +49,8 @@ import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPe
 import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
+import { askRadar } from './radar/radar-ask';
+import { startRadarDigest, backfillSummaries } from './radar/radar-digest';
 import { approver } from './approval/approver';
 import { stashFollowup } from './approval/task-notify';
 import { startMobileGateway, stopMobileGateway, mobileGatewayStatus, requestMobilePairCode, broadcastMobileEvent } from './mobile/gateway';
@@ -1334,12 +1336,30 @@ ipcMain.handle('radar:search', (_, { q, limit }) => {
     return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
   }
 });
+// 问雷达：检索已采集对话 → AI 汇总回答（一次性轻量调用，无命中不调 AI）；model 可选，缺省用 pi 默认模型
+ipcMain.handle('radar:ask', async (_, { question, model }) => {
+  try {
+    return { ok: true, ...(await askRadar(String(question || ''), typeof model === 'string' ? model : undefined)) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), refs: [] };
+  }
+});
+// 存量补摘要：把高价值但没摘要的历史会话全部排队提炼（雷达页手动触发）
+ipcMain.handle('radar:digest-backfill', () => {
+  try {
+    return { ok: true, count: backfillSummaries() };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), count: 0 };
+  }
+});
 // 雷达详情页/通知栈「插入对话」：把追问文本按 sessionId 暂存，由外部 agent 的扩展/插件取走注入原会话
 // （pi → pi-approver-gate /api/hooks/pi-followup；dsh → dsh-approver 插件；claude → claude-stop 挂起快速通道）
 ipcMain.handle('radar:followup', (_, { tool, sessionId, text }) => {
   const sid = String(sessionId || '').trim();
   const body = String(text || '').trim();
-  const toolName = String(tool || '');
+  // 雷达工具枚举是 'claude-code'，审批通道用 'claude'：这里统一映射，别处新增入口也不用各自转换
+  const rawTool = String(tool || '');
+  const toolName = rawTool === 'claude-code' ? 'claude' : rawTool;
   if (!['pi', 'dsh', 'claude'].includes(toolName)) {
     return { ok: false, error: '该工具暂不支持插入对话（仅 pi / DSH / Claude Code 外部会话）' };
   }
@@ -1350,6 +1370,14 @@ ipcMain.handle('radar:followup', (_, { tool, sessionId, text }) => {
     return { ok: false, error: '终端会话不在等待窗口（回合收口后约 30 秒内），请用飞书卡片继续' };
   }
   try {
+    // 受管会话（工作台托管，sessionId 是本进程 id）直接续跑，stash 没人会取走；
+    // 外部会话按 agent 分流：暂存由扩展/插件长轮询取走注入原会话
+    const managed = approver.managedSessionPrompt(sid, body);
+    if (managed.managed) {
+      if (!managed.ok) return { ok: false, error: managed.error };
+      logger.info('[Radar] 追问已注入受管会话: session=%s %s字', sid.slice(0, 24), body.length);
+      return { ok: true, managed: true };
+    }
     stashFollowup(sid, body.slice(0, 4000));
     logger.info('[Radar] 追问已暂存: tool=%s session=%s %s字', toolName, sid.slice(0, 24), body.length);
     return { ok: true };
@@ -2314,6 +2342,8 @@ app.whenReady().then(async () => {
   backup.startAutoBackup();
   // 智能体雷达：默认关，用户在设置页显式开启
   agentRadar.onStateEvents((events) => sendToRenderer('radar:event', { type: 'state', events }));
+  // 提炼层②：AI 会话摘要（订阅 idle 收口事件；价值分门槛挡住水会话，达标才调模型）
+  startRadarDigest();
   if (agentRadar.isEnabled()) {
     agentRadar.start().catch((e) => logger.error('[Radar] auto start failed: %s', e?.message || e));
   }

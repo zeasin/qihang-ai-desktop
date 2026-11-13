@@ -57,6 +57,11 @@
       </div>
 
       <div v-else-if="tab === 'messages'" class="msg-col">
+        <!-- AI 会话摘要（收口后提炼；价值分达标的会话才有，雷达页通知/日报共用这一层） -->
+        <div v-if="info?.summary" class="summary-card">
+          <div class="sum-title"><i class="bar"></i>会话摘要</div>
+          <div class="sum-body markdown-body" v-html="summaryHtml"></div>
+        </div>
         <div v-for="m in messages" :key="m.seq" class="msg" :class="m.role">
           <div class="msg-role">
             <span class="role-badge" :class="m.role">{{ m.role === 'user' ? '用户' : '助手' }}</span>
@@ -150,6 +155,11 @@ const toolLabel = (t: string) => TOOL_LABELS[t] || t;
 const title = computed(() => info.value?.title || '（无标题）');
 const projectDir = computed(() => info.value?.projectDir || '');
 const state = computed(() => info.value?.state || 'idle');
+
+const summaryHtml = computed(() => {
+  const s = info.value?.summary || '';
+  try { return marked(s, { async: false }) as string; } catch { return s; }
+});
 
 function goBack() {
   router.push('/radar');
@@ -357,6 +367,29 @@ onUnmounted(() => {
   padding: 4px 8px 24px;
 }
 .col-empty { text-align: center; padding: 40px 0; font-size: 13px; }
+
+/* ===== 会话摘要卡（提炼层②） ===== */
+.summary-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary, #2563eb);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 16px;
+}
+.sum-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.sum-title .bar { width: 3px; height: 12px; background: var(--primary, #2563eb); border-radius: 2px; }
+.sum-body { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary, var(--text-muted)); }
+.sum-body p { margin: 0 0 4px; }
+.sum-body p:last-child { margin-bottom: 0; }
+
 .state-note {
   border: 1px solid var(--border);
   border-radius: 10px;

@@ -23,7 +23,8 @@ interface StartPayload {
 }
 
 type WorkerInMessage = StartPayload | { type: 'scan-now' } | { type: 'stop' }
-  | { type: 'unfreeze'; tool: string; sessionId: string };
+  | { type: 'unfreeze'; tool: string; sessionId: string }
+  | { type: 'save-summary'; tool: string; sessionId: string; summary: string; msgCount: number };
 
 const post = (msg: any): void => {
   try { parentPort?.postMessage(msg); } catch { /* 主进程已退出等场景 */ }
@@ -33,17 +34,39 @@ let db: RadarDb | null = null;
 let fps: FingerprintStore | null = null;
 let ingest: RadarIngestLoop | null = null;
 let monitor: RadarMonitorLoop | null = null;
+let scoreTimer: NodeJS.Timeout | null = null;
 let collectors: HubCollector[] = [];
 
 function start(payload: StartPayload): void {
   const { cfg, root } = payload;
   db = new RadarDb(root);
   fps = new FingerprintStore(root);
+  // 价值分动态刷新：启动校准一次 + 运行中每 10 分钟滚动重算（会话续聊长出新内容后分数跟着涨）
+  try {
+    const n = db.refreshValueScores();
+    if (n) LOG(`value scores refreshed for ${n} session(s)`);
+  } catch (e: any) {
+    LOG('refresh value scores failed:', String(e?.message || e));
+  }
+  scoreTimer = setInterval(() => {
+    try {
+      const n = db?.refreshValueScores() || 0;
+      if (n) LOG(`value scores refreshed for ${n} session(s)`);
+    } catch { /* 下一轮再试 */ }
+  }, 10 * 60_000);
   collectors = defaultCollectors(cfg);
   ingest = new RadarIngestLoop(db, fps, collectors, cfg);
   ingest.onRound = (stat) => post({ type: 'round', stat });
   monitor = new RadarMonitorLoop(db, collectors, cfg, (tool) => ingest?.markDirty(tool));
-  monitor.onStateEvents((events) => post({ type: 'state', events }));
+  monitor.onStateEvents((events) => {
+    // 会话收口（idle）时落规则价值分：先算分再转发，主进程的摘要门槛读到的就是最新分
+    const wdb = db;
+    for (const e of events) {
+      if (e.state !== 'idle' || !wdb) continue;
+      try { wdb.saveValueScore(e.tool, e.sessionId, wdb.computeValueScore(e.tool, e.sessionId)); } catch { /* 打分失败不影响转发 */ }
+    }
+    post({ type: 'state', events });
+  });
   ingest.start();
   monitor.start();
   LOG(`started (tools=${collectors.map((c) => c.tool).join(',') || 'none'})`);
@@ -51,6 +74,7 @@ function start(payload: StartPayload): void {
 }
 
 async function stop(): Promise<void> {
+  if (scoreTimer) { clearInterval(scoreTimer); scoreTimer = null; }
   try { monitor?.stop(); } catch {}
   try { ingest?.stop(); } catch {}
   for (const c of collectors) {
@@ -83,6 +107,11 @@ if (parentPort) {
           LOG('unfroze', `${tool}/${sessionId.slice(0, 24)}, recollect queued`);
           void ingest?.syncNow('unfreeze');
         }
+      } else if (msg.type === 'save-summary') {
+        // 主进程 AI 摘要写回（主进程只持只读连接，写操作统一回到 worker 写入端）
+        const tool = String(msg.tool || '');
+        const sessionId = String(msg.sessionId || '');
+        if (db && tool && sessionId) db.saveSummary(tool, sessionId, String(msg.summary || ''), Number(msg.msgCount) || 0);
       } else if (msg.type === 'stop') {
         void stop().then(() => process.exit(0));
       }

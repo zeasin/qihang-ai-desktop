@@ -31,8 +31,8 @@ function workerJsPath(): string {
 
 /**
  * Trae 只读采集：SQLCipher 加密库，worker 里按页解密成明文临时文件再查（重活不堵主线程）。
- * 探针不支持会话级（加密库解析太重），只返回空——trae 的状态投影退化为 idle，
- * 源库变化仍会驱动同步轮。
+ * 探针复用明文缓存查 chat_session.updated_at（源库没动时只是一次 stat + 小查询，
+ * 变了才重解且有 8s 节流），运行状态走时间窗口推断。
  */
 export class TraeCollector implements HubCollector {
   readonly tool = 'trae';
@@ -114,7 +114,18 @@ export class TraeCollector implements HubCollector {
   }
 
   async probe(): Promise<Map<string, ProbeSignal>> {
-    return new Map<string, ProbeSignal>(); // 加密库不做会话级探针（见类注释）
+    try {
+      await this.init();
+      if (!this.srcPath) return new Map<string, ProbeSignal>();
+      const cutoffSec = Math.floor((Date.now() - 10 * 60_000) / 1000);
+      const rows = await this.rpc<Array<{ id: string; ts: number }>>('probe', { cutoffSec });
+      const out = new Map<string, ProbeSignal>();
+      for (const r of rows || []) out.set(r.id, { ts: r.ts });
+      return out;
+    } catch (e: any) {
+      LOG('probe error:', e?.message || e);
+      return new Map<string, ProbeSignal>();
+    }
   }
 
   async dispose(): Promise<void> {

@@ -27,6 +27,10 @@
         <span v-if="status.stats" class="text-muted collect-info">
           已采 {{ status.stats.sessions }} 会话 · {{ status.stats.messages }} 条<template v-if="status.lastRound?.finishedAt"> · 上次采集 {{ fmtClock(status.lastRound.finishedAt) }}</template>
         </span>
+        <button class="btn btn-primary btn-sm" @click="router.push('/radar/ask')">🔍 问雷达</button>
+        <button class="btn btn-secondary btn-sm" :disabled="!status.running" title="给高价值但还没摘要的历史会话补 AI 摘要" @click="digestBackfill">
+          补摘要
+        </button>
         <button class="btn btn-secondary btn-sm" :disabled="scanning || !status.running" @click="scanNow">
           {{ scanning ? '扫描中…' : '立即扫描' }}
         </button>
@@ -65,12 +69,12 @@
     <!-- 页面通知：回合完成/失败 + 待审批，可就地决策或追加对话（事件推送驱动，右上角浮动） -->
     <div v-if="notices.length" class="notice-stack">
       <div v-for="n in notices" :key="n.id" class="notice" :class="{ fail: n.kind === 'task' && n.ok === false, sent: n.sent }">
-        <div class="nt-head">
+        <div class="nt-head" title="点击查看详情" @click="openDetail(n)">
           <span class="badge" :class="agentBadgeClass(n.agent)">{{ agentLabel(n.agent) }}</span>
           <span class="nt-title">{{ n.title }}</span>
-          <button class="nt-close" title="关闭" @click="dismiss(n.id)">×</button>
+          <button class="nt-close" title="关闭" @click.stop="dismiss(n.id)">×</button>
         </div>
-        <div class="nt-brief" :title="n.brief">{{ n.brief }}</div>
+        <div class="nt-brief nt-clickable" :title="n.brief" @click="openDetail(n)">{{ n.brief }}</div>
         <div v-if="n.kind === 'approval'" class="nt-actions">
           <button class="btn btn-primary btn-sm" @click="decideNotice(n, 'allow_once')">允许一次</button>
           <button class="btn btn-danger btn-sm" @click="decideNotice(n, 'deny')">拒绝</button>
@@ -82,6 +86,58 @@
           <button class="btn btn-secondary btn-sm" @click="sendNoticeFollowup(n, n.text || '')">发送</button>
         </div>
         <div v-if="n.tip" class="nt-tip" :class="n.tipOk ? 'ok' : 'err'">{{ n.tip }}</div>
+      </div>
+    </div>
+
+    <!-- 通知详情弹层：完整任务 / 回复正文（markdown）/ 错误全文 + 就地继续对话 -->
+    <div v-if="detailNotice" class="nt-modal-mask" @click.self="closeDetail">
+      <div class="nt-modal" :class="{ fail: detailNotice.kind === 'task' && detailNotice.ok === false }">
+        <div class="nt-modal-head">
+          <span class="badge" :class="agentBadgeClass(detailNotice.agent)">{{ agentLabel(detailNotice.agent) }}</span>
+          <span class="nt-modal-title">{{ detailNotice.title }}</span>
+          <button class="nt-close" title="关闭" @click="closeDetail">×</button>
+        </div>
+        <div class="nt-modal-meta">
+          <span v-if="detailNotice.sessionId" class="nt-meta-item" :title="detailNotice.sessionId">会话 {{ String(detailNotice.sessionId).slice(0, 20) }}</span>
+          <span v-if="detailNotice.report?.cwd || detailNotice.request?.cwd" class="nt-meta-item">{{ shortDir(detailNotice.report?.cwd || detailNotice.request?.cwd) }}</span>
+          <span v-if="detailDuration" class="nt-meta-item">耗时 {{ detailDuration }}</span>
+        </div>
+        <div class="nt-modal-body">
+          <!-- 待审批：完整请求详情 + 决策 -->
+          <template v-if="detailNotice.kind === 'approval'">
+            <div class="nt-sec-label">请求详情</div>
+            <pre class="nt-detail-pre">{{ detailNotice.request?.detail || detailNotice.brief || '（无正文）' }}</pre>
+            <div class="nt-actions nt-modal-actions">
+              <button class="btn btn-primary btn-sm" @click="decideNotice(detailNotice, 'allow_once')">允许一次</button>
+              <button class="btn btn-secondary btn-sm" @click="decideNotice(detailNotice, 'allow_session')">本会话放行</button>
+              <button class="btn btn-danger btn-sm" @click="decideNotice(detailNotice, 'deny')">拒绝</button>
+            </div>
+          </template>
+          <!-- 回合收口：任务全文 + 回复正文/错误全文 -->
+          <template v-else>
+            <div class="nt-sec-label">任务</div>
+            <div class="nt-task-full">{{ detailNotice.report?.task || detailNotice.brief || '（无任务描述）' }}</div>
+            <template v-if="detailNotice.ok === false">
+              <div class="nt-sec-label nt-sec-err">错误</div>
+              <pre class="nt-detail-pre nt-detail-err">{{ detailNotice.report?.error || '（无错误信息）' }}</pre>
+            </template>
+            <template v-else-if="detailNotice.report?.result">
+              <div class="nt-sec-label">回复</div>
+              <div class="nt-result-md" v-html="detailResultHtml"></div>
+            </template>
+            <div v-else class="text-muted nt-no-result">（无正文）</div>
+            <div v-if="canFollowup(detailNotice.agent) && !detailNotice.sent" class="nt-followup-bar">
+              <input
+                v-model="detailText"
+                class="nt-input"
+                placeholder="输入要追加的内容，如：继续"
+                @keyup.enter="sendDetailFollowup"
+              >
+              <button class="btn btn-primary btn-sm" :disabled="!detailText.trim()" @click="sendDetailFollowup">发送</button>
+            </div>
+            <div v-if="detailNotice.tip" class="nt-tip" :class="detailNotice.tipOk ? 'ok' : 'err'">{{ detailNotice.tip }}</div>
+          </template>
+        </div>
       </div>
     </div>
 
@@ -149,6 +205,8 @@
             <span class="badge" :class="s.state === 'running' ? 'badge-primary' : 'badge-gray'">
               {{ s.frozen ? '冻结' : (s.state === 'running' ? '活跃' : '历史') }}
             </span>
+            <span v-if="(s.valueScore || 0) >= 3" class="badge badge-warning" title="高价值会话：轮数/输入/时长达标，已自动提炼摘要">★ 高价值</span>
+            <span v-if="s.summary" class="sm-summary text-muted" :title="s.summary">{{ s.summary.split('\n')[0].replace(/\*\*/g, '') }}</span>
             <span class="sm-count text-muted">{{ s.actual_count || s.messageCount || 0 }} 消息</span>
           </div>
           <div v-if="!visibleSessions.length" class="row-empty text-muted">
@@ -161,8 +219,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { marked } from 'marked';
 import AppIcon from '../components/AppIcon.vue';
 
 const API: any = (window as any).electronAPI;
@@ -236,6 +295,9 @@ interface Notice {
   text?: string;
   tip?: string;
   tipOk?: boolean;
+  /** task-done 完整上报 / approval.required 完整请求：详情弹层展示全文用 */
+  report?: any;
+  request?: any;
 }
 const notices = ref<Notice[]>([]);
 const FOLLOWUP_AGENTS = new Set(['pi', 'dsh', 'claude']); // 外部会话追问走暂存，由原终端取走执行
@@ -268,6 +330,7 @@ function onApproverNotice(e: any) {
       agent: e.request.agent,
       title: `待审批 · ${e.request.tool}`,
       brief: e.request.inputSummary || '（无摘要）',
+      request: e.request,
     });
   } else if (e?.type === 'approval.decided') {
     dismiss('ap-' + e.request?.id);
@@ -287,14 +350,48 @@ function onApproverNotice(e: any) {
       title: `${r.ok !== false ? '任务完成' : '任务失败'} · ${dirName(r.cwd)}`,
       brief: String(r.ok !== false ? r.task : r.error || r.task || '').replace(/\s+/g, ' ').trim().slice(0, 140),
       sessionId: r.sessionId,
+      report: r,
     });
   }
 }
-async function decideNotice(n: Notice, decision: 'allow_once' | 'deny') {
+
+// ========== 通知详情弹层：通知只有一行摘要，点开看全文（任务/回复正文/错误）并就地继续对话 ==========
+const detailNotice = ref<Notice | null>(null);
+const detailText = ref('');
+const detailResultHtml = computed(() => {
+  const text = String(detailNotice.value?.report?.result || '');
+  if (!text) return '';
+  try { return marked(text, { async: false }) as string; } catch { return text; }
+});
+const detailDuration = computed(() => {
+  const ms = Number(detailNotice.value?.report?.durationMs || 0);
+  return ms > 0 ? `${Math.max(1, Math.round(ms / 1000))} 秒` : '';
+});
+function openDetail(n: Notice) {
+  detailNotice.value = n;
+  detailText.value = '';
+}
+function closeDetail() {
+  detailNotice.value = null;
+  detailText.value = '';
+}
+/** 弹层里发送追问：复用通知栈同款逻辑，成功后收起弹层（通知本体转 sent 态继续收后续结果） */
+async function sendDetailFollowup() {
+  const n = detailNotice.value;
+  if (!n) return;
+  const body = detailText.value.trim();
+  if (!body) { n.tip = '请先输入要追加的内容'; n.tipOk = false; return; }
+  await sendNoticeFollowup(n, body);
+  if (n.sent) closeDetail();
+}
+async function decideNotice(n: Notice, decision: 'allow_once' | 'allow_session' | 'deny') {
   const r = await API.approver.decide(n.id.slice(3), decision);
   n.tipOk = !!r?.ok;
-  n.tip = r?.ok ? `已${decision === 'deny' ? '拒绝' : '允许一次'}` : (r?.error || '决策失败');
-  if (r?.ok) setTimeout(() => dismiss(n.id), 1500);
+  n.tip = r?.ok ? `已${{ allow_once: '允许一次', allow_session: '本会话放行', deny: '拒绝' }[decision]}` : (r?.error || '决策失败');
+  if (r?.ok) {
+    if (detailNotice.value === n) setTimeout(closeDetail, 1200);
+    setTimeout(() => dismiss(n.id), 1500);
+  }
   await loadPending();
 }
 async function sendNoticeFollowup(n: Notice, text: string) {
@@ -389,6 +486,19 @@ async function scanNow() {
     await Promise.all([loadStatus(), loadDashboard()]);
   } finally { scanning.value = false; }
 }
+// 存量补摘要：高价值但没摘要的历史会话排队提炼（串行执行，结果陆续出现在列表/详情页）
+const backfilling = ref(false);
+async function digestBackfill() {
+  if (backfilling.value) return;
+  backfilling.value = true;
+  try {
+    const r = await API.radar.digestBackfill();
+    pendingStatus.value = r?.ok
+      ? (r.count > 0 ? `已排队 ${r.count} 个会话，摘要提炼中…` : '没有待补的高价值会话')
+      : '❌ ' + (r?.error || '补摘要失败');
+    setTimeout(() => { pendingStatus.value = ''; }, 6000);
+  } finally { backfilling.value = false; }
+}
 async function setEnabled(on: boolean) {
   toggling.value = true;
   try {
@@ -458,6 +568,7 @@ onUnmounted(() => {
 .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .search-input { width: 240px; font-size: 12.5px; }
 .collect-info { font-size: 11.5px; }
+
 .header-sub code, .radar-off code {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -598,6 +709,14 @@ onUnmounted(() => {
 }
 .session-row:last-child { border-bottom: none; }
 .session-row:hover { background: var(--hover); }
+.sm-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
 .sm-time { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); width: 70px; flex-shrink: 0; }
 .sm-tool { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-primary); width: 110px; flex-shrink: 0; }
 .sm-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -772,4 +891,127 @@ onUnmounted(() => {
 .nt-tip.ok { color: var(--success); }
 .nt-tip.err { color: var(--danger); }
 .nt-tip-inline { font-size: 11px; }
+.nt-clickable { cursor: pointer; }
+.nt-clickable:hover { color: var(--primary); }
+
+/* ===== 通知详情弹层 ===== */
+.nt-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.nt-modal {
+  width: min(720px, calc(100vw - 80px));
+  max-height: min(680px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--success);
+  border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+.nt-modal.fail { border-top-color: var(--danger); }
+.nt-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px 10px;
+}
+.nt-modal-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.nt-modal-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.nt-meta-item { font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.nt-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nt-sec-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.nt-sec-err { color: var(--danger); }
+.nt-task-full {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--hover);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.nt-detail-pre {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--hover);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+}
+.nt-detail-err { color: var(--danger); }
+.nt-result-md { font-size: 13px; line-height: 1.75; color: var(--text-primary); word-break: break-word; }
+.nt-result-md :deep(p) { margin: 0 0 10px; }
+.nt-result-md :deep(p:last-child) { margin-bottom: 0; }
+.nt-result-md :deep(h1), .nt-result-md :deep(h2), .nt-result-md :deep(h3), .nt-result-md :deep(h4) {
+  font-size: 14px;
+  margin: 14px 0 8px;
+  color: var(--text-primary);
+}
+.nt-result-md :deep(ul), .nt-result-md :deep(ol) { margin: 4px 0 10px; padding-left: 22px; }
+.nt-result-md :deep(li) { margin: 2px 0; }
+.nt-result-md :deep(code) {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.nt-result-md :deep(pre) {
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0 12px;
+}
+.nt-result-md :deep(pre code) { background: none; padding: 0; }
+.nt-result-md :deep(blockquote) {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+.nt-result-md :deep(a) { color: var(--primary); }
+.nt-result-md :deep(table) { border-collapse: collapse; margin: 8px 0 12px; font-size: 12px; }
+.nt-result-md :deep(th), .nt-result-md :deep(td) { border: 1px solid var(--border); padding: 5px 10px; }
+.nt-no-result { font-size: 12.5px; padding: 8px 0; }
+.nt-followup-bar { display: flex; gap: 8px; margin-top: 6px; }
+.nt-modal-actions { margin-top: 6px; }
 </style>

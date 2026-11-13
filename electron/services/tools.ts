@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as db from './database';
 import * as projectScan from './project-scan';
 import { normalizeDatasetRecord } from './dataset-normalize';
+import { agentRadar } from './agent-radar';
 import logger from './logger';
 
 // typebox 是 ESM-only 包，而本文件编译为 CJS，用 Function 构造器保留运行时真正的动态 import()
@@ -274,6 +275,33 @@ async function queryRemindersTool() {
   return rows.length ? JSON.stringify(rows, null, 2) : '暂无提醒';
 }
 
+// 智能体雷达：本机 AI 工具会话（含提炼层②的 AI 摘要），日报/周报汇总「AI 工具干了什么」用
+async function queryRadarSessionsTool({ date_from, date_to, limit }) {
+  const lim = toNumber(limit, 20);
+  const from = date_from ? new Date(date_from + 'T00:00:00+08:00').getTime() : 0;
+  const to = date_to ? new Date(date_to + 'T23:59:59+08:00').getTime() : Date.now();
+  let rows: any[] = [];
+  try {
+    rows = agentRadar.listSessions({ pageSize: 300 }).rows || [];
+  } catch (e: any) {
+    return '雷达数据不可用：' + (e?.message || e);
+  }
+  const hit = rows
+    .filter((s: any) => (s.sourceUpdatedAt || 0) >= from && (s.sourceUpdatedAt || 0) <= to)
+    .sort((a: any, b: any) => (b.valueScore || 0) - (a.valueScore || 0) || (b.sourceUpdatedAt || 0) - (a.sourceUpdatedAt || 0))
+    .slice(0, lim);
+  if (!hit.length) return '该时间范围内没有雷达会话（雷达未开启或当天无外部 AI 工具活动）';
+  return JSON.stringify(hit.map((s: any) => ({
+    tool: s.tool,
+    project: s.projectDir,
+    title: s.title,
+    value_score: s.valueScore || 0,
+    messages: s.messageCount || 0,
+    updated_at: s.sourceUpdatedAt,
+    summary: String(s.summary || '').slice(0, 500),
+  })), null, 2);
+}
+
 async function getTodayInfoTool({}, kbId) {
   const projectName = kbId ? (db.qOne("SELECT name FROM prj_projects WHERE id = ?", kbId) || {}).name || '项目' : '项目';
   // 笔记统计改为实时扫盘（原先来自已下线的索引表 kb_documents / query_documents 工具）
@@ -403,6 +431,7 @@ async function buildReportToolDefs(kbId) {
     { name: 'create_task', label: 'create_task', description: '创建一条任务（挂在笔记库下）。当用户要求"定时执行/自动执行/记录一件事"（如每天生成日报、每周总结、定时整理数据）时应调用本工具。trigger_type: now(立即执行)/once(一次性定时，需 scheduled_start YYYY-MM-DD HH:MM)/cycle(循环，需 cycle_type+cycle_time)。', parameters: Type.Object({ title: Type.String({ description: '任务标题' }), prompt: optStr('任务详细说明，AI 将据此自主执行'), project_name: optStr('项目名称（笔记库名），不传则用当前上下文'), trigger_type: optStr('触发类型: now / once / cycle，默认 now'), scheduled_start: optStr('once 用: 执行时间 YYYY-MM-DD HH:MM'), cycle_type: optStr('cycle 用: daily / weekly / monthly / cron'), cycle_value: optStr('cycle 用: weekly 为星期(逗号分隔)或 cron 表达式；daily 可为空'), cycle_time: optStr('cycle 用: 执行时间 HH:MM，如 09:00'), notify_feishu: optNum('是否推送飞书通知: 1 / 0'), output_target: optStr('结果保存路径（相对笔记库），默认存到 任务输出/ 目录') }), execute: exec(createTaskTool) },
     { name: 'update_task', label: 'update_task', description: '更新任务（标题、说明、触发配置、状态）。先调用 query_tasks 获取任务 id。', parameters: Type.Object({ id: Type.Number({ description: '任务 id' }), title: optStr('新标题'), prompt: optStr('新说明'), status: optStr('状态: pending / in_progress / done'), trigger_type: optStr('触发类型: now / once / cycle'), scheduled_start: optStr('once 用: YYYY-MM-DD HH:MM'), cycle_type: optStr('cycle 用: daily / weekly / monthly / cron'), cycle_value: optStr('cycle 用'), cycle_time: optStr('cycle 用: HH:MM') }), execute: exec(updateTaskTool) },
     { name: 'get_today_info', label: 'get_today_info', description: '获取当前日期信息（今天的中国日期、项目/知识库名称等）。', parameters: Type.Object({}), execute: exec((args) => getTodayInfoTool(args, kbId)) },
+    { name: 'query_radar_sessions', label: 'query_radar_sessions', description: '查询智能体雷达采集的本机 AI 编码工具会话（Pi / Claude Code / Codex 等），带 AI 提炼的会话摘要与价值分。用于汇总「AI 工具今天/本周干了什么」。', parameters: Type.Object({ date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryRadarSessionsTool({ ...args, limit: toNumber(args.limit, 20) })) },
   ];
 }
 

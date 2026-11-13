@@ -115,6 +115,20 @@ class ApproverService {
   }
 
   /**
+   * 受管会话直接续跑（雷达通知详情弹层用）：命中受管会话返回 true 并触发 prompt；
+   * 外部会话返回 { managed: false }，由调用方走 stash 由扩展/插件长轮询取走。
+   */
+  managedSessionPrompt(sessionId: string, text: string): { managed: boolean; ok?: boolean; error?: string } {
+    const s = this.manager?.get(String(sessionId || ''));
+    if (!s) return { managed: false };
+    if (s.status === 'running') return { managed: true, ok: false, error: '该会话正在执行，等完成后再追问' };
+    void this.manager!.prompt(s.id, text).catch((e: any) => {
+      logger.error('[Approver] 受管会话续跑失败: %s', e?.message || e);
+    });
+    return { managed: true, ok: true };
+  }
+
+  /**
    * 订阅审批事件（桌面面板用）：只转 approval.required / approval.decided，
    * 会话输出类事件量大且面板用不着，不进这条通道。
    * @returns 取消订阅函数

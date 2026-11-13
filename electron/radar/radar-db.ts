@@ -36,6 +36,12 @@ export interface SessionRow {
   frozen: number;
   frozenReason: string;
   missingSince: number;
+  /** 规则价值分 0-5（worker 在会话收口时计算落库）：≥3 视为高价值，作为 AI 摘要门槛 */
+  valueScore?: number;
+  /** AI 会话摘要（收口后提炼：做了什么/关键决策/涉及文件/结果） */
+  summary?: string;
+  summaryMsgCount?: number;
+  summaryAt?: number;
 }
 
 export function dbPath(root: string): string {
@@ -138,6 +144,16 @@ export class RadarDb {
         VALUES (new.rowid, new.content, new.thinking);
       END;
     `);
+    // 增量迁移：提炼层字段（价值分 + AI 摘要）。node:sqlite 无 ALTER IF NOT EXISTS，按表结构判断
+    const cols = (this.db.prepare("PRAGMA table_info(radar_session)").all() as any[]).map((c) => c.name);
+    if (!cols.includes('value_score')) {
+      this.db.exec("ALTER TABLE radar_session ADD COLUMN value_score INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!cols.includes('summary')) {
+      this.db.exec("ALTER TABLE radar_session ADD COLUMN summary TEXT NOT NULL DEFAULT ''");
+      this.db.exec("ALTER TABLE radar_session ADD COLUMN summary_msg_count INTEGER NOT NULL DEFAULT 0");
+      this.db.exec("ALTER TABLE radar_session ADD COLUMN summary_at INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   get conn(): DatabaseSync { return this.db; }
@@ -317,6 +333,83 @@ export class RadarDb {
         upd.run(e.tool, e.sessionId, e.state, e.ts || now, now);
       }
     });
+  }
+
+  /**
+   * 规则价值分（0-5，越高越重要）。只用库里现成的聚合信号，零 AI 成本：
+   *   轮数（用户消息数）、用户输入字数、AI 输出字数、会话时长。
+   * ≥3 视为高价值：列表打标 + 作为 AI 摘要的门槛（水会话不调模型）。
+   */
+  computeValueScore(tool: string, sessionId: string): number {
+    const agg = this.db.prepare(`
+      SELECT
+        SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS rounds,
+        SUM(CASE WHEN role = 'user' THEN length(content) ELSE 0 END) AS userChars,
+        SUM(CASE WHEN role = 'assistant' THEN length(content) ELSE 0 END) AS aiChars
+      FROM radar_message WHERE tool = ? AND session_id = ?
+    `).get(tool, sessionId) as any;
+    const s = this.db.prepare(
+      'SELECT source_created_at, source_updated_at FROM radar_session WHERE tool = ? AND session_id = ?',
+    ).get(tool, sessionId) as any;
+    if (!s) return 0;
+    const rounds = Number(agg?.rounds) || 0;
+    const userChars = Number(agg?.userChars) || 0;
+    const aiChars = Number(agg?.aiChars) || 0;
+    const durationMs = Math.max(0, (s.source_updated_at || 0) - (s.source_created_at || 0));
+    let score = 0;
+    if (rounds >= 3) score += 1;
+    if (rounds >= 10) score += 1;
+    if (userChars >= 400) score += 1;
+    if (aiChars >= 4000) score += 1;
+    if (durationMs >= 10 * 60_000) score += 1;
+    return score;
+  }
+
+  /** 收口时落价值分（只增不减：会话后续增长只会让分数上升，重复触发无副作用） */
+  saveValueScore(tool: string, sessionId: string, score: number): void {
+    this.db.prepare(`
+      UPDATE radar_session SET value_score = MAX(value_score, ?)
+      WHERE tool = ? AND session_id = ?
+    `).run(score, tool, sessionId);
+  }
+
+  /**
+   * 价值分滚动刷新：对全部有内容的会话重算分数，只写变化的行。
+   * 价值分是动态的——会话被捡起来续聊后（轮数/字数/时长增长）分数应该跟着涨；
+   * 收口时实时算 + 这里定期兜底（启动全量 + 运行中每 10 分钟），三路保证时效。
+   * 纯 SQL 聚合，千级会话毫秒级；saveValueScore 用 MAX 保证只增不减。
+   */
+  refreshValueScores(): number {
+    const rows = this.db.prepare(
+      'SELECT tool, session_id, value_score, source_created_at, source_updated_at FROM radar_session WHERE message_count > 0',
+    ).all() as any[];
+    let changed = 0;
+    for (const r of rows) {
+      try {
+        const score = this.computeValueScore(r.tool, r.session_id);
+        if (score !== (r.value_score || 0)) { this.saveValueScore(r.tool, r.session_id, score); changed++; }
+      } catch { /* 单个失败不影响整体 */ }
+    }
+    return changed;
+  }
+
+  /** AI 摘要写回（worker 写入端专用；summary_msg_count 用于判断会话又长出了多少新内容） */
+  saveSummary(tool: string, sessionId: string, summary: string, msgCount: number): void {
+    this.db.prepare(`
+      UPDATE radar_session SET summary = ?, summary_msg_count = ?, summary_at = ?
+      WHERE tool = ? AND session_id = ?
+    `).run(summary || '', msgCount || 0, Date.now(), tool, sessionId);
+  }
+
+  /** 高价值但还没摘要的会话（存量补摘要用，最新优先） */
+  sessionsNeedingSummary(minScore: number, limit = 200): SessionRow[] {
+    const rows = this.db.prepare(`
+      SELECT *, ${this.stateExpr()} AS effective_state
+      FROM radar_session
+      WHERE value_score >= ? AND summary = '' AND frozen = 0
+      ORDER BY source_updated_at DESC LIMIT ?
+    `).all(minScore, Math.min(limit, 500)) as any[];
+    return rows.map(rowToSession);
   }
 
   /** 会话分页列表（按工具筛选 + 最近更新排序） */
@@ -530,5 +623,7 @@ function rowToSession(r: any): SessionRow {
     // 读路径带出防僵尸投影（effective_state）；worker 内部写入路径无该列，回退原始 state
     state: r.effective_state ?? r.state, stateChangedAt: r.state_changed_at, frozen: r.frozen,
     frozenReason: r.frozen_reason, missingSince: r.missing_since,
+    valueScore: r.value_score ?? 0, summary: r.summary || '',
+    summaryMsgCount: r.summary_msg_count ?? 0, summaryAt: r.summary_at ?? 0,
   };
 }

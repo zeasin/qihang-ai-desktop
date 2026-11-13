@@ -189,6 +189,17 @@ class AgentRadarService {
     }
   }
 
+  /** AI 摘要写回（转交 worker 写入端；worker 未运行时静默丢弃，下次收口会重新提炼） */
+  saveSummary(tool: string, sessionId: string, summary: string, msgCount: number): boolean {
+    if (!this.worker) return false;
+    try {
+      this.worker.postMessage({ type: 'save-summary', tool, sessionId, summary, msgCount });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   status(): any {
     const enabled = this.isEnabled();
     const db = this.queryDb();
@@ -251,6 +262,12 @@ class AgentRadarService {
   sessionInfo(tool: string, sessionId: string): any {
     const db = this.queryDb();
     return db ? db.getSession(tool, sessionId) : null;
+  }
+
+  /** 高价值但还没摘要的会话（存量补摘要用） */
+  sessionsNeedingSummary(minScore = 3, limit = 200): any[] {
+    const db = this.queryDb();
+    return db ? db.sessionsNeedingSummary(minScore, limit) : [];
   }
 
   stateEvents(tool: string, sessionId: string): any[] {

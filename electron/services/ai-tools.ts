@@ -17,6 +17,10 @@ export interface AiToolGenerateOptions {
   sessionId: string;
   onDelta?: (text: string) => void;
   customTools?: any[];
+  /** 指定模型（provider/modelId 形如 openrouter/anthropic/claude-sonnet-4）；缺省用 pi 默认模型 */
+  modelPattern?: string;
+  /** 硬超时毫秒数（缺省 5 分钟；超时经由 runPi 中止会话并报「可能是限流」） */
+  timeoutMs?: number;
 }
 
 /**
@@ -24,17 +28,19 @@ export interface AiToolGenerateOptions {
  * 使用独立 session（前缀 aitool_），默认不注入本地工具；可传 customTools（如周报查询工具）。
  */
 export async function generateWithPi(opts: AiToolGenerateOptions): Promise<string> {
-  const { prompt, sessionId, onDelta, customTools } = opts;
+  const { prompt, sessionId, onDelta, customTools, modelPattern, timeoutMs = 300000 } = opts;
   return new Promise((resolve, reject) => {
     let done = false;
     const timeout = setTimeout(() => {
-      if (!done) { done = true; reject(new Error('生成超时（5分钟），请重试')); }
-    }, 300000);
+      if (!done) { done = true; reject(new Error(`生成超时（${Math.round(timeoutMs / 60000)}分钟），请重试`)); }
+    }, timeoutMs + 5000);
 
     runPi({
       prompt,
       sessionId: 'aitool_' + sessionId,
       customTools,
+      modelPattern,
+      timeoutMs,
       onDelta,
       onDone: (finalText) => {
         if (done) return;

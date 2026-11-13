@@ -324,6 +324,18 @@ function listSessions(projectDir: string): SessionInfo[] {
     }));
 }
 
+// ── 探针 ──────────────────────────────────────────────────────────
+
+/** 探针：活跃窗口附近有写入的会话（ts 毫秒）。源库没变时 ensurePlainDb 只是 stat + 小查询 */
+function probeSessions(cutoffSec: number): Array<{ id: string; ts: number }> {
+  const db = ensurePlainDb();
+  const rows = db.prepare(
+    `SELECT session_id, updated_at FROM chat_session
+     WHERE deleted_at = 0 AND updated_at > ?`,
+  ).all(cutoffSec) as any[];
+  return rows.map((r) => ({ id: String(r.session_id), ts: Number(r.updated_at) * 1000 }));
+}
+
 // ── 历史消息 ──────────────────────────────────────────────────────
 
 interface TraeRawMessage {
@@ -448,7 +460,9 @@ if (parentPort) {
       if (!state.srcPath) throw new Error('Trae worker 未初始化');
       const result = op === 'list'
         ? listSessions(String(args?.projectDir || ''))
-        : loadSessionMessages(String(args?.sessionId || ''));
+        : op === 'probe'
+          ? probeSessions(Number(args?.cutoffSec || 0))
+          : loadSessionMessages(String(args?.sessionId || ''));
       parentPort!.postMessage({ id, result });
     } catch (e: any) {
       parentPort!.postMessage({ id, error: String(e?.message || e) });
