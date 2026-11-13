@@ -30,6 +30,7 @@ import { deployPiGate, piGateTargetDir, PI_GATE_FILENAME } from './pi-gate-deplo
 import type { PiGateDeployResult } from './pi-gate-deploy';
 import * as feishu from '../services/feishu';
 import * as appConfig from '../services/app-config';
+import { notify } from '../services/notify';
 import logger from '../services/logger';
 
 /** 外部会话 hook 等待上限：hook 客户端默认超时 600s，必须在它超时前给出响应；超限返回空决策回落正常权限提示 */
@@ -217,6 +218,18 @@ class ApproverService {
       const text = buildTaskNotify(report);
       logger.info('[Approver] %s 回合收口（%s）：%s | 会话 %s',
         report.agent, report.ok ? '完成' : '失败', report.cwd, report.sessionId || '(无)');
+      // 桌面面板推送：回合收口也扇出给渲染层（雷达页通知用），与审批事件共用 approver:event 通道
+      for (const fn of this.approvalSubs) {
+        try { fn({ type: 'task-done', report }); } catch { /* 订阅者异常不影响总线 */ }
+      }
+      // 桌面系统通知：回合完成/失败本机也同步提醒（飞书之外的兜底，人在电脑前也能第一时间知道）
+      const dir = (report.cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || report.cwd || '?';
+      const brief = String(report.ok ? report.task : report.error || report.task || '')
+        .replace(/\s+/g, ' ').trim().slice(0, 120);
+      notify(
+        `${report.ok ? '✅ 任务完成' : '❌ 任务失败'} · ${dir}`,
+        brief || `${report.label || report.agent} 回合${report.ok ? '完成' : '失败'}`,
+      );
       if (!feishu.isRunning() || !chatId) {
         logger.warn('[Approver] 飞书未启用或未配 feishuChatId，通知未发送');
         return;
@@ -398,6 +411,8 @@ class ApproverService {
       },
       dshFollowupPoll: async (sessionId) => {
         const text = await takeFollowup(sessionId, 25_000);
+        // 取走留痕：排查「追问提交了但终端没收到」时的关键证据（扩展侧是否还在轮询）
+        if (text) logger.info('[Approver] 追问已取走: session=%s %s字', String(sessionId || '').slice(0, 24), text.length);
         return text ? { text } : {};
       },
       stashDshFollowup: (sessionId, text) => stashFollowup(sessionId, text),

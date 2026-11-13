@@ -45,7 +45,7 @@ export function buildApprovalCard(req: ApprovalRequest): string {
           { tag: 'button', text: { tag: 'plain_text', content: '拒绝' }, type: 'danger', value: { act: 'approval', approvalId: req.id, decision: 'deny' } },
         ],
       },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: `审批 ${req.id.slice(0, 8)} · 不设超时，一直等待处理` }] },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: `审批 ${req.id.slice(0, 8)} · 60 分钟无人处理将自动过期` }] },
     ],
   });
 }

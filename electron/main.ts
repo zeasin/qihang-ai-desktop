@@ -50,6 +50,7 @@ import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { approver } from './approval/approver';
+import { stashFollowup } from './approval/task-notify';
 import { startMobileGateway, stopMobileGateway, mobileGatewayStatus, requestMobilePairCode, broadcastMobileEvent } from './mobile/gateway';
 import { startFrpc, stopFrpc, restartFrpc, frpcStatus, resolveFrpcPaths } from './mobile/frpc';
 import logger from './services/logger';
@@ -1331,6 +1332,24 @@ ipcMain.handle('radar:search', (_, { q, limit }) => {
     return { ok: true, rows: agentRadar.searchMessages(String(q || ''), Math.min(Number(limit) || 50, 200)) };
   } catch (e: any) {
     return { ok: false, error: e && e.message ? e.message : String(e), rows: [] };
+  }
+});
+// 雷达详情页「插入对话」：把追问文本按 sessionId 暂存，由外部 agent 的扩展/插件长轮询取走注入原会话
+// （pi → pi-approver-gate /api/hooks/pi-followup；dsh → dsh-approver 插件 /api/hooks/dsh-followup，共用暂存 Map）
+ipcMain.handle('radar:followup', (_, { tool, sessionId, text }) => {
+  const FOLLOWUP_TOOLS = new Set(['pi', 'dsh']);
+  const sid = String(sessionId || '').trim();
+  const body = String(text || '').trim();
+  if (!FOLLOWUP_TOOLS.has(String(tool || ''))) {
+    return { ok: false, error: '该工具暂不支持插入对话（仅 pi / DSH 外部会话）' };
+  }
+  if (!sid || !body) return { ok: false, error: '需要 sessionId 和消息内容' };
+  try {
+    stashFollowup(sid, body.slice(0, 4000));
+    logger.info('[Radar] 追问已暂存: tool=%s session=%s %s字', tool, sid.slice(0, 24), body.length);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
 

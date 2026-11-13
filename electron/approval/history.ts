@@ -4,7 +4,8 @@ import type { ApprovalRequest } from './types';
 
 type HistoryEvent =
   | { type: 'submitted'; at: string; request: ApprovalRequest }
-  | { type: 'decided'; at: string; id: string; decision: string; by: string };
+  | { type: 'decided'; at: string; id: string; decision: string; by: string }
+  | { type: 'expired'; at: string; id: string; by: string };
 
 /**
  * JSONL 追加审计（从 qihang-code-approver 移植）：
@@ -44,6 +45,13 @@ export class History {
         if (req) {
           req.status = 'decided';
           req.decision = ev.decision as ApprovalRequest['decision'];
+          req.decidedAt = ev.at;
+          req.decidedBy = ev.by;
+        }
+      } else if (ev.type === 'expired') {
+        const req = list.get(ev.id);
+        if (req) {
+          req.status = 'expired';
           req.decidedAt = ev.at;
           req.decidedBy = ev.by;
         }

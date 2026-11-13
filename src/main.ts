@@ -75,6 +75,7 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
             : null,
         }),
         search: async (q: string) => sessions.slice(0, 5),
+        followup: async (_tool: string, _sessionId: string, _text: string) => ({ ok: true }),
       };
     })(),
     todo: {

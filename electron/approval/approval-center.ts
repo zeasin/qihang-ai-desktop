@@ -23,8 +23,15 @@ const SUMMARY_MAX = 200;
 const DETAIL_MAX = 2000;
 
 /**
+ * 挂起 TTL：各 agent 侧等待窗口（claude hook 540s、DSH/pi 插件 ≤61 分钟）都不超过 1 小时，
+ * 超过即请求方已超时离开，继续挂着只会堆积「僵尸待审批」。到点按 expired 收口。
+ */
+const PENDING_TTL_MS = 60 * 60_000;
+
+/**
  * 审批状态机（从 qihang-code-approver 移植）。
- * 按拍板：不设超时——挂起一直等，直到有人决策或会话死亡按拒绝收口。
+ * 决策不设人工超时——挂起一直等，直到有人决策或会话死亡按拒绝收口；
+ * 但挂起超过 PENDING_TTL_MS 仍无人处理时按 expired 自动收口（请求方早已放弃等待）。
  * 挂起 = 一个未决 Promise；resolve() 先删 pending 再 resolve，天然幂等（双击第二次拿到 not_pending）。
  */
 export class ApprovalCenter {
@@ -42,15 +49,39 @@ export class ApprovalCenter {
     return filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  /** 当前挂起待决策的审批（新→旧）。只给桌面端列表用，避开历史噪声 */
+  /** 当前挂起待决策的审批（新→旧）。只给桌面端列表用，避开历史噪声。读时顺带清扫过时项 */
   listPending(): ApprovalRequest[] {
+    this.expireStale();
     return [...this.pending.values()]
       .map((e) => e.req)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   pendingCount(): number {
+    this.expireStale();
     return this.pending.size;
+  }
+
+  /** 过时审批清扫：挂起超过 TTL 的按 expired 收口（列表/计数读取时自动触发，也可手动调） */
+  expireStale(): void {
+    const now = Date.now();
+    for (const [id, entry] of [...this.pending]) {
+      const created = Date.parse(entry.req.createdAt) || 0;
+      if (now - created < PENDING_TTL_MS) continue;
+      this.pending.delete(id);
+      const req = entry.req;
+      req.status = 'expired';
+      req.decidedAt = new Date().toISOString();
+      req.decidedBy = 'ttl-expired';
+      this.deps.history.append({ type: 'expired', at: req.decidedAt, id, by: 'ttl-expired' });
+      this.deps.bus.emit({ type: 'approval.decided', request: req });
+      if (req.feishuMessageId && this.deps.patchCard) {
+        this.deps.patchCard(req).catch((e: any) => logger.error('[Approver] 过期卡片更新失败: %s', e?.message || e));
+      }
+      // 请求方若还在挂起等决策（窗口内）：按 deny 收口（fail-closed 口径），让其尽快继续
+      entry.resolve('deny');
+      logger.info('[Approver] 过时审批已过期收口 %s（挂起超 60 分钟无人处理）', id.slice(0, 8));
+    }
   }
 
   /** adapter / 外部 hook 调用：挂起等待决策。发卡失败不影响决策通道 */

@@ -113,6 +113,7 @@ interface ElectronAPI {
     sessionInfo: (tool: string, sessionId: string) => Promise<{ ok: boolean; info: any }>;
     unfreeze: (tool: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>;
     search: (q: string, limit?: number) => Promise<{ ok: boolean; rows: any[] }>;
+    followup: (tool: string, sessionId: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   };
   mcp: {
     list: () => Promise<{ ok: boolean; servers: any[]; error?: string }>;

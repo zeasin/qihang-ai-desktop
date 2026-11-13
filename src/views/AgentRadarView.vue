@@ -44,8 +44,8 @@
         <div v-for="a in pending" :key="a.id" class="approval-row">
           <div class="ap-main" @click="toggleDetail(a.id)">
             <div class="ap-top">
-              <span class="badge" :class="a.agent === 'claude' ? 'badge-primary' : 'badge-success'">
-                {{ a.agent === 'claude' ? 'Claude Code' : 'DSH' }}
+              <span class="badge" :class="agentBadgeClass(a.agent)">
+                {{ agentLabel(a.agent) }}
               </span>
               <span class="ap-tool">{{ a.tool }}</span>
               <span class="ap-summary">{{ a.inputSummary }}</span>
@@ -59,6 +59,29 @@
             <button class="btn btn-danger btn-sm" @click.stop="decide(a, 'deny')">拒绝</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 页面通知：回合完成/失败 + 待审批，可就地决策或追加对话（事件推送驱动，右上角浮动） -->
+    <div v-if="notices.length" class="notice-stack">
+      <div v-for="n in notices" :key="n.id" class="notice" :class="{ fail: n.kind === 'task' && n.ok === false, sent: n.sent }">
+        <div class="nt-head">
+          <span class="badge" :class="agentBadgeClass(n.agent)">{{ agentLabel(n.agent) }}</span>
+          <span class="nt-title">{{ n.title }}</span>
+          <button class="nt-close" title="关闭" @click="dismiss(n.id)">×</button>
+        </div>
+        <div class="nt-brief" :title="n.brief">{{ n.brief }}</div>
+        <div v-if="n.kind === 'approval'" class="nt-actions">
+          <button class="btn btn-primary btn-sm" @click="decideNotice(n, 'allow_once')">允许一次</button>
+          <button class="btn btn-danger btn-sm" @click="decideNotice(n, 'deny')">拒绝</button>
+          <span class="text-muted nt-tip-inline">本会话放行等完整选项见待审批列表</span>
+        </div>
+        <div v-if="n.kind === 'task' && canFollowup(n.agent) && !n.sent" class="nt-actions">
+          <button class="btn btn-primary btn-sm" @click="sendNoticeFollowup(n, '继续')">▶️ 继续</button>
+          <input v-model="n.text" class="nt-input" placeholder="或输入要追加的内容…" @keyup.enter="sendNoticeFollowup(n, n.text || '')">
+          <button class="btn btn-secondary btn-sm" @click="sendNoticeFollowup(n, n.text || '')">发送</button>
+        </div>
+        <div v-if="n.tip" class="nt-tip" :class="n.tipOk ? 'ok' : 'err'">{{ n.tip }}</div>
       </div>
     </div>
 
@@ -189,6 +212,104 @@ const TOOL_LABELS: Record<string, string> = {
 };
 const toolLabel = (t: string) => TOOL_LABELS[t] || t;
 
+// 审批来源标识：pi 走 pi-approver-gate 扩展上报，此前被写死成 DSH 分支导致显示错误
+const AGENT_LABELS: Record<string, string> = {
+  claude: 'Claude Code', dsh: 'DSH', pi: 'Pi',
+};
+const agentLabel = (a: string) => AGENT_LABELS[a] || a;
+const agentBadgeClass = (a: string) =>
+  a === 'claude' ? 'badge-primary' : a === 'pi' ? 'badge-warning' : 'badge-success';
+
+// ========== 页面通知：回合完成/失败 + 待审批（approver:event 推送驱动，右上角浮动） ==========
+// 完成的通知 30s 自动消退；失败/待审批保留到人处理（就地决策或追加对话后关闭）。
+// 状态回调：点过「继续/发送」的通知转入 sent 态（按钮隐藏，提示常驻），同一会话的下一轮
+// task-done 到达时自动收掉——新结果弹新通知，形成「失败 → 继续 → 新结果」闭环。
+interface Notice {
+  id: string;
+  kind: 'approval' | 'task';
+  agent: string;
+  ok?: boolean;
+  title: string;
+  brief: string;
+  sessionId?: string;
+  sent?: boolean;
+  text?: string;
+  tip?: string;
+  tipOk?: boolean;
+}
+const notices = ref<Notice[]>([]);
+const FOLLOWUP_AGENTS = new Set(['pi', 'dsh']); // 外部会话追问走暂存长轮询，原终端取走执行
+const canFollowup = (a: string) => FOLLOWUP_AGENTS.has(a);
+
+function dirName(cwd: string): string {
+  return (cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd || '?';
+}
+function dismiss(id: string) {
+  notices.value = notices.value.filter((n) => n.id !== id);
+}
+function pushNotice(n: Notice) {
+  if (notices.value.some((x) => x.id === n.id)) return;
+  notices.value.unshift(n);
+  if (notices.value.length > 5) notices.value.pop(); // 最多留 5 条，防刷屏
+  if (n.kind === 'task' && n.ok !== false) {
+    setTimeout(() => dismiss(n.id), 30_000);
+  }
+}
+function onApproverNotice(e: any) {
+  if (e?.type === 'approval.required' && e.request) {
+    pushNotice({
+      id: 'ap-' + e.request.id,
+      kind: 'approval',
+      agent: e.request.agent,
+      title: `待审批 · ${e.request.tool}`,
+      brief: e.request.inputSummary || '（无摘要）',
+    });
+  } else if (e?.type === 'approval.decided') {
+    dismiss('ap-' + e.request?.id);
+  } else if (e?.type === 'task-done' && e.report) {
+    const r = e.report;
+    // 状态回调：该会话此前「已发送继续」的通知，等的就是这一轮结果 → 收掉旧通知，弹新结果
+    if (r.sessionId) {
+      notices.value = notices.value.filter(
+        (x) => !(x.kind === 'task' && x.sent && x.agent === r.agent && x.sessionId === r.sessionId),
+      );
+    }
+    pushNotice({
+      id: `task-${r.agent}-${r.sessionId || ''}-${Date.now()}`,
+      kind: 'task',
+      agent: r.agent,
+      ok: r.ok !== false,
+      title: `${r.ok !== false ? '任务完成' : '任务失败'} · ${dirName(r.cwd)}`,
+      brief: String(r.ok !== false ? r.task : r.error || r.task || '').replace(/\s+/g, ' ').trim().slice(0, 140),
+      sessionId: r.sessionId,
+    });
+  }
+}
+async function decideNotice(n: Notice, decision: 'allow_once' | 'deny') {
+  const r = await API.approver.decide(n.id.slice(3), decision);
+  n.tipOk = !!r?.ok;
+  n.tip = r?.ok ? `已${decision === 'deny' ? '拒绝' : '允许一次'}` : (r?.error || '决策失败');
+  if (r?.ok) setTimeout(() => dismiss(n.id), 1500);
+  await loadPending();
+}
+async function sendNoticeFollowup(n: Notice, text: string) {
+  const body = String(text || '').trim();
+  if (!body) { n.tip = '请先输入要追加的内容'; n.tipOk = false; return; }
+  const r = await API.radar.followup(n.agent, n.sessionId || '', body);
+  if (r?.ok) {
+    // 转入已发送态：追问暂存是单槽位（同会话再发会覆盖），按钮收起防误触；
+    // 提示常驻，等该会话下一轮 task-done 到达时整条收掉（见 onApproverNotice）
+    n.sent = true;
+    n.text = '';
+    n.tip = '已发送，等待原终端会话取走执行（10 分钟内有效，新结果到达后本通知自动关闭）';
+    n.tipOk = true;
+  } else {
+    n.tip = '提交失败：' + (r?.error || '未知错误');
+    n.tipOk = false;
+    setTimeout(() => { if (!n.sent) n.tip = ''; }, 6000);
+  }
+}
+
 const visibleSessions = ref<any[]>([]);
 
 function applySearchMode() {
@@ -294,9 +415,10 @@ function onRadarEvent() {
   eventTimer = window.setTimeout(() => { void loadDashboard(); }, 800);
 }
 
-// 审批事件推送：挂起/决策时刷新待审批列表（低频，直接刷）
-function onApproverEvent() {
+// 审批/回合收口事件推送：刷新待审批列表 + 页面通知（完成/失败/待审批）
+function onApproverEvent(payload?: any) {
   void loadPending();
+  onApproverNotice(payload);
 }
 
 onMounted(async () => {
@@ -318,6 +440,7 @@ onUnmounted(() => {
 
 <style scoped>
 .radar-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -566,4 +689,82 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 .ap-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* ===== 页面通知（右上角浮动栈） ===== */
+.notice-stack {
+  position: absolute;
+  top: 12px;
+  right: 24px;
+  width: 380px;
+  max-height: calc(100% - 40px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 50;
+}
+.notice {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.notice.fail { border-left-color: var(--danger); }
+.notice.sent { border-left-color: var(--warning); }
+.nt-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nt-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nt-close {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.nt-close:hover { color: var(--text-primary); }
+.nt-brief {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.nt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nt-input {
+  flex: 1;
+  min-width: 120px;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--hover);
+  color: var(--text-primary);
+  outline: none;
+}
+.nt-input:focus { border-color: var(--primary); }
+.nt-tip { font-size: 11.5px; }
+.nt-tip.ok { color: var(--success); }
+.nt-tip.err { color: var(--danger); }
+.nt-tip-inline { font-size: 11px; }
 </style>

@@ -84,6 +84,25 @@
           </details>
         </div>
           <div v-if="!messages.length && !loading" class="col-empty text-muted">该会话还没有采集到消息</div>
+
+          <!-- 插入对话：pi / DSH 外部会话支持追问，由原终端会话长轮询取走执行 -->
+          <div v-if="followupSupported" class="followup-bar">
+            <div v-if="followupTip" class="fu-tip" :class="followupOk ? 'ok' : 'err'">{{ followupTip }}</div>
+            <div class="fu-row">
+              <input
+                v-model="followupText"
+                class="fu-input"
+                type="text"
+                :placeholder="state === 'running' ? '会话运行中，消息将在回合收口后被取走' : '插入对话，如：继续'"
+                :disabled="sending"
+                @keyup.enter="sendFollowup"
+              >
+              <button class="btn btn-primary btn-sm fu-send" :disabled="sending || !followupText.trim()" @click="sendFollowup">
+                {{ sending ? '发送中…' : '发送' }}
+              </button>
+            </div>
+            <div class="fu-hint text-muted">{{ followupHint }}</div>
+          </div>
       </div>
 
       <div v-else-if="tab === 'timeline'" class="msg-col">
@@ -200,6 +219,46 @@ async function loadStateEvents() {
 function parseTools(json: string): any[] {
   if (!json) return [];
   try { return JSON.parse(json) || []; } catch { return []; }
+}
+
+// ========== 插入对话（pi / DSH 外部会话追问） ==========
+// 文本按 sessionId 暂存到审批通道（TTL 10 分钟），由原终端会话的扩展/插件长轮询取走注入执行，
+// 不接管不 fork：pi 走 pi-approver-gate，DSH 走 dsh-approver 插件；终端已关时按 TTL 过期。
+const FOLLOWUP_LABELS: Record<string, string> = { pi: 'Pi', dsh: 'DSH' };
+const followupSupported = computed(() => !!FOLLOWUP_LABELS[tool.value]);
+const followupHint = computed(() =>
+  followupSupported.value
+    ? `消息将在 10 分钟内被 ${FOLLOWUP_LABELS[tool.value]} 原终端会话取走执行（终端需保持打开）`
+    : ''
+);
+const followupText = ref('');
+const sending = ref(false);
+const followupTip = ref('');
+const followupOk = ref(false);
+let tipTimer: number | undefined;
+
+async function sendFollowup() {
+  const text = followupText.value.trim();
+  if (!text || sending.value) return;
+  sending.value = true;
+  try {
+    const res = await API.radar.followup(tool.value, sessionId.value, text);
+    if (res?.ok) {
+      followupText.value = '';
+      followupOk.value = true;
+      followupTip.value = '已提交，原终端会话将取走执行';
+    } else {
+      followupOk.value = false;
+      followupTip.value = '提交失败：' + (res?.error || '未知错误');
+    }
+  } catch (e: any) {
+    followupOk.value = false;
+    followupTip.value = '提交失败：' + (e?.message || e);
+  } finally {
+    sending.value = false;
+    if (tipTimer) window.clearTimeout(tipTimer);
+    tipTimer = window.setTimeout(() => { followupTip.value = ''; }, 6000);
+  }
 }
 
 // ========== markdown 渲染（雷达是存档阅读器：用户/助手消息都按 markdown 排版） ==========
@@ -391,4 +450,32 @@ onUnmounted(() => {
   border-radius: 4px;
   flex-shrink: 0;
 }
+
+/* 插入对话栏 */
+.followup-bar {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fu-row { display: flex; align-items: center; gap: 8px; }
+.fu-input {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+}
+.fu-input:focus { border-color: var(--primary); }
+.fu-send { flex-shrink: 0; }
+.fu-hint { font-size: 11px; }
+.fu-tip { font-size: 12px; }
+.fu-tip.ok { color: var(--success); }
+.fu-tip.err { color: var(--danger); }
 </style>

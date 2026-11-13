@@ -134,6 +134,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sessionInfo: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:session-info', { tool, sessionId }),
     unfreeze: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:unfreeze', { tool, sessionId }),
     search: (q: string, limit?: number) => ipcRenderer.invoke('radar:search', { q, limit }),
+    followup: (tool: string, sessionId: string, text: string) =>
+      ipcRenderer.invoke('radar:followup', { tool, sessionId, text }),
   },
 
   // MCP 数据源（配置 / 连接测试 / 拉数 / AI 分类）

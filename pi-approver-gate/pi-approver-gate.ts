@@ -205,15 +205,22 @@ export default function (pi: ExtensionAPI): void {
   let agentStartTs = 0;
   // 最后一次 agent_end 的消息快照（agent_settled 事件本身不带 messages，取这里判定成败）
   let lastMessages: any[] = [];
-  // 「接着问」轮询循环控制：gen 作废旧循环，active 防并发
-  let pollGen = 0;
-  let pollActive = false;
+  // 「接着问」轮询：扩展生命周期内最多一个循环，deadline 每次回合收口续期，10 分钟无追问自动停。
+  // 旧实现用 gen/pollActive 门控有致命 bug：第二次收口先 ++pollGen 再 return，旧循环退出后
+  // pollActive 永久卡 true，之后所有收口都不再轮询——追问暂存后没人取走（2026-11-13 修复）。
+  let roundActive = false;
+  let pollDeadline = 0;
+  let pollRunning = false;
   // task-done 端点：从审批端点派生（同端口）
   const taskDoneUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/task-done");
+  const followupUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/pi-followup");
+  const POLL_WAIT_MS = 25_000; // 服务端长轮询挂起时长（与 DSH 插件一致）
+  const POLL_TTL_MS = 10 * 60_000; // 与服务端暂存 TTL 对齐，超时停止轮询
 
   pi.on("agent_start", async (_event, _ctx) => {
     if (!gateEnabled()) return;
     agentStartTs = Date.now();
+    roundActive = true;
   });
 
   pi.on("agent_end", async (event: any, _ctx) => {
@@ -224,7 +231,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("agent_settled", async (event: any, ctx) => {
     if (!gateEnabled()) return;
     // 用户主动中止（Esc/Ctrl+C）：与 DSH/Claude 口径一致，不通知
-    if (event?.aborted) { agentStartTs = 0; return; }
+    if (event?.aborted) { agentStartTs = 0; roundActive = false; return; }
 
     const sid = sessionKey(ctx);
     const messages: any[] = lastMessages;
@@ -267,33 +274,36 @@ export default function (pi: ExtensionAPI): void {
       .catch((e: any) => log(`回合上报失败（工作台未起？）: ${String(e?.message || e).slice(0, 80)}`));
 
     // ---- 「接着问」长轮询：回合收口后取追问，注入终端原会话继续跑（与 DSH 插件同模式，不接管不 fork）----
-    // 飞书卡片提交的追问按 sessionId 暂存在工作台（TTL 10 分钟），这里轮询取走后
-    // pi.sendUserMessage() 在原会话触发新回合（上下文/工具全保留）；新回合收口后再次上报+轮询，多轮成环。
-    if (!sid) return;
-    const followupUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/pi-followup");
-    const POLL_WAIT_MS = 25_000; // 服务端长轮询挂起时长（与 DSH 插件一致）
-    const POLL_TTL_MS = 10 * 60_000; // 与服务端暂存 TTL 对齐，超时停止轮询
-    const gen = ++pollGen;
-    if (pollActive) return; // 已有轮询循环在跑（理论不可达：轮询在收口后启动、注入前自停）
-    pollActive = true;
+    // 追问按 sessionId 暂存在工作台（TTL 10 分钟），这里轮询取走后 pi.sendUserMessage()
+    // 在原会话触发新回合（上下文/工具全保留）；新回合收口会续期 deadline，多轮成环。
+    if (!sid) { roundActive = false; return; }
+    roundActive = false;
+    pollDeadline = Date.now() + POLL_TTL_MS;
+    if (pollRunning) return; // 循环已在跑：本次收口只续期，不重复开
+    pollRunning = true;
     void (async () => {
-      const deadline = Date.now() + POLL_TTL_MS;
       try {
-        while (Date.now() < deadline && gen === pollGen) {
+        while (Date.now() < pollDeadline) {
+          // 回合进行中不取：sendUserMessage 打断进行中的回合会乱序，等收口（agent_settled 已置 false）
+          if (roundActive) {
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
           const res = await fetch(`${followupUrl}?sessionId=${encodeURIComponent(sid)}&waitMs=${POLL_WAIT_MS}`)
             .catch(() => null);
-          if (gen !== pollGen) return;
           const body = res && res.ok ? await res.json().catch(() => null) : null;
           const text = typeof body?.text === "string" ? body.text : "";
           if (text) {
-            pollGen++; // 作废当前循环：新回合的 agent_settled 会开启下一轮
-            log(`取走追问，注入原会话继续执行 ${text.slice(0, 40)}`);
-            pi.sendUserMessage(text);
-            return;
+            try {
+              log(`取走追问，注入原会话继续执行 ${text.slice(0, 40)}`);
+              pi.sendUserMessage(text);
+            } catch (e: any) {
+              log(`注入失败: ${String(e?.message || e).slice(0, 80)}`);
+            }
           }
         }
       } finally {
-        if (gen === pollGen) pollActive = false;
+        pollRunning = false;
       }
     })();
   });
