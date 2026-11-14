@@ -239,7 +239,7 @@ async function sendMessage(receiveId, receiveIdType, content, msgType = 'text') 
     logger.info('[Feishu] Message sent successfully');
   } catch (e) {
     logger.error('[Feishu] sendMessage error: %s', e.message);
-    if (e.response) logger.error('[Feishu] sendMessage response: %s', JSON.stringify(e.response).slice(0, 500));
+    if (e.response) logger.error('[Feishu] sendMessage response: %s', JSON.stringify(e.response?.data ?? '').slice(0, 500));
   }
 }
 
@@ -360,7 +360,7 @@ async function sendCardToChat(chatId: string, cardJson: string): Promise<string 
     return res?.data?.message_id;
   } catch (e) {
     logger.error('[Feishu] sendCardToChat error: %s', e.message);
-    if (e.response) logger.error('[Feishu] sendCardToChat response: %s', JSON.stringify(e.response).slice(0, 500));
+    if (e.response) logger.error('[Feishu] sendCardToChat response: %s', JSON.stringify(e.response?.data ?? '').slice(0, 500));
     return undefined;
   }
 }

@@ -84,7 +84,8 @@ export class ApprovalCenter {
     }
   }
 
-  /** adapter / 外部 hook 调用：挂起等待决策。发卡失败不影响决策通道 */
+  /** adapter / 外部 hook 调用：挂起等待决策。发卡失败不影响决策通道；
+   *  onSubmitted 在审批落账后回调 id（调用方用于超时自动收口等场景） */
   async request(input: {
     agent: AgentKind;
     sessionId: string;
@@ -92,7 +93,7 @@ export class ApprovalCenter {
     tool: string;
     inputSummary: string;
     detail: string;
-  }): Promise<Decision> {
+  }, onSubmitted?: (id: string) => void): Promise<Decision> {
     const req: ApprovalRequest = {
       id: randomUUID(),
       agent: input.agent,
@@ -108,6 +109,7 @@ export class ApprovalCenter {
     this.deps.history.append({ type: 'submitted', at: req.createdAt, request: req });
     this.deps.bus.emit({ type: 'approval.required', request: req });
     logger.info('[Approver] 审批挂起 %s %s/%s %s', req.id.slice(0, 8), req.agent, req.tool, req.inputSummary.slice(0, 80));
+    if (onSubmitted) onSubmitted(req.id);
 
     if (this.deps.sendCard) {
       this.deps.sendCard(req)

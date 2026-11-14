@@ -369,7 +369,7 @@ class ApproverService {
         return { decision };
       },
       piApprovalRequest: async (body) => {
-        // 非法/不完整输入：返回空对象（2xx 无决策），pi-approver-gate 扩展按 fail-closed 阻止
+        // 非法/不完整输入：返回空对象（2xx 无决策），pi-approver-gate 扩展按无决策放行
         const toolName = body?.toolName;
         if (!body || typeof toolName !== 'string' || !toolName) return {};
         // 扩展侧通常已构建 inputSummary/detail；REST 直发 input 时兜底构建（pi 字段名）
@@ -380,6 +380,14 @@ class ApproverService {
           inputSummary = inputSummary || built.summary;
           detail = built.detail;
         }
+        // 超时自动放行（拍板 2026-11-14）：外部 pi 终端要无人值守自动跑，不能死等人审批。
+        // piApprovalWaitSec（默认 60s，config.json 配置，0 除外）内无人决策 → 服务端按 allow_once
+        // 自动收口：卡片原位更新留痕（by auto-timeout），客户端拿到决策继续跑，不留僵尸挂起。
+        // 显式「拒绝」仍是硬拦截；恰好在超时瞬间有人拍板时以人的决策为准。
+        const rawWait = String(appConfig.getConfig('piApprovalWaitSec') || '').trim();
+        const waitSec = Number(rawWait);
+        const waitMs = rawWait !== '' && Number.isFinite(waitSec) && waitSec > 0 ? waitSec * 1000 : 60_000;
+        let approvalId = '';
         const decisionPromise = center.request({
           agent: 'pi',
           sessionId: `pi-ext-${String(body.sessionId || body.cwd || 'unknown').slice(0, 40)}`,
@@ -387,12 +395,17 @@ class ApproverService {
           tool: toolName,
           inputSummary: String(inputSummary || '').slice(0, 200),
           detail: String(detail || '').slice(0, 2000),
-        });
+        }, (id) => { approvalId = id; });
         const decision = await Promise.race([
           decisionPromise,
-          new Promise<null>((r) => setTimeout(() => r(null), HOOK_WAIT_MS).unref?.()),
+          new Promise<null>((r) => setTimeout(() => r(null), waitMs).unref?.()),
         ]);
-        if (decision === null) return {};
+        if (decision === null) {
+          const resolved = center.resolve(approvalId, 'allow_once', 'auto-timeout');
+          if (resolved !== 'ok') return { decision: await decisionPromise }; // 超时瞬间已被人工决策
+          logger.info('[Approver] pi 审批超时自动放行 %s（等待 %ss 无人拍板）', approvalId.slice(0, 8), waitMs / 1000);
+          return { decision: 'allow_once' };
+        }
         return { decision };
       },
       taskDone: async (body) => {

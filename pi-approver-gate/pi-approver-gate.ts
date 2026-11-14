@@ -11,7 +11,8 @@
 //   - allow_once  → 放行这一次（返回 undefined，工具照常执行）
 //   - allow_session → 本会话放行该工具（写 allowlist，后续同工具不再问），本次放行
 //   - deny        → { block: true, reason }（工具不执行，reason 回喂 agent）
-//   - 空响应/服务不可达/超时 → fail-closed 阻止（设计铁律：不静默放行）
+//   - 空响应/服务不可达/请求中止 → 放行（拍板 2026-11-14：pi 要无人值守自动跑，
+//     不因工作台缺位卡死；服务端等 piApprovalWaitSec(60s) 无人拍板也会自动放行收口）
 //
 // 与托管会话隔离：
 //   启航工作台 in-process SDK 会话（桌面对话/飞书/日报/定时任务）由 pi-agent.ts 设
@@ -22,15 +23,16 @@
 // 环境变量：
 //   PI_APPROVER_URL     端点，默认 http://127.0.0.1:8790/api/hooks/pi-approval
 //   PI_APPROVER_TOOLS   拦截工具集（逗号分隔），默认 bash,edit,write；__disabled__=全关
+//                       （工作台 auto-deploy 部署时注入 __disabled__：外部 pi 终端全自动不拦截）
 //   PI_APPROVER_GATE    off=关闭本扩展（托管会话自动设）
 //   AGENTHUB_PI_TOOLS   === __qihang_disabled__ 时也关闭（pi-agent.ts 既有哨兵，向后兼容）
-//   PI_APPROVER_FETCH_MS 单次请求超时，默认 3660000（61 分钟，远超服务端 HOOK_WAIT_MS=540s，让服务端先超时）
+//   PI_APPROVER_FETCH_MS 单次请求超时，默认 3660000（61 分钟兜底硬顶；服务端 pi 等待 60s 即自动放行）
 
 import type { ExtensionAPI, ToolCallEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_URL = "http://127.0.0.1:8790/api/hooks/pi-approval";
 const DEFAULT_TOOLS = ["bash", "edit", "write"];
-const DEFAULT_FETCH_MS = 3_660_000; // 61 分钟，远超服务端 540s，让服务端先返回空决策
+const DEFAULT_FETCH_MS = 3_660_000; // 61 分钟兜底硬顶；正常情况下服务端 60s 无拍板即自动放行返回
 
 /** 本扩展是否启用：托管会话里 pi-agent.ts 设了 off 哨兵 → 跳过拦截 */
 function gateEnabled(): boolean {
@@ -181,14 +183,14 @@ export default function (pi: ExtensionAPI): void {
         log(`拒绝 ${toolName}`);
         return { block: true, reason: "已在启航AI工作台（飞书）拒绝" };
       }
-      // 服务端超时返回空决策：fail-closed 阻止（不静默放行）
-      log(`服务端未返回决策，阻止 ${toolName}`);
-      return { block: true, reason: "启航AI工作台审批服务未返回决策，已阻止本次操作（可能超时未有人审批）。请在飞书处理或重启工作台。" };
+      // 服务端超时返回空决策：放行（服务端已改为超时自动放行收口，空响应仅是兜底）
+      log(`服务端未返回决策，放行 ${toolName}`);
+      return;
     } catch (e: any) {
-      // daemon 未起 / 网络错误 / 请求中止：fail-closed 阻止
+      // daemon 未起 / 网络错误 / 请求中止：放行（外部 pi 终端要自动正常运行，不因工作台缺位卡死）
       const reason = String(e?.message || e).slice(0, 120);
-      log(`审批服务不可用，阻止 ${toolName}：${reason}`);
-      return { block: true, reason: `启航AI工作台审批服务不可用，已阻止本次操作（${reason}）。请启动工作台后重试，或用 PI_APPROVER_GATE=off 关闭审批。` };
+      log(`审批服务不可用，放行 ${toolName}：${reason}`);
+      return;
     } finally {
       clearTimeout(timer);
       try {

@@ -52,6 +52,28 @@ function sendJson(res: http.ServerResponse, code: number, data: any): void {
   res.end(body);
 }
 
+/**
+ * 长挂起响应：立即 flush 响应头，挂起期间每 30s 写一个空格保活。
+ * 客户端 fetch（Node 内置 undici）默认 headersTimeout/bodyTimeout 都是 300s，
+ * 挂起超过 5 分钟会被客户端侧掐断（pi-approver-gate 表现为「审批服务不可用」，DSH 插件同理）。
+ * 先发头再定期发空白：JSON 允许前导空白，客户端 res.json() 不受影响，两个超时都不会触发。
+ */
+async function sendJsonLongPoll(res: http.ServerResponse, promise: Promise<any>): Promise<void> {
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.write(' ');
+  const keepalive = setInterval(() => {
+    try { res.write(' '); } catch { /* 客户端已断开：等 promise 收口后 finally 清理 */ }
+  }, 30_000);
+  try {
+    const out = await promise;
+    res.end(JSON.stringify(out ?? {}));
+  } catch (e: any) {
+    res.end(JSON.stringify({ error: String(e?.message || e) }));
+  } finally {
+    clearInterval(keepalive);
+  }
+}
+
 function readBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -144,8 +166,7 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
       // Claude Code PermissionRequest hook 入口：挂起等决策，返回 hookSpecificOutput JSON
       if (pathname === '/api/hooks/permission-request' && req.method === 'POST') {
         const body = await readBody(req);
-        const out = await deps.hookPermissionRequest(body);
-        return sendJson(res, 200, out ?? {});
+        return sendJsonLongPoll(res, deps.hookPermissionRequest(body));
       }
 
       // DSH 审批转发入口：挂起等决策，返回 { decision }
@@ -159,15 +180,13 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
           void deps.taskDone(body);
           return sendJson(res, 200, {});
         }
-        const out = await deps.dshApprovalRequest(body);
-        return sendJson(res, 200, out ?? {});
+        return sendJsonLongPoll(res, deps.dshApprovalRequest(body));
       }
 
       // pi 审批转发入口：pi-approver-gate 扩展阻塞等决策，返回 { decision }
       if (pathname === '/api/hooks/pi-approval' && req.method === 'POST') {
         const body = await readBody(req);
-        const out = await deps.piApprovalRequest(body);
-        return sendJson(res, 200, out ?? {});
+        return sendJsonLongPoll(res, deps.piApprovalRequest(body));
       }
 
       // 任务回合结束通知入口：立即 200，通知异步发（钩子侧不能等）
@@ -184,8 +203,7 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
       // Claude Code Stop 快速通道：task-done 上报 + 挂起等「继续」追问（窗口内不返回提示符属预期）
       if (pathname === '/api/hooks/claude-stop' && req.method === 'POST') {
         const body = await readBody(req);
-        const out = await deps.claudeStop(body);
-        return sendJson(res, 200, out ?? {});
+        return sendJsonLongPoll(res, deps.claudeStop(body));
       }
 
       // pi 扩展长轮询「接着问」追问：与 dsh-followup 共用同一暂存 Map（takeFollowup），语义一致
