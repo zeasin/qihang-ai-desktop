@@ -62,14 +62,20 @@ const routes = [
     component: () => import('@/views/OverviewView.vue')
   },
   {
+    // 雷达页已整体并入「今天」页（AgentRadarView embedded），旧入口重定向
     path: '/radar',
-    name: 'AgentRadar',
-    component: () => import('@/views/AgentRadarView.vue')
+    redirect: '/overview'
   },
   {
     path: '/radar/ask',
     name: 'RadarAsk',
     component: () => import('@/views/RadarAskView.vue')
+  },
+  {
+    // 会话档案：雷达沉淀的全部对话记录（筛选/搜索/分页浏览）
+    path: '/radar/all',
+    name: 'RadarAll',
+    component: () => import('@/views/RadarAllView.vue')
   },
   {
     path: '/radar/session/:tool/:sessionId',

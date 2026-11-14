@@ -77,7 +77,8 @@ function quickNewChat() {
 
 // ========== 导航 ==========
 const topMenu = computed(() => [
-  { path: '/overview', label: '今天', icon: 'calendar', badge: 0, badgeClass: '' },
+  // 雷达页已并入今天页，运行中的 AI 会话数徽标挂在「今天」入口上
+  { path: '/overview', label: '今天', icon: 'calendar', badge: radarRunning.value, badgeClass: 'run' },
   { path: '/chat', label: '对话', icon: 'message-square', badge: 0, badgeClass: '' },
   { path: '/planner', label: '任务', icon: 'workflow', badge: taskRunning.value, badgeClass: 'run' },
   { path: '/sources', label: '数据源', icon: 'database', badge: 0, badgeClass: '' },
@@ -87,7 +88,6 @@ const footMenu = computed(() => [
   { path: '/reminders', label: '待办', icon: 'list-checks', badge: todoOpen.value, badgeClass: '', beta: false },
   { path: '/notes', label: '笔记', icon: 'library', badge: 0, badgeClass: '', beta: false },
   { path: '/tools', label: '技能', icon: 'sparkles', badge: 0, badgeClass: '', beta: true },
-  { path: '/radar', label: '雷达', icon: 'radar', badge: radarRunning.value, badgeClass: 'run', beta: false },
 ]);
 
 const isActive = (path: string) => {
@@ -98,11 +98,10 @@ const isActive = (path: string) => {
 };
 
 // ========== 雷达运行徽标 ==========
-/** 雷达运行中的会话数（徽标）：仅在雷达页之外显示提醒 */
+/** 运行中的 AI 会话数（徽标）：雷达已并入今天页，挂在「今天」入口上 */
 const radarRunning = ref(0);
 
 async function loadRadarBadge() {
-  if (route.path === '/radar') { radarRunning.value = 0; return; }
   try {
     const stats = await API.radar.toolStats();
     radarRunning.value = (stats || []).reduce((n: number, t: any) => n + (Number(t.running) || 0), 0);

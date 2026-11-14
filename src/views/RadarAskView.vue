@@ -8,9 +8,8 @@
     <!-- 顶栏：返回 + 标题 -->
     <div class="content-header">
       <div class="sh-left">
-        <button class="btn btn-secondary btn-sm back-btn" @click="goBack">
+        <button class="btn btn-secondary btn-sm back-btn" title="返回" @click="goBack">
           <AppIcon name="chevron-right" :size="13" style="transform: rotate(180deg);" />
-          雷达
         </button>
         <div>
           <h1>问雷达</h1>
@@ -149,7 +148,7 @@ const TOOL_LABELS: Record<string, string> = {
 const toolLabel = (t: string) => TOOL_LABELS[t] || t;
 
 function goBack() {
-  router.push('/radar');
+  router.push('/overview');
 }
 function askExample(t: string) {
   if (asking.value) return;
@@ -196,6 +195,13 @@ function shortDir(dir: string): string {
   gap: 14px;
 }
 .sh-left { display: flex; align-items: center; gap: 12px; }
+.back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 5px 7px;
+}
 .sh-left h1 { margin: 0; font-size: 18px; }
 .header-sub { font-size: 12.5px; margin-top: 2px; }
 

@@ -104,7 +104,8 @@ export class CodexCollector implements HubCollector {
     let head: string;
     try {
       const fd = fs.openSync(full, 'r');
-      const buf = Buffer.alloc(Math.min(256 * 1024, stat.size));
+      // 首行 session_meta 混着巨型 base_instructions，第一条真人输入可能排得很靠后，头部读到 1MB
+      const buf = Buffer.alloc(Math.min(1024 * 1024, stat.size));
       fs.readSync(fd, buf, 0, buf.length, 0);
       fs.closeSync(fd);
       head = buf.toString('utf-8');
@@ -130,6 +131,22 @@ export class CodexCollector implements HubCollector {
           break;
         }
       } catch { continue; }
+    }
+    // 快路径正则对字段顺序/格式敏感且可能被巨型 meta 行挤出头部；失败时逐行 JSON 解析兜底
+    if (!meta.label) {
+      for (const line of head.split('\n')) {
+        if (!line.includes('"role":"user"') || !line.includes('"input_text"')) continue;
+        try {
+          const evt = JSON.parse(line);
+          const p = evt?.payload;
+          if (evt?.type !== 'response_item' || p?.type !== 'message' || p?.role !== 'user') continue;
+          const text = messageText(p);
+          if (text && !isInjectedUserText(text)) {
+            meta.label = text.replace(/\s+/g, ' ').slice(0, 80);
+            break;
+          }
+        } catch { continue; }
+      }
     }
     return meta;
   }

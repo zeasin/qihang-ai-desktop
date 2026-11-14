@@ -237,11 +237,11 @@ export class RadarDb {
   }
 
   /** 本地权威游标（ingest 续传） */
-  sessionState(tool: string, sessionId: string): { lastSyncedSeq: number; messageCount: number; sourceUpdatedAt: number } | null {
+  sessionState(tool: string, sessionId: string): { lastSyncedSeq: number; messageCount: number; sourceUpdatedAt: number; title: string } | null {
     const r = this.db.prepare(
-      'SELECT last_synced_seq, message_count, source_updated_at FROM radar_session WHERE tool = ? AND session_id = ?',
+      'SELECT last_synced_seq, message_count, source_updated_at, title FROM radar_session WHERE tool = ? AND session_id = ?',
     ).get(tool, sessionId) as any;
-    return r ? { lastSyncedSeq: r.last_synced_seq, messageCount: r.message_count, sourceUpdatedAt: r.source_updated_at } : null;
+    return r ? { lastSyncedSeq: r.last_synced_seq, messageCount: r.message_count, sourceUpdatedAt: r.source_updated_at, title: r.title || '' } : null;
   }
 
   /** 本地冻结集合（ingest 跳过） */
@@ -491,34 +491,69 @@ export class RadarDb {
   /** 会话聚合检索（find：项目/标题/消息命中）。命中消息的按 BM25 相关度排在前面 */
   findSessions(q: string, limit = 50): any[] {
     const term = this.ftsTerm(q);
-    const like = `%${this.likeEscape(String(q || ''))}%`;
-    const rows = term
-      ? this.db.prepare(`
-      WITH ms AS (
-        SELECT m.tool AS tool, m.session_id AS sid, MIN(bm25(radar_message_fts, 6.0, 1.0)) AS score
+    const raw = String(q || '').trim();
+    const like = `%${this.likeEscape(raw)}%`;
+    // 中文整串往往被拆开使用（搜「打单发货」，正文里是「电子打单」「发货流程」），
+    // trigram 短语要求四字连续必然漏检；把 ≥2 字的中文串切成 2 字词，对正文做 LIKE 兜底
+    const cjkChars = raw.replace(/[^\u4e00-\u9fa5]/g, '').split('');
+    const shingles = new Set<string>();
+    if (cjkChars.length >= 2) {
+      for (let i = 0; i + 1 < cjkChars.length; i += 2) shingles.add(cjkChars[i] + cjkChars[i + 1]);
+      if (cjkChars.length % 2 === 1) shingles.add(cjkChars[cjkChars.length - 2] + cjkChars[cjkChars.length - 1]);
+    }
+    const likeConds = [like, ...[...shingles].map((s) => `%${this.likeEscape(s)}%`)];
+
+    if (term) {
+      const rows = this.db.prepare(`
+      WITH hits AS (
+        -- 注意：bm25() 在 CTE/子查询里会报 "unable to use function bm25"，
+        -- 只能用等价的 rank 隐藏列（SQLite 辅助函数仅允许出现在最外层 MATCH 查询）
+        SELECT m.tool AS tool, m.session_id AS sid, rank AS score
         FROM radar_message_fts f
         JOIN radar_message m ON m.rowid = f.rowid
         WHERE radar_message_fts MATCH ?
-        GROUP BY m.tool, m.session_id
+      ),
+      ms AS (
+        SELECT tool, sid, MIN(score) AS score FROM hits GROUP BY tool, sid
+      ),
+      ls AS (
+        SELECT tool, session_id AS sid
+        FROM radar_message
+        WHERE ${likeConds.map(() => 'content LIKE ?').join(' OR ')}
+        GROUP BY tool, session_id
       )
       SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s
       LEFT JOIN ms ON ms.tool = s.tool AND ms.sid = s.session_id
+      LEFT JOIN ls ON ls.tool = s.tool AND ls.sid = s.session_id
       WHERE (s.title LIKE ? OR LOWER(s.project_dir) = LOWER(?) OR s.session_id LIKE ?)
          OR ms.tool IS NOT NULL
-      ORDER BY ms.score ASC, s.synced_at DESC LIMIT ? OFFSET 0
-    `).all(term, like, String(q || ''), like, limit)
-      // term 为 null（2 字中文词）时 trigram 无从匹配，只走标题/路径/会话id 的 LIKE
-      : this.db.prepare(`
+         OR ls.tool IS NOT NULL
+      ORDER BY CASE WHEN s.title LIKE ? THEN 0 WHEN ms.score IS NOT NULL THEN 1 WHEN ls.tool IS NOT NULL THEN 2 ELSE 3 END,
+               ms.score, s.synced_at DESC LIMIT ? OFFSET 0
+    `).all(term, ...likeConds, like, raw, like, like, limit);
+      return (rows as any[]).map(rowToSession);
+    }
+    // 不足 3 字（如 2 字中文词）trigram 无从匹配：标题/路径 LIKE + 正文 2 字词 LIKE
+    const rows = this.db.prepare(`
+      WITH ls AS (
+        SELECT tool, session_id AS sid
+        FROM radar_message
+        WHERE ${likeConds.map(() => 'content LIKE ?').join(' OR ')}
+        GROUP BY tool, session_id
+      )
       SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s
+      LEFT JOIN ls ON ls.tool = s.tool AND ls.sid = s.session_id
       WHERE s.title LIKE ? OR LOWER(s.project_dir) = LOWER(?) OR s.session_id LIKE ?
-      ORDER BY s.synced_at DESC LIMIT ? OFFSET 0
-    `).all(like, String(q || ''), like, limit);
+         OR ls.tool IS NOT NULL
+      ORDER BY CASE WHEN s.title LIKE ? THEN 0 WHEN ls.tool IS NOT NULL THEN 1 ELSE 2 END,
+               s.synced_at DESC LIMIT ? OFFSET 0
+    `).all(...likeConds, like, raw, like, like, limit);
     return (rows as any[]).map(rowToSession);
   }
 

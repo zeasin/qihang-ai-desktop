@@ -14,7 +14,7 @@ const MAX_ANCHOR_FILES = 60;
 export interface DigestTodo { project_id: number; project: string; file: string; line: number; text: string; done: boolean; }
 // resolvable=true 表示来自专门的跟进清单（跟进.md），可在今天页一键结清（回写 [x]）
 export interface DigestFollowup { project_id: number; project: string; file: string; line: number; text: string; resolvable?: boolean; }
-export interface DigestLogSection { project_id: number; project: string; file: string; line: number; date: string; heading: string; preview: string; }
+export interface DigestLogSection { project_id: number; project: string; file: string; line: number; date: string; heading: string; preview: string; kind?: 'log' | 'doc'; }
 export interface DigestResult { todos: DigestTodo[]; followups: DigestFollowup[]; logs: DigestLogSection[]; scannedFiles: number; generated_at: string; }
 
 interface Candidate { full: string; rel: string; size: number; m: number; anchor: boolean; }
@@ -70,7 +70,7 @@ function normItemText(raw: string): string {
   return cleanText(String(raw).replace(TODO_RE, '$2').replace(/^\s*[-*+]\s+(\[[ xX]\]\s*)?/, '')).toLowerCase();
 }
 
-function pushLog(logs: DigestLogSection[], proj: any, rel: string, lines: string[], date: string, line: number) {
+function pushLog(logs: DigestLogSection[], proj: any, rel: string, lines: string[], date: string, line: number, kind: 'log' | 'doc' = 'log') {
   let preview = '';
   let title = '';
   for (const raw of stripFrontmatter(lines)) {
@@ -83,7 +83,7 @@ function pushLog(logs: DigestLogSection[], proj: any, rel: string, lines: string
     preview = cleanText(t.replace(/^[-*+]\s+\[[ xX]\]\s*/, '').replace(/^[-*+]\s+/, '')).slice(0, 60);
     if (preview) break;
   }
-  logs.push({ project_id: proj.id, project: proj.name, file: rel, line, date, heading: '', preview: preview || title });
+  logs.push({ project_id: proj.id, project: proj.name, file: rel, line, date, heading: '', preview: preview || title, kind });
 }
 
 export function extractDigest(): DigestResult {
@@ -91,6 +91,9 @@ export function extractDigest(): DigestResult {
   const followups: DigestFollowup[] = [];
   const logs: DigestLogSection[] = [];
   let scannedFiles = 0;
+  // 近 N 天更新过的文档都算进工作日志（含非日期命名的普通笔记）
+  const RECENT_DOC_DAYS = 7;
+  const recentDocsSince = Date.now() - RECENT_DOC_DAYS * 86_400_000;
 
   for (const proj of db.project.list() as any[]) {
     // 笔记提炼只认笔记库：代码仓库（type=code）里的 CONTRIBUTING 检查清单这类文档
@@ -152,20 +155,29 @@ export function extractDigest(): DigestResult {
         const dh = !isLogFile ? line.match(BARE_DATE_HEADING_RE) : null;
         if (dh) datedLevel = (line.match(/^#+/) || [''])[0].length;
         if (isLogFile || datedLevel) continue;
-        if (FOLLOWUP_RE.test(line) && !NOISE_LINE_RE.test(line) && !/\.md/.test(line)) {
+        // 非清单文件的跟进口径：必须是 bullet 行，且不是统计字段/空标签
+        // （「后续跟进：0」「记录跟进：」是 label: value 写法，冒号后只有数字或为空，不是待办）
+        const isStatLabel = /跟进[:：]\s*\d*\s*$/.test(line);
+        if (FOLLOWUP_RE.test(line) && !isStatLabel && !NOISE_LINE_RE.test(line) && !/\.md/.test(line) && /^[-*+]\s+\S/.test(line)) {
           followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')) });
         }
       }
 
       // 工作日志：日期命名的文件优先，其次文件内的纯日期标题
       const dm = path.basename(rel).match(DATE_FILE_RE);
-      if (dm) pushLog(logs, proj, rel, lines, dm[1], 1);
+      if (dm) pushLog(logs, proj, rel, lines, dm[1], 1, 'log');
       else {
         for (let i = 0; i < lines.length; i++) {
           const m = lines[i].trim().match(BARE_DATE_HEADING_RE);
           if (!m) continue;
           const y = m[1].length === 2 ? '20' + m[1] : m[1];
-          pushLog(logs, proj, rel, lines.slice(i + 1), `${y}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`, i + 1);
+          pushLog(logs, proj, rel, lines.slice(i + 1), `${y}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`, i + 1, 'log');
+        }
+        // 最近更新过的普通文档也进工作日志（按文件 mtime 计日期），不再是纯"日期命名"口径
+        if (cand.m >= recentDocsSince) {
+          const d = new Date(cand.m);
+          const pad = (n: number) => String(n).padStart(2, '0');
+          pushLog(logs, proj, rel, lines, `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, 1, 'doc');
         }
       }
     }
@@ -179,8 +191,16 @@ export function extractDigest(): DigestResult {
     return true;
   });
   uniqTodos.sort((a, b) => Number(a.done) - Number(b.done));
-  logs.sort((a, b) => b.date.localeCompare(a.date));
-  return { todos: uniqTodos, followups, logs, scannedFiles, generated_at: new Date().toISOString() };
+  // 同一文件同一天只留一条（日期标题条目与"最近更新"条目可能重叠）；总量截断防膨胀
+  const seenLogs = new Set<string>();
+  const uniqLogs = logs.filter((l) => {
+    const k = `${l.project_id}|${l.file}|${l.date}`;
+    if (seenLogs.has(k)) return false;
+    seenLogs.add(k);
+    return true;
+  });
+  uniqLogs.sort((a, b) => b.date.localeCompare(a.date));
+  return { todos: uniqTodos, followups, logs: uniqLogs.slice(0, 60), scannedFiles, generated_at: new Date().toISOString() };
 }
 
 /** 勾选/取消勾选笔记待办：把状态回写到笔记文件里的复选框；行号漂移时按文本全文兜底查找 */

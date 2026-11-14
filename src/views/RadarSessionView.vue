@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   RadarSessionView —— 雷达会话详情页（独立页面，从雷达页会话行进入）
   全页浏览单个会话的对话记录 / 状态时间线；会话活跃时状态徽标实时更新。
 -->
@@ -7,9 +7,8 @@
     <!-- 头部 -->
     <div class="content-header">
       <div class="sh-left">
-        <button class="btn btn-secondary btn-sm back-btn" @click="goBack">
+        <button class="btn btn-secondary btn-sm back-btn" title="返回" @click="goBack">
           <AppIcon name="chevron-right" :size="13" style="transform: rotate(180deg);" />
-          雷达
         </button>
         <div class="sh-info">
           <h1 class="sh-title">{{ title }}</h1>
@@ -25,13 +24,15 @@
         </div>
       </div>
       <div class="header-actions">
-        <button class="tab-btn" :class="{ on: tab === 'messages' }" @click="tab = 'messages'">对话记录</button>
-        <button class="tab-btn" :class="{ on: tab === 'timeline' }" @click="tab = 'timeline'">状态时间线</button>
+        <div class="seg">
+          <button class="seg-btn" :class="{ on: tab === 'messages' }" @click="tab = 'messages'">对话记录</button>
+          <button class="seg-btn" :class="{ on: tab === 'timeline' }" @click="tab = 'timeline'">状态时间线</button>
+        </div>
       </div>
     </div>
 
     <!-- 正文：居中阅读列 -->
-    <div class="rsession-body">
+    <div ref="bodyRef" class="rsession-body">
       <!-- 状态说明 / 空态 -->
       <div v-if="tab === 'messages' && !messages.length && !loading" class="msg-col">
         <div v-if="!info" class="state-note">
@@ -62,23 +63,20 @@
           <div class="sum-title"><i class="bar"></i>会话摘要</div>
           <div class="sum-body markdown-body" v-html="summaryHtml"></div>
         </div>
-        <div v-for="m in messages" :key="m.seq" class="msg" :class="m.role">
+        <div v-for="m in mergedMessages" :key="m.seq" class="msg" :class="m.role">
           <div class="msg-role">
             <span class="role-badge" :class="m.role">{{ m.role === 'user' ? '用户' : '助手' }}</span>
             <span class="text-muted msg-ts">{{ fmtFull(m.ts) }}</span>
           </div>
-          <details v-if="m.thinking" class="msg-thinking">
-            <summary>思考过程</summary>
-            <pre>{{ m.thinking }}</pre>
-          </details>
-          <div
-            v-if="m.content"
-            class="msg-content markdown-body"
-            v-html="renderMarkdown(m.content)"
-          ></div>
-          <details v-if="parseTools(m.toolsJson).length" class="msg-tools">
-            <summary>{{ parseTools(m.toolsJson).length }} 个工具调用</summary>
-            <div v-for="(t, i) in parseTools(m.toolsJson)" :key="i" class="tool-call">
+          <details v-if="m.thinking || m.tools.length" class="msg-activity">
+            <summary>
+              <span class="act-label">
+                思考过程<template v-if="m.thinking && m.tools.length"> · </template><template v-if="m.tools.length">{{ m.tools.length }} 个工具调用</template>
+              </span>
+              <AppIcon class="act-arrow" name="chevron-right" :size="12" />
+            </summary>
+            <pre v-if="m.thinking" class="act-thinking">{{ m.thinking }}</pre>
+            <div v-for="(t, i) in m.tools" :key="i" class="tool-call">
               <div class="tch">
                 <span class="tc-name">{{ t.name }}</span>
                 <span class="tc-status" :class="t.status">{{ t.status === 'error' ? '失败' : t.status === 'running' ? '运行中' : '完成' }}</span>
@@ -87,6 +85,11 @@
               <pre v-if="t.result" class="tc-block result">{{ t.result }}</pre>
             </div>
           </details>
+          <div
+            v-if="m.content"
+            class="msg-content markdown-body"
+            v-html="renderMarkdown(m.content)"
+          ></div>
         </div>
           <div v-if="!messages.length && !loading" class="col-empty text-muted">该会话还没有采集到消息</div>
 
@@ -125,7 +128,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
 import AppIcon from '../components/AppIcon.vue';
@@ -162,7 +165,8 @@ const summaryHtml = computed(() => {
 });
 
 function goBack() {
-  router.push('/radar');
+  // 雷达已并入今天页，返回今天
+  router.push('/overview');
 }
 
 async function loadInfo() {
@@ -218,6 +222,17 @@ async function loadMessages() {
     messages.value = res.rows || [];
   } catch { messages.value = []; }
   finally { loading.value = false; }
+  // 会话详情是回看视角：默认定位到最新消息（底部）
+  scrollToBottom();
+}
+
+// 正文滚动容器；加载后跳到最底部
+const bodyRef = ref<HTMLElement | null>(null);
+function scrollToBottom() {
+  void nextTick(() => {
+    const el = bodyRef.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
 }
 async function loadStateEvents() {
   try {
@@ -230,6 +245,30 @@ function parseTools(json: string): any[] {
   if (!json) return [];
   try { return JSON.parse(json) || []; } catch { return []; }
 }
+
+// 合并连续的助手消息：终端采集里一个回合会被切成多条（思考 / 工具 / 正文各一条），
+// 阅读时合并成同一个助手块，用户消息仍是天然分隔点
+const mergedMessages = computed(() => {
+  const out: any[] = [];
+  for (const m of messages.value) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === 'assistant' && m.role === 'assistant') {
+      if (m.thinking) prev.thinking = prev.thinking ? `${prev.thinking}\n\n${m.thinking}` : m.thinking;
+      if (m.content) prev.content = prev.content ? `${prev.content}\n\n${m.content}` : m.content;
+      prev.tools = prev.tools.concat(parseTools(m.toolsJson));
+    } else {
+      out.push({
+        seq: m.seq,
+        role: m.role,
+        ts: m.ts,
+        thinking: m.thinking || '',
+        content: m.content || '',
+        tools: parseTools(m.toolsJson),
+      });
+    }
+  }
+  return out;
+});
 
 // ========== 插入对话（pi / DSH 外部会话追问） ==========
 // 文本按 sessionId 暂存到审批通道（TTL 10 分钟），由原终端会话的扩展/插件长轮询取走注入执行，
@@ -322,10 +361,25 @@ onUnmounted(() => {
   min-height: 0;
   padding: 20px 24px 16px;
   box-sizing: border-box;
+  gap: 14px;
+}
+.content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .sh-left { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; }
-.back-btn { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 5px 7px;
+}
 .sh-info { min-width: 0; }
 .sh-title {
   font-size: 16px;
@@ -338,18 +392,35 @@ onUnmounted(() => {
 }
 .sh-sub { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 11.5px; flex-wrap: wrap; }
 .sh-dir { font-family: var(--font-mono); font-size: 11px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.tab-btn {
+.header-actions { display: flex; align-items: center; flex-shrink: 0; }
+/* 分段式 Tab（胶囊） */
+.seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+}
+.seg-btn {
   border: none;
   background: none;
   font: inherit;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  border-radius: 999px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  transition: color 0.15s, background 0.15s;
 }
-.tab-btn.on { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.seg-btn:hover { color: var(--text-primary); }
+.seg-btn.on {
+  background: var(--surface);
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(30, 36, 28, 0.1);
+}
 
 .rsession-body {
   flex: 1;
@@ -357,23 +428,28 @@ onUnmounted(() => {
   overflow-y: auto;
   display: flex;
   justify-content: center;
+  align-items: flex-start; /* 面板高度跟随内容，避免背景只覆盖一屏 */
 }
 .msg-col {
   width: 100%;
-  max-width: 860px;
+  max-width: 900px;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 4px 8px 24px;
+  gap: 18px;
+  padding: 20px 24px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 .col-empty { text-align: center; padding: 40px 0; font-size: 13px; }
 
 /* ===== 会话摘要卡（提炼层②） ===== */
 .summary-card {
   border: 1px solid var(--border);
-  border-left: 3px solid var(--primary, #2563eb);
-  border-radius: 10px;
-  background: var(--surface);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   padding: 12px 16px;
 }
 .sum-title {
@@ -385,15 +461,15 @@ onUnmounted(() => {
   color: var(--text-primary);
   margin-bottom: 8px;
 }
-.sum-title .bar { width: 3px; height: 12px; background: var(--primary, #2563eb); border-radius: 2px; }
+.sum-title .bar { width: 3px; height: 12px; background: var(--primary); border-radius: 2px; }
 .sum-body { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary, var(--text-muted)); }
 .sum-body p { margin: 0 0 4px; }
 .sum-body p:last-child { margin-bottom: 0; }
 
 .state-note {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
@@ -404,26 +480,53 @@ onUnmounted(() => {
 
 /* 消息流 */
 .msg { max-width: 100%; }
-.msg-role { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-.role-badge { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 5px; }
+/* 用户消息：右对齐收窄气泡，与助手消息形成明确的阅读流向 */
+.msg.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.msg.user .msg-role { flex-direction: row-reverse; }
+.msg.user .msg-content { max-width: 76%; }
+.msg-role { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.role-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
 .role-badge.user { background: var(--primary-soft); color: var(--primary); }
-.role-badge.assistant { background: var(--success-soft); color: var(--success); }
-.msg-ts { font-size: 11px; }
+.role-badge.assistant {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.msg-ts { font-size: 11px; font-family: var(--font-mono); }
 .msg-content {
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-primary);
   word-break: break-word;
-  border-radius: 9px;
-  padding: 11px 13px;
+  border-radius: 10px;
+  padding: 11px 14px;
 }
-/* 用户消息：同样走 markdown，但保留主色气泡区分角色 */
-.msg.user .msg-content { background: var(--primary-soft); }
-/* 助手消息：markdown 渲染，卡片边框风格（对齐 ChatView） */
-.msg.assistant .msg-content { background: transparent; border: 1px solid var(--border); }
+/* 用户消息：主色气泡，右下角收角 */
+.msg.user .msg-content {
+  background: var(--primary-soft);
+  border: 1px solid var(--border);
+  border-bottom-right-radius: 4px;
+}
+/* 助手消息：正文直接排在白面板上，阅读更自然 */
+.msg.assistant .msg-content {
+  background: transparent;
+  border: none;
+  padding: 0 1px;
+}
 .msg-content :deep(pre) {
-  background: var(--code-bg, var(--hover));
-  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   overflow-x: auto;
 }
@@ -437,28 +540,66 @@ onUnmounted(() => {
   padding: 2px 12px;
   color: var(--text-secondary);
 }
-.msg-thinking, .msg-tools { margin-top: 6px; }
-.msg-thinking summary, .msg-tools summary {
+/* 折叠条：思考过程 + 工具调用合并为一条，默认收起，点击展开 */
+.msg-activity {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 7px 12px;
+}
+.msg-activity summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11.5px;
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
+  list-style: none;
 }
-.msg-thinking pre, .tc-block {
+.msg-activity summary::-webkit-details-marker { display: none; }
+.act-label { flex: 1; }
+.act-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.msg-activity[open] > summary .act-arrow { transform: rotate(90deg); }
+.msg-activity summary:hover { color: var(--text-secondary); }
+.act-thinking {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-secondary);
-  background: var(--code-bg, var(--hover));
-  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
-  margin: 6px 0 0;
+  margin: 8px 0 2px;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 280px;
   overflow-y: auto;
 }
-.tool-call { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.tc-block {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.tc-block.result { background: var(--surface-2); }
+.tool-call { margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--surface); }
+.tool-call:first-of-type { margin-top: 8px; }
 .tch { display: flex; align-items: center; justify-content: space-between; }
 .tc-name { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; color: var(--text-primary); }
 .tc-status { font-size: 10.5px; }

@@ -4,23 +4,17 @@
   数据来自主进程 radar IPC（本地 SQLite，只读连接），不出机器。
 -->
 <template>
-  <div class="radar-view">
-    <!-- 头部 -->
+  <div class="radar-view" :class="{ embedded }">
+    <!-- 头部：嵌入今天页时隐藏大标题，只保留操作行 -->
     <div class="content-header">
-      <div>
+      <div v-if="!embedded">
         <h1>智能体雷达</h1>
         <div class="text-muted header-sub">
           监控本机其他 AI 工具的运行状态，会话对话自动存档在本地 · 数据不出机器
         </div>
       </div>
+      <div v-else class="embedded-title">AI 工具动态</div>
       <div class="header-actions">
-        <input
-          v-model="keyword"
-          type="text"
-          class="form-control search-input"
-          placeholder="全文搜索所有对话…"
-          @input="onSearchInput"
-        />
         <span v-if="status.running" class="badge badge-success">监控中</span>
         <span v-else-if="status.enabled" class="badge badge-gray">启动中…</span>
         <span v-else class="badge badge-gray">未开启</span>
@@ -158,6 +152,8 @@
     </div>
 
     <div v-else class="dashboard">
+      <!-- 顶部两栏（嵌入「今天」时）：左工具卡片（2 列），右最近活动 -->
+      <div class="dashboard-top">
       <!-- ① 工具卡片状态 -->
       <div class="card-grid">
         <div v-for="c in cards" :key="c.tool" class="tool-card">
@@ -177,25 +173,31 @@
         <div v-if="!cards.length" class="text-muted grid-empty">等待首轮扫描…</div>
       </div>
 
-      <!-- ② 最近状态跃迁 -->
-      <div class="section">
-        <div class="sec-title"><i class="bar"></i>最近状态跃迁</div>
+      <!-- ② 最近活动时段 -->
+      <div class="section events-col">
+        <div class="sec-title"><i class="bar"></i>最近活动</div>
         <div class="event-table">
-          <div v-for="(e, i) in events" :key="i" class="event-row">
-            <span class="ev-time">{{ fmtClock(e.ts) }}</span>
-            <span class="ev-tool">{{ toolLabel(e.tool) }}</span>
-            <span class="ev-type" :class="e.state">{{ e.state === 'running' ? '开始运行' : '转入空闲' }}</span>
-            <span class="ev-detail text-muted">{{ e.title || e.sessionId || '—' }}</span>
+          <div v-for="(p, i) in eventPeriods" :key="i" class="event-row">
+            <span class="ev-time">{{ fmtClock(p.start) }} – {{ p.end ? fmtClock(p.end) : '至今' }}</span>
+            <span class="ev-tool">{{ toolLabel(p.tool) }}</span>
+            <span class="ev-type" :class="p.end ? 'idle' : 'running'">
+              {{ p.end ? `持续 ${fmtDur(p.end - p.start)}` : '运行中' }}
+            </span>
+            <span class="ev-detail text-muted">{{ p.title || p.sessionId || '—' }}</span>
           </div>
-          <div v-if="!events.length" class="row-empty text-muted">暂无状态记录</div>
+          <div v-if="!eventPeriods.length" class="row-empty text-muted">暂无活动记录</div>
         </div>
       </div>
+      </div>
 
-      <!-- ③ 最近活跃会话 / 搜索结果 -->
+      <!-- ③ 最近活跃会话 -->
       <div class="section">
-        <div class="sec-title"><i class="bar"></i>{{ keyword.trim() ? '搜索结果' : '最近活跃会话' }}</div>
+        <div class="sec-title">
+          <i class="bar"></i>最近活跃会话
+          <router-link class="sec-more" to="/radar/all">查看全部<AppIcon name="chevron-right" :size="11" /></router-link>
+        </div>
         <div class="session-table">
-          <div v-for="s in visibleSessions" :key="s.tool + '/' + s.sessionId" class="session-row" @click="openSession(s)">
+          <div v-for="s in sessions" :key="s.tool + '/' + s.sessionId" class="session-row" @click="openSession(s)">
             <span class="sm-time">{{ fmtClock(s.sourceUpdatedAt) }}</span>
             <span class="sm-tool">
               <i class="sm-dot" :class="s.state === 'running' ? 'run' : 'idle'"></i>{{ toolLabel(s.tool) }}
@@ -209,9 +211,7 @@
             <span v-if="s.summary" class="sm-summary text-muted" :title="s.summary">{{ s.summary.split('\n')[0].replace(/\*\*/g, '') }}</span>
             <span class="sm-count text-muted">{{ s.actual_count || s.messageCount || 0 }} 消息</span>
           </div>
-          <div v-if="!visibleSessions.length" class="row-empty text-muted">
-            {{ keyword.trim() ? '无匹配结果' : '暂无会话，等待扫描…' }}
-          </div>
+          <div v-if="!sessions.length" class="row-empty text-muted">暂无会话，等待扫描…</div>
         </div>
       </div>
     </div>
@@ -227,13 +227,14 @@ import AppIcon from '../components/AppIcon.vue';
 const API: any = (window as any).electronAPI;
 const router = useRouter();
 
+// 嵌入模式：作为「今天」页的板块渲染（隐藏大标题、去掉外层留白）
+defineProps<{ embedded?: boolean }>();
+
 // ========== 状态 ==========
 const status = ref<any>({ enabled: false, running: false, collectors: [], allTools: [], stats: null });
 const cards = ref<any[]>([]);
 const events = ref<any[]>([]);
 const sessions = ref<any[]>([]);
-const searchResults = ref<any[]>([]);
-const keyword = ref('');
 const scanning = ref(false);
 const toggling = ref(false);
 
@@ -412,12 +413,6 @@ async function sendNoticeFollowup(n: Notice, text: string) {
   }
 }
 
-const visibleSessions = ref<any[]>([]);
-
-function applySearchMode() {
-  visibleSessions.value = keyword.value.trim() ? searchResults.value : sessions.value;
-}
-
 // ========== 卡片展示逻辑 ==========
 function cardState(c: any): string {
   if ((c.running || 0) > 0) return 'run';
@@ -453,6 +448,36 @@ function shortDir(dir: string): string {
 }
 
 // ========== 数据加载 ==========
+/** 事件流 → 活动时段：同一会话连续的 running 事件合并为一段，直到 idle 收口；
+ *  仍在运行的时段以「至今」收尾。避免一轮会话被探针刷成十几条重复的"开始运行"。 */
+interface EventPeriod { tool: string; sessionId: string; title: string; start: number; end: number | null; }
+const eventPeriods = computed<EventPeriod[]>(() => {
+  const evs = [...events.value].sort((a, b) => a.ts - b.ts);
+  const periods: EventPeriod[] = [];
+  const open = new Map<string, EventPeriod>();
+  for (const e of evs) {
+    const key = `${e.tool}/${e.sessionId}`;
+    if (e.state === 'running') {
+      if (!open.has(key)) {
+        open.set(key, { tool: e.tool, sessionId: e.sessionId, title: e.title || '', start: e.ts, end: null });
+      }
+    } else {
+      const cur = open.get(key);
+      if (cur) { cur.end = e.ts; periods.push(cur); open.delete(key); }
+    }
+  }
+  for (const cur of open.values()) periods.push(cur);
+  // 10 条 ≈ 左侧 4 行工具卡的高度，保持左右两栏齐平
+  return periods.sort((a, b) => b.start - a.start).slice(0, 10);
+});
+function fmtDur(ms: number): string {
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  if (mins < 60) return `${mins} 分钟`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
+}
+
 async function loadStatus() {
   try { status.value = await API.radar.status(); } catch { /* 静默 */ }
 }
@@ -462,17 +487,7 @@ async function loadDashboard() {
     cards.value = d.cards || [];
     events.value = d.events || [];
     sessions.value = d.sessions || [];
-    applySearchMode();
   } catch { /* 静默 */ }
-}
-async function loadSearch() {
-  const q = keyword.value.trim();
-  if (!q) { searchResults.value = []; applySearchMode(); return; }
-  try {
-    const res = await API.radar.sessions({ q });
-    searchResults.value = res.rows || [];
-  } catch { searchResults.value = []; }
-  applySearchMode();
 }
 
 // ========== 交互 ==========
@@ -509,13 +524,6 @@ async function setEnabled(on: boolean) {
   } finally { toggling.value = false; }
 }
 
-// 全文搜索防抖
-let searchTimer: number | undefined;
-function onSearchInput() {
-  if (searchTimer) window.clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(() => { void loadSearch(); }, 350);
-}
-
 function fmtClock(ts: number): string {
   if (!ts) return '';
   const d = new Date(ts);
@@ -548,7 +556,6 @@ onMounted(async () => {
 onUnmounted(() => {
   API.removeAllListeners('radar:event');
   API.removeAllListeners('approver:event');
-  if (searchTimer) window.clearTimeout(searchTimer);
   if (eventTimer) window.clearTimeout(eventTimer);
 });
 </script>
@@ -564,9 +571,28 @@ onUnmounted(() => {
   box-sizing: border-box;
   gap: 14px;
 }
+/* 嵌入「今天」页：去外框、压缩头部 */
+.radar-view.embedded {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: 12px;
+}
+.radar-view .content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.radar-view h1 { font-size: 18px; font-weight: 600; margin: 0; }
+.radar-view.embedded .content-header {
+  padding: 0;
+  border: none;
+  background: none;
+}
+.embedded-title { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
 .header-sub { font-size: 12.5px; margin-top: 4px; }
 .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.search-input { width: 240px; font-size: 12.5px; }
 .collect-info { font-size: 11.5px; }
 
 .header-sub code, .radar-off code {
@@ -603,6 +629,47 @@ onUnmounted(() => {
   gap: 18px;
   padding-bottom: 8px;
 }
+/* 嵌入模式：内层不再自己滚，跟随「今天」页整体滚动 */
+.radar-view.embedded .dashboard {
+  flex: none;
+  min-height: 0;
+  overflow: visible;
+}
+/* 顶部两栏：独立页纵向堆叠；嵌入「今天」页时左工具卡（2 列）右最近活动 */
+.dashboard-top { display: flex; flex-direction: column; gap: 18px; }
+.radar-view.embedded .dashboard-top {
+  flex-direction: row;
+  align-items: stretch; /* 左右两栏等高：卡片行自动分摊高度 */
+  gap: 16px;
+}
+.radar-view.embedded .dashboard-top .card-grid {
+  flex: 1 1 0;
+  min-width: 0;
+  /* minmax(0,1fr)：强制两列等宽，长标题不会把某一列撑开 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr; /* 4 行卡片均分高度，与右栏齐平 */
+  gap: 10px;
+}
+.radar-view.embedded .dashboard-top .events-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.radar-view.embedded .tool-card {
+  min-width: 0;
+  padding: 10px 12px; /* 嵌入时卡片略缩矮 */
+}
+.radar-view.embedded .events-col {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 14px;
+}
+/* 窄列里时间与工具名不再定宽，避免挤压标题 */
+.radar-view.embedded .events-col .ev-time { width: auto; white-space: nowrap; }
+.radar-view.embedded .events-col .ev-tool { width: auto; white-space: nowrap; }
+.radar-view.embedded .events-col .event-row { flex-wrap: wrap; gap: 10px; }
 
 /* ===== ① 工具卡片 ===== */
 .card-grid {
@@ -658,6 +725,18 @@ onUnmounted(() => {
   color: var(--text-primary);
   margin-bottom: 10px;
 }
+.sec-more {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+.sec-more:hover { color: var(--primary); }
 .sec-title .bar {
   width: 4px;
   height: 16px;
@@ -683,9 +762,9 @@ onUnmounted(() => {
   font-size: 12.5px;
 }
 .event-row:last-child { border-bottom: none; }
-.ev-time { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); width: 70px; flex-shrink: 0; }
+.ev-time { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); width: 116px; flex-shrink: 0; }
 .ev-tool { font-weight: 600; color: var(--text-primary); width: 90px; flex-shrink: 0; }
-.ev-type { width: 70px; flex-shrink: 0; font-weight: 500; }
+.ev-type { width: 96px; flex-shrink: 0; font-weight: 500; }
 .ev-type.running { color: var(--primary); }
 .ev-type.idle { color: var(--text-muted); }
 .ev-detail {

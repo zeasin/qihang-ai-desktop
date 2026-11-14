@@ -75,13 +75,13 @@ export class ClaudeCodeCollector implements HubCollector {
     return out;
   }
 
-  /** 只读文件头部：cwd 和 summary 标题一般都在前几 KB；mtime 作为 updated_at */
+  /** 只读文件头部：cwd 和 summary 标题一般都在前几 KB；没有 summary 时用第一条真人用户消息兜底 */
   private probeFile(full: string, stat: fs.Stats): ClaudeFileInfo {
     const info: ClaudeFileInfo = { cwd: '', label: '' };
     let head: string;
     try {
       const fd = fs.openSync(full, 'r');
-      const buf = Buffer.alloc(Math.min(96 * 1024, stat.size));
+      const buf = Buffer.alloc(Math.min(256 * 1024, stat.size));
       fs.readSync(fd, buf, 0, buf.length, 0);
       fs.closeSync(fd);
       head = buf.toString('utf-8');
@@ -95,6 +95,28 @@ export class ClaudeCodeCollector implements HubCollector {
     const summaryMatch = head.match(/"type"\s*:\s*"summary"[^\n]*?"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (summaryMatch) {
       try { info.label = JSON.parse(`"${summaryMatch[1]}"`); } catch { /* 标题提取失败无所谓 */ }
+    }
+    // summary 只有被 Claude Code 总结过的老会话才有；新会话回退用第一条真人输入当标题
+    if (!info.label) {
+      for (const line of head.split('\n')) {
+        if (!line.includes('"type":"user"')) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry?.type !== 'user' || entry.isSidechain) continue;
+          const c = entry.message?.content;
+          let text = '';
+          if (typeof c === 'string') text = c;
+          else if (Array.isArray(c)) {
+            const tb = c.find((b: any) => b?.type === 'text' && b.text);
+            if (tb) text = tb.text;
+          }
+          const t = String(text || '').trim();
+          // 命令包装 / system-reminder 注入 / caveat 提示都不是标题
+          if (!t || t.startsWith('<') || t.startsWith('Caveat:')) continue;
+          info.label = t.replace(/\s+/g, ' ').slice(0, 60);
+          break;
+        } catch { continue; }
+      }
     }
     return info;
   }

@@ -376,9 +376,11 @@ function collectToolResult(raw: TraeRawMessage[]): string {
 
 function loadSessionMessages(sessionId: string): SerializedMessage[] {
   const db = ensurePlainDb();
-  // chat_message 是消息骨架，history_v2 是每步的快照，content_source 记录该步由哪个动作产生
+  // chat_message 是消息骨架，history_v2 是每步的快照，content_source 记录该步由哪个动作产生。
+  // 注意：history_v2.message_id 记录的是「触发该轮的用户消息 ID」，助手 task 消息自身的 ID
+  // 在 history_v2 里查不到——必须通过骨架里的 reply_to_message_id 关联。
   const skeleton = db.prepare(
-    `SELECT message_id, message_role, created_at FROM chat_message
+    `SELECT message_id, message_role, reply_to_message_id, created_at FROM chat_message
      WHERE session_id = ? AND deleted_at = 0 ORDER BY message_index`,
   ).all(sessionId) as any[];
   const historyRows = db.prepare(
@@ -401,8 +403,10 @@ function loadSessionMessages(sessionId: string): SerializedMessage[] {
 
   const out: SerializedMessage[] = [];
   for (const msg of skeleton) {
-    const rows = historyByMessage.get(msg.message_id) || [];
     const role = msg.message_role === 'user' ? 'user' : 'assistant';
+    // assistant（task 类型）的快照挂在触发它的用户消息 ID 下，user 的快照挂在自己 ID 下
+    const historyKey = role === 'assistant' ? (msg.reply_to_message_id || msg.message_id) : msg.message_id;
+    const rows = historyByMessage.get(historyKey) || [];
     const timestamp = Number(msg.created_at) * 1000;
 
     if (role === 'user') {

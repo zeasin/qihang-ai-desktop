@@ -33,7 +33,6 @@
       <div class="statline">
         <span>待你处理 <b class="acc">{{ digestPending.length }}</b></span>
         <span>笔记已勾 <b>{{ digestDoneCount }}</b></span>
-        <span>待跟进 <b>{{ digestFollowups.length }}</b></span>
       </div>
 
       <!-- ========== 引擎简报 ========== -->
@@ -45,29 +44,16 @@
         <div v-else class="brief-body"><p>暂无数据。扫描笔记库后，这里会汇总你的待办、跟进与最新产出。</p></div>
       </section>
 
-      <!-- ========== 雷达统计 ========== -->
-      <section class="panel radar-sec">
-        <div class="sec-label">
-          <AppIcon name="radar" :size="13" />雷达统计
-          <em v-if="radarStats">监控 {{ radarCards.length }} 个工具 · 沉淀 {{ radarStats.messages }} 条消息</em>
-          <em v-else>未开启或暂无数据</em>
-          <router-link class="sec-more" to="/radar">进入雷达<AppIcon name="chevron-right" :size="11" /></router-link>
-        </div>
-        <div class="radar-stats">
-          <div class="rs-item" :class="{ run: (radarStats?.running || 0) > 0 }"><b>{{ radarStats?.running ?? 0 }}</b><small>运行中</small></div>
-          <div class="rs-item"><b>{{ radarStats?.activeToday ?? 0 }}</b><small>今日活跃</small></div>
-          <div class="rs-item"><b>{{ radarStats?.sessions ?? 0 }}</b><small>会话总数</small></div>
-          <div class="rs-item"><b>{{ radarStats?.messages ?? 0 }}</b><small>沉淀消息</small></div>
-        </div>
-        <div v-if="radarCards.length" class="radar-tools">
-          <div v-for="c in radarCards" :key="c.tool" class="radar-tool" :class="{ run: (c.running || 0) > 0 }">
-            <span class="rt-dot"></span>
-            <span class="rt-name">{{ toolLabel(c.tool) }}</span>
-            <span class="rt-sub">{{ radarToolSub(c) }}</span>
-          </div>
-        </div>
+      </template>
+
+      <!-- ========== 智能体雷达（原独立雷达页整体并入，不依赖笔记库） ========== -->
+      <section class="radar-embed-sec">
+        <AgentRadarView embedded />
       </section>
 
+      <template v-if="notesLoaded && kbCount">
+      <div class="grid2">
+      <div class="col">
       <!-- ========== 等你处理 ========== -->
       <div class="sec-label"><AppIcon name="list-checks" :size="13" />等你处理<em>{{ digestPending.length + todos.length }} 项</em></div>
       <section class="panel todo-panel">
@@ -102,46 +88,19 @@
         <div v-if="digestPending.length > shownTodoCount" class="empty-row">仅列出前 {{ shownTodoCount }} 条，共 {{ digestPending.length }} 条</div>
         <div v-if="!digestPending.length && !todos.length" class="empty-row">{{ digestLoading ? '正在扫描笔记…' : '笔记里没有未勾选的待办' }}</div>
       </section>
-
-      <!-- ========== 跟进事项 + 工作日志 ========== -->
-      <div class="grid2">
-        <section>
-          <div class="sec-label"><AppIcon name="bookmark" :size="13" />跟进事项<em>{{ digestFollowups.length }}</em></div>
-          <div class="panel list-panel">
-            <div v-for="(f, i) in digestFollowups.slice(0, 20)" :key="'f' + i" class="file-row" :title="f.project + ' / ' + f.file + ':' + f.line + (f.resolvable ? '（点击在笔记中打开，勾选 = 已跟进并回写 [x]）' : '（点击在笔记中打开）')" @click="openFollowupSource(f)">
-              <button
-                v-if="f.resolvable"
-                class="todo-box ro-box"
-                :disabled="checkingFu === f.project + '/' + f.file + ':' + f.line"
-                :title="checkingFu === f.project + '/' + f.file + ':' + f.line ? '正在回写跟进清单…' : '已跟进：结清并回写 [x] 到跟进清单'"
-                @click.stop="checkDigestFollowup(f)"
-              >
-                <AppIcon v-if="checkingFu === f.project + '/' + f.file + ':' + f.line" name="loader" :size="11" />
-              </button>
-              <AppIcon v-else name="bookmark" :size="14" />
-              <span class="plan-tx"><b>{{ f.text }}</b><small>{{ f.file.split('/').pop() }}</small></span>
-            </div>
-            <div v-if="!digestFollowups.length" class="empty-row">没有待跟进事项（工作日志等历史记录不算跟进）</div>
-          </div>
-        </section>
-        <section>
-          <div class="sec-label"><AppIcon name="history" :size="13" />工作日志<em>{{ digestLogs.length }}</em></div>
-          <div class="panel list-panel">
-            <div v-for="(g, date) in digestLogGroups" :key="date" class="file-row" :title="g[0].file + ':' + g[0].line">
-              <AppIcon name="file-text" :size="14" />
-              <span class="plan-tx"><b>{{ date }} 日志</b><small>{{ g[0].preview || '（无正文摘要）' }}</small></span>
-              <span class="row-src">{{ g[0].file }}</span>
-            </div>
-            <div v-if="!digestLogs.length" class="empty-row">没有日期命名的日志文件</div>
-          </div>
-        </section>
       </div>
 
-      <!-- ========== 最新更新（垫底板块，与上方拉开距离） ========== -->
-      <section class="tail-sec">
-        <div class="sec-label"><AppIcon name="file-text" :size="13" />最新更新<em>{{ recentFiles.length }}</em></div>
+      <!-- ========== 工作日志（笔记库最近更新的文档） ========== -->
+      <section>
+        <div class="sec-label"><AppIcon name="history" :size="13" />工作日志<em>{{ recentFiles.length }}</em></div>
         <div class="panel list-panel">
-          <div v-for="f in recentFiles" :key="f.projectName + '/' + f.rel" class="file-row" :title="f.projectName + ' / ' + f.rel">
+          <div
+            v-for="f in recentFiles"
+            :key="f.projectId + '/' + f.rel"
+            class="file-row"
+            :title="f.projectName + ' / ' + f.rel + '（点击在笔记中打开）'"
+            @click="openNoteFile(f)"
+          >
             <AppIcon name="file-text" :size="14" />
             <span class="plan-tx">
               <b>{{ f.rel.split('/').pop() }}</b>
@@ -149,9 +108,10 @@
             </span>
             <span class="todo-dt">{{ fileTime(f.mtime) }}</span>
           </div>
-          <div v-if="!recentFiles.length" class="empty-row">笔记库最近没有文件改动</div>
+          <div v-if="!recentFiles.length" class="empty-row">笔记库最近没有文件更新</div>
         </div>
       </section>
+      </div>
     </template>
   </div>
 </template>
@@ -161,6 +121,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import NotesGate from '@/components/NotesGate.vue';
 import AppIcon from '@/components/AppIcon.vue';
+import AgentRadarView from './AgentRadarView.vue';
 
 const API = window.electronAPI;
 const router = useRouter();
@@ -227,9 +188,8 @@ const briefLines = computed(() => {
   }
   if (digest.value) {
     const dp = digestPending.value.length;
-    const df = digestFollowups.value.length;
-    if (dp || df) {
-      lines.push(`笔记库扫描 <b>${digest.value.scannedFiles ?? 0}</b> 个文件：发现未勾待办 <b>${dp}</b> 项、待跟进 <b>${df}</b> 项。`);
+    if (dp) {
+      lines.push(`笔记库扫描 <b>${digest.value.scannedFiles ?? 0}</b> 个文件：发现未勾待办 <b>${dp}</b> 项。`);
     }
   }
   return lines.slice(0, 4);
@@ -239,35 +199,13 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ========== 雷达统计（复用雷达页 dashboard，一次取全；radar:event 时刷新） ==========
-const radarStats = ref<any>(null);
-const radarCards = ref<any[]>([]);
-
-const RADAR_TOOL_LABELS: Record<string, string> = {
-  zcode: 'ZCode', 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode',
-  qoder: 'Qoder', trae: 'Trae', dsh: 'DSH', pi: 'Pi',
-};
-const toolLabel = (t: string) => RADAR_TOOL_LABELS[t] || t;
+// ========== 智能体雷达：已整体并入本页（AgentRadarView embedded），此处不再单独拉数 ==========
 
 function relTime(diff: number): string {
   if (diff < 60_000) return '刚刚';
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
   if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
   return `${Math.floor(diff / 86400_000)} 天前`;
-}
-
-function radarToolSub(c: any): string {
-  if ((c.running || 0) > 0) return `运行中 ${c.running} · 共 ${c.sessions}`;
-  if (!c.lastActivity) return '暂无活动';
-  return `${c.sessions} 会话 · ${relTime(Date.now() - c.lastActivity)}`;
-}
-
-async function loadRadarStats() {
-  try {
-    const d = await API.radar.dashboard();
-    radarStats.value = d.stats || null;
-    radarCards.value = d.cards || [];
-  } catch { radarStats.value = null; radarCards.value = []; }
 }
 
 // ========== 最新日报重点提炼 ==========
@@ -353,29 +291,9 @@ function fileTime(ts: number): string {
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`;
 }
 
-// 跟进事项点击：跳到笔记页打开来源文件（带项目与相对路径，笔记页按 query 定位）
-function openFollowupSource(f: any) {
-  router.push({ path: '/notes', query: { lib: String(f.project_id), file: f.file } });
-}
-
-// 跟进清单（跟进.md）条目一键结清：回写 [x]，再次扫描后不再展示；
-// 工作日志等历史来源的命中没有结清入口，本就不该挂在这里（提炼层已排除）
-const checkingFu = ref('');
-async function checkDigestFollowup(f: any) {
-  const key = f.project + '/' + f.file + ':' + f.line;
-  if (checkingFu.value) return;
-  checkingFu.value = key;
-  try {
-    const r = await API.noteDigest.checkFollowup(f.project_id, f.file, f.line, f.text);
-    if (r?.ok) {
-      await loadNoteDigest();
-    } else {
-      alert(r?.error || '回写失败');
-    }
-  } catch (e: any) {
-    alert('回写失败: ' + (e?.message || e));
-  }
-  checkingFu.value = '';
+// 工作日志条目点击：打开笔记库里对应的最近更新文档
+function openNoteFile(f: any) {
+  router.push({ path: '/notes', query: { lib: String(f.projectId), file: f.rel } });
 }
 
 async function toggleTodo(t: any) {
@@ -390,7 +308,7 @@ async function loadOverviewData() {
   try { stats.value = await API.insights.stats(); } catch {}
   try { reports.value = await API.insights.reports(); } catch {}
   try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 8); } catch {}
-  try { recentFiles.value = await API.insights.recentFiles(); } catch {}
+  try { recentFiles.value = await API.insights.recentFiles(12); } catch {}
   // 数据页退役（本地数据集隐藏）：pendingRecords 不再加载
   // 日报调度时间来自内置的「生成综合日报」任务（未开启则不显示该行）
   try {
@@ -420,13 +338,6 @@ const digestAt = ref('');
 
 const digestPending = computed(() => (digest.value?.todos || []).filter((t: any) => !t.done));
 const digestDoneCount = computed(() => (digest.value?.todos || []).length - digestPending.value.length);
-const digestFollowups = computed(() => digest.value?.followups || []);
-const digestLogs = computed(() => (digest.value?.logs || []).slice(0, 6));
-const digestLogGroups = computed(() => {
-  const m: Record<string, any[]> = {};
-  for (const g of digestLogs.value) (m[g.date] = m[g.date] || []).push(g);
-  return m;
-});
 const digestMeta = computed(() => {
   if (digestLoading.value) return '扫描中…';
   if (!digestAt.value) return '';
@@ -503,12 +414,8 @@ onMounted(() => {
   loadOverviewData();
   loadKbCount();
   loadNoteDigest();
-  loadRadarStats();
   API.on('report:generated', () => {
     loadOverviewData();
-  });
-  API.on('radar:event', () => {
-    loadRadarStats();
   });
 });
 onUnmounted(() => {
@@ -565,64 +472,8 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
-/* ========== 雷达统计 ========== */
-/* 标题在面板内，没有外置 sec-label 的 16px 上边距，需自行与上一区块留白 */
-.radar-sec { padding: 12px 16px 14px; margin-top: 16px; }
-.radar-sec .sec-label { margin: 0 0 10px; }
-.sec-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
-  color: var(--text-muted);
-  text-decoration: none;
-  flex-shrink: 0;
-}
-.sec-more:hover { color: var(--primary); }
-
-.radar-stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.rs-item {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 8px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.rs-item b {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.rs-item small { font-size: 11px; color: var(--text-muted); }
-/* 有会话运行时，"运行中"块与下方运行徽章同色系呼应 */
-.rs-item.run { background: var(--primary-soft); border-color: var(--primary); }
-.rs-item.run b { color: var(--primary); }
-
-.radar-tools { display: flex; flex-wrap: wrap; gap: 6px; }
-.radar-tool {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--surface);
-}
-.radar-tool.run { border-color: var(--primary); background: var(--primary-soft); color: var(--text-primary); }
-.rt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); opacity: 0.45; flex-shrink: 0; }
-.radar-tool.run .rt-dot { background: var(--primary); opacity: 1; }
-.rt-name { font-weight: 600; color: var(--text-primary); }
+/* ========== 智能体雷达（整体嵌入板块） ========== */
+.radar-embed-sec { margin-top: 16px; }
 
 /* ========== 等你处理 ========== */
 .todo-panel { display: flex; flex-direction: column; }
@@ -680,16 +531,13 @@ onUnmounted(() => {
 .src-count { margin-left: auto; flex-shrink: 0; }
 .empty-row { font-size: 12px; color: var(--text-muted); padding: 14px; text-align: center; }
 
-/* ========== 双栏区 ========== */
+/* ========== 双栏区（等你处理 + 工作日志） ========== */
 .grid2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 0 16px;
   align-items: start;
-  /* grid2 里 section 的首个子元素就是 sec-label，其 ：first-child 上边距会被全局清零，
-     这里补回与其他区块一致的 16px 节奏 */
   margin-top: 16px;
-  margin-bottom: 4px;
 }
 .list-panel { display: flex; flex-direction: column; }
 .plan-row, .file-row {

@@ -230,8 +230,11 @@ export class RadarIngestLoop {
       });
     };
 
-    // 源更新时间没变（且已有指纹）→ 跳过；本地指纹丢失时用本地游标兜底续传
-    if (fp && updatedAtMs === fp.sourceUpdatedAt) return 'skipped';
+    // 源更新时间没变（且已有指纹）→ 跳过；例外：本地标题为空而源里有标题时，补写一次（标题提取规则升级后回填）
+    if (fp && updatedAtMs === fp.sourceUpdatedAt) {
+      const st = this.db.sessionState(tool, sessionId);
+      if (!info.label || st?.title) return 'skipped';
+    }
 
     let mode: 'delta' | 'full';
     let fromSeq = 0;

@@ -228,7 +228,7 @@ class AgentRadarService {
     const db = this.queryDb();
     return {
       cards: db ? db.overviewCards() : [],
-      events: db ? db.recentEvents(20) : [],
+      events: db ? db.recentEvents(60) : [],
       sessions: db ? db.recentSessions(15) : [],
       stats: db ? db.stats() : null,
       lastRound: this.lastRound,
