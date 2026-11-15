@@ -14,6 +14,7 @@ import { app } from 'electron';
 import * as db from '../services/database';
 import { listPiModels } from '../services/pi-agent';
 import { askRadar } from '../radar/radar-ask';
+import { getBrief } from '../radar/radar-brief';
 import { agentRadar } from '../services/agent-radar';
 import { extractDigest, checkDigestTodo } from '../services/note-digest';
 import * as projectScan from '../services/project-scan';
@@ -595,6 +596,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       };
     } catch { out.radar = { enabled: false, cards: [], sessions: [] }; }
     return sendJson(res, 200, out);
+  }
+
+  // ---------- 昨日简报：与桌面今天页共用同一生成/缓存链路（内存 → 落盘恢复 → 生成；?force=1 重新生成） ----------
+  if (req.method === 'GET' && pathname === '/api/brief') {
+    const force = url.searchParams.get('force') === '1';
+    try {
+      return sendJson(res, 200, await getBrief(force));
+    } catch (e: any) {
+      return sendJson(res, 200, { ok: false, error: e?.message || String(e) });
+    }
   }
 
   if (req.method === 'GET' && pathname === '/api/projects') {

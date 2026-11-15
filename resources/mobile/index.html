@@ -132,6 +132,14 @@
   .sec-t { font-size: 13px; font-weight: 600; color: #374151; margin: 0 2px 8px; display: flex; align-items: center; gap: 6px; }
   .sec-t em { font-style: normal; font-weight: 400; font-size: 11.5px; color: #9ca3af; }
   .home-card { background: #fff; border-radius: 14px; padding: 6px 12px; box-shadow: 0 2px 10px rgba(15, 23, 42, .06); }
+  .sec-act { margin-left: auto; color: #2563eb; font-size: 14px; line-height: 1; padding: 2px 4px; }
+  .brief-md { font-size: 13.5px; line-height: 1.7; color: #111827; word-break: break-word; padding: 6px 2px; }
+  .brief-md h3 { font-size: 13.5px; margin: 10px 0 4px; color: #1d4ed8; }
+  .brief-md h3:first-child { margin-top: 2px; }
+  .brief-md p { margin: 4px 0; }
+  .brief-md ul { margin: 4px 0; padding-left: 18px; }
+  .brief-md li { margin: 2px 0; }
+  .brief-md code { font-size: 12px; background: #f1f5f9; border-radius: 4px; padding: 1px 5px; }
   .home-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
   .home-row:last-child { border-bottom: 0; }
   .home-row .dot { width: 6px; height: 6px; border-radius: 999px; background: #d1d5db; margin-top: 6px; flex-shrink: 0; }
@@ -643,13 +651,16 @@
   <div id="notesHandle" class="notes-handle" title="唤出笔记树">☰</div>
 </div>
 
-<!-- 首页：今天页移动版（等你处理 / AI 工具动态 / 最近活跃会话 / 工作日志） -->
+<!-- 首页：今天页移动版（昨日简报 / 等你处理 / AI 工具动态 / 最近活跃会话 / 工作日志） -->
 <div id="homeView" class="screen">
   <div class="topbar">
     <div class="title">首页</div>
   </div>
   <div class="home-body">
     <div id="homeDate" class="home-date"></div>
+    <div class="sec"><div class="sec-t">📋 昨日简报<em id="homeBriefMeta"></em><span id="homeBriefRefresh" class="sec-act">⟳</span></div>
+      <div class="home-card"><div id="homeBrief"></div></div>
+    </div>
     <div class="sec"><div class="sec-t">🫵 等你处理<em id="homeTodoCount"></em></div>
       <div class="home-card"><div id="homeTodos"></div></div>
     </div>
@@ -852,6 +863,9 @@
   var homeToolCards = document.getElementById('homeToolCards');
   var homeSessions = document.getElementById('homeSessions');
   var homeFiles = document.getElementById('homeFiles');
+  var homeBrief = document.getElementById('homeBrief');
+  var homeBriefMeta = document.getElementById('homeBriefMeta');
+  var homeBriefRefresh = document.getElementById('homeBriefRefresh');
   var rdView = document.getElementById('rdView');
   var rdBackBtn = document.getElementById('rdBackBtn');
   var rdBackBtnFloat = document.getElementById('rdBackBtnFloat');
@@ -1065,8 +1079,7 @@
 
   function enterApp() {
     state.stopped = false;
-    show(homeView);
-    loadToday();
+    enterHome();
     loadSessions();
     loadProjects();
     connectEvents();
@@ -2088,10 +2101,40 @@
 
   // ---------- 首页（今天页移动版） ----------
   // GET /api/today 聚合：本地待办 + 笔记提炼待办 + 雷达工具卡片/最近会话 + 工作日志（最近更新文档）。
+  // GET /api/brief：昨日简报，与桌面今天页同一生成/缓存链路（内存 → 落盘恢复 → 生成）。
   // 每次切到首页 Tab 重新拉取，数据量小、无需本地缓存。
   var homeLoading = false;
   var homeTodosExpanded = false;
   var homeData = null;
+
+  // 昨日简报：缓存命中即回（毫秒级），缺失才现场生成（首次约十几秒）；⟳ 强制重新生成
+  var homeBriefLoading = false;
+  function loadHomeBrief(force) {
+    if (homeBriefLoading) return;
+    homeBriefLoading = true;
+    homeBriefMeta.textContent = force ? '重新生成中…' : '加载中…';
+    if (!homeBrief.innerHTML) homeBrief.appendChild(emptyNode('正在汇总昨日 AI 工具动态与笔记库…'));
+    request('/api/brief' + (force ? '?force=1' : '')).then(function (r) {
+      homeBriefLoading = false;
+      homeBrief.innerHTML = '';
+      if (r && r.ok && r.brief) {
+        homeBrief.innerHTML = mdRender(r.brief);
+        homeBriefMeta.textContent = 'AI 生成 · ' + (r.generatedAt || '');
+      } else if (r && r.empty) {
+        homeBrief.appendChild(emptyNode('昨天没有 AI 会话与笔记更新'));
+        homeBriefMeta.textContent = '';
+      } else {
+        homeBrief.appendChild(emptyNode((r && r.error) ? '简报生成失败：' + r.error : '简报生成失败'));
+        homeBriefMeta.textContent = '';
+      }
+    }).catch(function (e) {
+      homeBriefLoading = false;
+      homeBrief.innerHTML = '';
+      homeBrief.appendChild(emptyNode(e.message || '简报加载失败'));
+      homeBriefMeta.textContent = '';
+    });
+  }
+  homeBriefRefresh.addEventListener('click', function () { loadHomeBrief(true); });
 
   function fmtHomeTime(ts) {
     var n = Number(ts);
@@ -2111,6 +2154,7 @@
   function enterHome() {
     show(homeView);
     loadToday();
+    loadHomeBrief(false);
   }
   function loadToday() {
     if (homeLoading) return;
