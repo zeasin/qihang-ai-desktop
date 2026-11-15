@@ -50,6 +50,7 @@ import * as scheduler from './services/scheduler';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { askRadar } from './radar/radar-ask';
+import { getBrief } from './radar/radar-brief';
 import { startRadarDigest, backfillSummaries } from './radar/radar-digest';
 import { approver } from './approval/approver';
 import { stashFollowup } from './approval/task-notify';
@@ -1289,6 +1290,7 @@ ipcMain.handle('radar:scan-now', async () => {
   }
 });
 ipcMain.handle('radar:tool-stats', () => agentRadar.toolStats());
+ipcMain.handle('radar:brief', (_, force) => getBrief(force === true));
 ipcMain.handle('radar:dashboard', () => agentRadar.dashboard());
 ipcMain.handle('radar:sessions', (_, { tool, q, page, pageSize }) => {
   try {

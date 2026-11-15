@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setEnabled: (enabled: boolean | string) => ipcRenderer.invoke('radar:set-enabled', { enabled }),
     scanNow: () => ipcRenderer.invoke('radar:scan-now'),
     toolStats: () => ipcRenderer.invoke('radar:tool-stats'),
+    brief: (force?: boolean) => ipcRenderer.invoke('radar:brief', force === true),
     dashboard: () => ipcRenderer.invoke('radar:dashboard'),
     sessions: (opts?: { tool?: string; q?: string; page?: number; pageSize?: number }) =>
       ipcRenderer.invoke('radar:sessions', opts || {}),

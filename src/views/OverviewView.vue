@@ -35,13 +35,21 @@
         <span>笔记已勾 <b>{{ digestDoneCount }}</b></span>
       </div>
 
-      <!-- ========== 引擎简报 ========== -->
+      <!-- ========== 昨日简报（AI 生成，昨日雷达动态 + 今日待办；失败回落原规则简报） ========== -->
       <section class="brief panel">
-        <div class="sec-label"><AppIcon name="sparkles" :size="13" />引擎简报<em>由笔记库与任务数据自动汇编</em></div>
-        <div v-if="briefLines.length" class="brief-body">
-          <p v-for="(line, i) in briefLines" :key="i" v-html="line"></p>
+        <div class="sec-label">
+          <AppIcon name="sparkles" :size="13" />昨日简报
+          <em>{{ briefMetaText }}</em>
+          <button class="brief-refresh brief-history" :disabled="briefLoading" title="查看历史简报（笔记库「日报/AI活动」目录，按日期逐份保存）" @click="goBriefHistory">历史</button>
+          <button class="brief-refresh" :disabled="briefLoading" :title="briefLoading ? '生成中…' : '重新生成（覆盖落盘文件，不重推飞书）'" @click="regenBrief">{{ briefLoading ? '⋯' : '⟳' }}</button>
         </div>
-        <div v-else class="brief-body"><p>暂无数据。扫描笔记库后，这里会汇总你的待办、跟进与最新产出。</p></div>
+        <div v-if="briefLoading && !briefMd" class="brief-body"><p>正在汇总昨日 AI 工具动态与笔记库，生成昨日简报…（首次约十几秒）</p></div>
+        <div v-else-if="briefMd" class="brief-body brief-md" v-html="briefHtml"></div>
+        <div v-else-if="briefEmpty" class="brief-body"><p>昨天没有 AI 会话与笔记更新。开始工作后，明天早上这里会生成昨日简报。</p></div>
+        <div v-else class="brief-body">
+          <p v-for="(line, i) in briefLines" :key="i" v-html="line"></p>
+          <p v-if="briefError" class="brief-err">{{ briefError }}</p>
+        </div>
       </section>
 
       </template>
@@ -119,6 +127,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import AgentRadarView from './AgentRadarView.vue';
@@ -197,6 +206,64 @@ const briefLines = computed(() => {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ========== 今日简报（AI 生成：AI 工具动态 + 笔记库动态；失败/无数据回落规则简报） ==========
+const briefMd = ref('');
+const briefGeneratedAt = ref('');
+const briefLoading = ref(false);
+const briefEmpty = ref(false);
+const briefError = ref('');
+const briefHtml = computed(() => {
+  try { return marked.parse(briefMd.value, { async: false }) as string; } catch { return briefMd.value; }
+});
+const briefMetaText = computed(() => {
+  if (briefLoading.value) return '生成中…';
+  if (briefGeneratedAt.value) return 'AI 生成 · ' + briefGeneratedAt.value;
+  return 'AI 汇总昨日动态与今日待办';
+});
+async function loadBrief(force = false) {
+  if (briefLoading.value) return;
+  briefLoading.value = true;
+  try {
+    const r: any = await API.radar.brief(force);
+    if (r?.ok && r.brief) {
+      briefMd.value = r.brief;
+      briefGeneratedAt.value = r.generatedAt || '';
+      briefEmpty.value = false;
+      briefError.value = '';
+    } else if (r?.ok && r.empty) {
+      briefMd.value = '';
+      briefGeneratedAt.value = '';
+      briefEmpty.value = true;
+      briefError.value = '';
+    } else {
+      briefMd.value = '';
+      briefGeneratedAt.value = '';
+      briefEmpty.value = false;
+      briefError.value = r?.error ? 'AI 简报生成失败：' + r.error + '（下方为规则简报）' : '';
+    }
+  } catch (e: any) {
+    briefMd.value = '';
+    briefEmpty.value = false;
+    briefError.value = 'AI 简报生成失败：' + (e?.message || e) + '（下方为规则简报）';
+  } finally {
+    briefLoading.value = false;
+  }
+}
+function regenBrief() { void loadBrief(true); }
+
+/** 历史简报入口：跳笔记库默认库的昨日简报文件，文件树里可浏览「日报/AI活动」全部历史 */
+async function goBriefHistory() {
+  try {
+    const libs = (await API.kb.list()) || [];
+    const lib = libs.find((l: any) => l.isDefault) || libs[0];
+    if (!lib) return;
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    const key = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
+    router.push({ path: '/notes', query: { lib: String(lib.id), file: '日报/AI活动/' + key + '.md' } });
+  } catch { /* 忽略 */ }
 }
 
 // ========== 智能体雷达：已整体并入本页（AgentRadarView embedded），此处不再单独拉数 ==========
@@ -414,6 +481,7 @@ onMounted(() => {
   loadOverviewData();
   loadKbCount();
   loadNoteDigest();
+  loadBrief();
   API.on('report:generated', () => {
     loadOverviewData();
   });
@@ -459,6 +527,20 @@ onUnmounted(() => {
   background: var(--primary);
 }
 .brief .sec-label { margin: 0 0 8px; }
+.brief-refresh {
+  margin-left: auto; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-muted); border-radius: 6px; width: 22px; height: 22px;
+  font-size: 13px; line-height: 1; cursor: pointer; flex-shrink: 0;
+}
+.brief-refresh:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.brief-refresh:disabled { opacity: .5; cursor: default; }
+.brief-history { width: auto; padding: 0 8px; font-size: 11.5px; }
+.brief-md { font-size: 13px; line-height: 1.7; color: var(--text-primary); }
+.brief-md :deep(p) { margin: 0 0 8px; }
+.brief-md :deep(h3) { font-size: 13.5px; margin: 10px 0 6px; }
+.brief-md :deep(ul), .brief-md :deep(ol) { margin: 0 0 8px; padding-left: 18px; }
+.brief-md :deep(code) { font-size: 12px; background: var(--hover); border-radius: 4px; padding: 1px 5px; }
+.brief-err { color: var(--danger, #dc2626); font-size: 12px; margin-top: 6px; }
 .brief-body { display: flex; flex-direction: column; gap: 5px; }
 .brief-body p { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary); }
 .brief-body p :deep(b) {
