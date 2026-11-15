@@ -19,7 +19,11 @@ const { RadarDb } = require(path.resolve(__dirname, '..', 'dist-electron', 'elec
 const radarDb = new RadarDb(path.dirname(dbPath), { readonly: true });
 const svcDir = path.resolve(path.dirname(req.resolve(MOD)), '..', 'services');
 const stubs = {
-  [path.join(svcDir, 'agent-radar.js')]: { agentRadar: { isEnabled: () => true, searchMessages: (kw, n) => radarDb.searchMessages(kw, n) } },
+  [path.join(svcDir, 'agent-radar.js')]: { agentRadar: {
+    isEnabled: () => true,
+    searchMessages: (kw, n) => radarDb.searchMessages(kw, n),
+    searchSessionsByText: (kws, n) => radarDb.searchSessionsByText(kws, n),
+  } },
   [path.join(svcDir, 'ai-tools.js')]: { generateWithPi: async () => { throw new Error('评测不应调 AI'); } },
   [path.join(svcDir, 'logger.js')]: { info() {}, warn() {}, error() {}, debug() {} },
 };
@@ -37,11 +41,15 @@ console.log(`评测集 ${suite.cases.length} 题（库: ${dbPath}）\n`);
 for (const c of suite.cases) {
   const kws = extractKeywords(c.question);
   const hits = searchHits(kws);
-  // 消息级命中 → 会话去重，保留首现位次
+  // 模拟 askRadar 真实 refs 顺序：摘要注入（标题/摘要命中）排前，消息级命中垫后（同会话去重）
+  let sumHits = [];
+  try { sumHits = radarDb.searchSessionsByText(kws, 5); } catch { /* 忽略 */ }
   const seen = new Map();
+  for (const s of sumHits) seen.set(`${s.tool}|${s.sessionId}`, { tool: s.tool, sessionId: s.sessionId, hits: s._hits, via: '摘要' });
   for (const h of hits) {
     const key = `${h.tool}|${h.sessionId}`;
-    if (!seen.has(key)) seen.set(key, { tool: h.tool, sessionId: h.sessionId, hits: h._hits });
+    if (seen.has(key)) continue;
+    seen.set(key, { tool: h.tool, sessionId: h.sessionId, hits: h._hits, via: '消息' });
   }
   const ranked = [...seen.values()];
   let r5 = 0, r10 = 0, firstRank = 0;
@@ -62,7 +70,7 @@ for (const c of suite.cases) {
   console.log(`${c.id} 关键词[${kws.join(',')}] 去重会话${ranked.length}个 @5=${r5}/${c.expect.length} @10=${r10}/${c.expect.length} MRR=${firstRank ? r.toFixed(2) : '0'} ${tag}`);
   if (verbose) {
     for (let i = 0; i < Math.min(10, ranked.length); i++) {
-      console.log(`   #${i + 1} ${ranked[i].tool}/${ranked[i].sessionId.slice(0, 14)} (命中${ranked[i].hits}词)`);
+      console.log(`   #${i + 1} [${ranked[i].via}] ${ranked[i].tool}/${ranked[i].sessionId.slice(0, 14)} (命中${ranked[i].hits}词)`);
     }
   }
 }

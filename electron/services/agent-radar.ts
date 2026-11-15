@@ -243,7 +243,7 @@ class AgentRadarService {
     return db.listSessions({ tool: opts.tool || undefined, limit: pageSize, offset: (page - 1) * pageSize });
   }
 
-  sessionsByRange(start: number, end: number, limit = 20): { total: number; rows: SessionRow[] } {
+  sessionsByRange(start: number, end: number, limit: number | null = 20): { total: number; rows: SessionRow[] } {
     const db = this.queryDb();
     return db ? db.sessionsByRange(start, end, limit) : { total: 0, rows: [] };
   }
@@ -256,6 +256,12 @@ class AgentRadarService {
   searchMessages(q: string, limit = 50): any[] {
     const db = this.queryDb();
     return db ? db.searchMessages(q, limit) : [];
+  }
+
+  /** 会话级检索（摘要注入）：关键词命中标题/摘要的会话，按命中词数排序 */
+  searchSessionsByText(keywords: string[], limit = 8): any[] {
+    const db = this.queryDb();
+    return db ? db.searchSessionsByText(keywords, limit) : [];
   }
 
   getMessages(tool: string, sessionId: string): any[] {

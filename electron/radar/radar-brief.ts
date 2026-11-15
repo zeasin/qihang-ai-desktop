@@ -16,7 +16,9 @@ import { extractDigest } from '../services/note-digest';
 import { generateWithPi } from '../services/ai-tools';
 import logger from '../services/logger';
 
-const MAX_SESSIONS = 20;       // 带入上下文的当天会话上限
+const SHARD_THRESHOLD = 20;    // 会话与文档合计超过该数量后分片
+const SHARD_SIZE = 10;
+const MAX_PARALLEL = 3;
 const PER_MSG_CHARS = 200;     // 会话首条用户消息截断
 const BRIEF_TIMEOUT_MS = 120_000;
 const SAVE_DIR = '日报/AI活动';

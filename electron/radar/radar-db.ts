@@ -436,19 +436,22 @@ export class RadarDb {
     return { total, rows: rows.map(rowToSession) };
   }
 
-  /** 按源会话更新时间范围查询，先过滤再限量 */
-  sessionsByRange(start: number, end: number, limit = 20): { total: number; rows: SessionRow[] } {
+  /** 按源会话更新时间范围查询，先过滤再限量；limit=null 返回范围内全部会话 */
+  sessionsByRange(start: number, end: number, limit: number | null = 20): { total: number; rows: SessionRow[] } {
     const total = (this.db.prepare(
       'SELECT count(*) c FROM radar_session WHERE source_updated_at >= ? AND source_updated_at < ?',
     ).get(start, end) as any).c;
+    const limitClause = limit === null ? '' : 'LIMIT ?';
+    const params: any[] = [start, end];
+    if (limit !== null) params.push(Math.min(Math.max(limit, 1), 200));
     const rows = this.db.prepare(`
       SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
         SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
       ) AS actual_count
       FROM radar_session s
       WHERE s.source_updated_at >= ? AND s.source_updated_at < ?
-      ORDER BY s.source_updated_at DESC LIMIT ?
-    `).all(start, end, Math.min(Math.max(limit, 1), 200)) as any[];
+      ORDER BY s.source_updated_at DESC ${limitClause}
+    `).all(...params) as any[];
     return { total: Number(total) || 0, rows: rows.map(rowToSession) };
   }
 
@@ -493,6 +496,37 @@ export class RadarDb {
       ORDER BY score ASC, m.ts DESC LIMIT ? OFFSET ?
     `).all(term, limit, offset);
     return rows as any[];
+  }
+
+  /** 会话级检索（摘要注入）：关键词 LIKE 匹配标题/摘要，按命中词数+更新时间排序。
+   *  消息级检索的兜底：高频主题词的消息命中被少数会话刷满时，标题/摘要整串命中能直接点名会话。
+   *  会话表行数小（千级），LIKE 全表扫描毫秒级，无需 FTS。 */
+  searchSessionsByText(keywords: string[], limit = 8): any[] {
+    const kws = (keywords || []).filter((k) => k && k.length >= 2);
+    if (!kws.length) return [];
+    const seen = new Map<string, { row: any; hits: number }>();
+    for (const kw of kws) {
+      const p = `%${this.likeEscape(kw)}%`;
+      let rows: any[] = [];
+      try {
+        rows = this.db.prepare(`
+          SELECT tool, session_id AS sessionId, title, project_dir AS projectDir, summary,
+                 message_count AS messageCount, source_updated_at AS sourceUpdatedAt
+          FROM radar_session WHERE frozen = 0 AND (title LIKE ? ESCAPE '!' OR summary LIKE ? ESCAPE '!')
+          LIMIT 500
+        `).all(p, p) as any[];
+      } catch { continue; }
+      for (const r of rows) {
+        const key = `${r.tool}|${r.sessionId}`;
+        const prev = seen.get(key);
+        if (prev) prev.hits += 1;
+        else seen.set(key, { row: r, hits: 1 });
+      }
+    }
+    return [...seen.values()]
+      .sort((a, b) => (b.hits - a.hits) || ((b.row.sourceUpdatedAt || 0) - (a.row.sourceUpdatedAt || 0)))
+      .slice(0, limit)
+      .map((x) => ({ ...x.row, _hits: x.hits }));
   }
 
   /** ≥3 连续字符 → 安全的 FTS5 trigram 查询；不足 → null（调用方走 LIKE）

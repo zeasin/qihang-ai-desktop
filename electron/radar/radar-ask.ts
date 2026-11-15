@@ -1,7 +1,8 @@
 /**
  * 问雷达：基于已采集的会话对话做检索问答（一次性的轻量 AI 调用）。
- * 流程：问题拆关键词 → searchMessages 多关键词检索命中消息 →
- * 组装带来源编号（S1/S2…）的上下文 → 复用 ai-tools 的 generateWithPi 生成答案 →
+ * 流程：问题拆关键词 → 双通道检索（searchMessages 消息级 + searchSessionsByText 标题/摘要级兜底）→
+ * 组装带来源编号（S1/S2…）的上下文（摘要命中的会话排前、摘要直接作素材，同会话不重复收录）→
+ * 复用 ai-tools 的 generateWithPi 生成答案 →
  * 返回 { answer, refs }，refs 为命中的会话列表（前端可点击跳转详情页）。
  * 上下文有字数预算，防止 prompt 爆炸；未开启雷达或无命中时不调 AI。
  */
@@ -15,6 +16,8 @@ const PER_MSG_CHARS = 500;      // 单条消息截断
 const PER_QUERY_LIMIT = 30;     // 每个关键词检索条数
 const MAX_KEYWORDS = 8;         // 最多检索的关键词数
 const PER_SESSION_LIMIT = 5;    // 单会话进上下文的消息上限：防高频会话刷屏挤掉其他会话
+const SUM_SESSIONS = 5;         // 摘要注入的会话数上限（标题/摘要命中）
+const SUM_CHARS = 400;          // 单条摘要截断（四段卡片 8 行内，400 字保住主体）
 
 export interface AskRadarRef {
   tool: string;
@@ -104,13 +107,13 @@ function fmtTime(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 组装带来源编号的上下文片段（S1/S2… 按会话聚合，控制总字数） */
-function buildContext(rows: any[]): { context: string; refs: AskRadarRef[] } {
+/** 组装带来源编号的上下文片段（S1/S2…）：摘要命中排前（主题相关性最强），消息命中垫后；同会话不重复收录 */
+function buildContext(rows: any[], sumHits: any[] = []): { context: string; refs: AskRadarRef[] } {
   const refs: AskRadarRef[] = [];
   const refIdx = new Map<string, number>();
   const lines: string[] = [];
   let budget = MAX_CTX_CHARS;
-  for (const r of rows) {
+  const refOf = (r: any): number => {
     const key = `${r.tool}|${r.sessionId}`;
     let idx = refIdx.get(key);
     if (!idx) {
@@ -118,9 +121,26 @@ function buildContext(rows: any[]): { context: string; refs: AskRadarRef[] } {
       idx = refs.length;
       refIdx.set(key, idx);
     }
+    return idx;
+  };
+  // 摘要行：标题/摘要命中的会话，摘要本身就是高质量凝练素材，直接可答
+  const sumSet = new Set<string>();
+  for (const s of sumHits) {
+    sumSet.add(`${s.tool}|${s.sessionId}`);
+    const summary = String(s.summary || '').replace(/\s+/g, ' ').trim().slice(0, SUM_CHARS);
+    const line = summary
+      ? `[S${refOf(s)}] ${fmtTime(s.sourceUpdatedAt)} 会话摘要（${s.title || '无标题'}）：${summary}`
+      : `[S${refOf(s)}] ${fmtTime(s.sourceUpdatedAt)} 会话（标题命中）：${s.title || '无标题'}`;
+    if (line.length > budget) break;
+    budget -= line.length;
+    lines.push(line);
+  }
+  // 消息行：已被摘要命中的会话跳过（摘要行已覆盖），省预算给别的会话
+  for (const r of rows) {
+    if (sumSet.has(`${r.tool}|${r.sessionId}`)) continue;
     const content = String(r.content || '').replace(/\s+/g, ' ').trim().slice(0, PER_MSG_CHARS);
     if (!content) continue;
-    const line = `[S${idx}] ${fmtTime(r.ts)} ${r.role === 'user' ? '用户' : 'AI'}：${content}`;
+    const line = `[S${refOf(r)}] ${fmtTime(r.ts)} ${r.role === 'user' ? '用户' : 'AI'}：${content}`;
     if (line.length > budget) break;
     budget -= line.length;
     lines.push(line);
@@ -142,7 +162,10 @@ export async function askRadar(question: string, modelPattern?: string): Promise
   logger.info('[RadarAsk] 关键词: %s', keywords.join(', '));
 
   const rows = searchHits(keywords);
-  if (!rows.length) {
+  // 会话级兜底（摘要注入）：标题/摘要整串命中直接点名会话，不受消息级刷屏影响
+  let sumHits: any[] = [];
+  try { sumHits = agentRadar.searchSessionsByText(keywords, SUM_SESSIONS); } catch { /* 检索失败不阻塞消息级 */ }
+  if (!rows.length && !sumHits.length) {
     return {
       answer: '没有在已采集的对话中找到相关内容。可以试试：\n- 换个关键词（工具名、项目名、功能名）\n- 先点「立即扫描」确保最新会话已入库',
       refs: [],
@@ -150,9 +173,9 @@ export async function askRadar(question: string, modelPattern?: string): Promise
     };
   }
 
-  const { context, refs } = buildContext(rows);
+  const { context, refs } = buildContext(rows, sumHits);
   const prompt = [
-    '你是「问雷达」助手。下面是从本机 AI 编码工具（Pi / Claude Code / Codex 等）历史会话中检索到的对话片段，每段开头的 [S1] [S2] 是来源编号，与来源列表一一对应。',
+    '你是「问雷达」助手。下面是从本机 AI 编码工具（Pi / Claude Code / Codex 等）历史会话中检索到的材料，每段开头的 [S1] [S2] 是来源编号，与来源列表一一对应。以「会话摘要」开头的来源是该会话的 AI 提炼卡片（可信度高，可直接作答），其余是原始对话片段。',
     '',
     '## 检索到的对话片段',
     context,
@@ -169,5 +192,5 @@ export async function askRadar(question: string, modelPattern?: string): Promise
   // 一次性问答：独立会话（不复用上下文，避免历史大 prompt 反复计费）；
   // 2 分钟硬超时快速失败——服务商限流（429）时 pi SDK 会无限退避重试，不设超时会一直挂在「思考中」
   const answer = await generateWithPi({ prompt, sessionId: 'radar_' + Date.now(), modelPattern, timeoutMs: 120_000 });
-  return { answer, refs, hits: rows.length };
+  return { answer, refs, hits: rows.length + sumHits.length };
 }
