@@ -15,6 +15,7 @@ import * as projectScan from '../services/project-scan';
 import { agentRadar } from '../services/agent-radar';
 import { extractDigest } from '../services/note-digest';
 import { generateWithPi } from '../services/ai-tools';
+import { pickTodayTodos, renderTodoCandidates, type PickedTodo, type TodoContextDoc } from './todo-picker';
 import logger from '../services/logger';
 
 const SHARD_THRESHOLD = 20;    // 昨日会话超过该数量后分片（文档走笔记库子助手，不计入分片）
@@ -62,9 +63,10 @@ function fmtTs(ts: number): string {
 }
 
 /** 昨日 AI 会话聚合：标题 + 摘要 + 首条用户消息（廉价探针，每会话只取头部几条） */
-function collectAiSide(range: { start: number; end: number }): { lines: string[]; count: number } {
+function collectAiSide(range: { start: number; end: number }): { lines: string[]; count: number; docs: TodoContextDoc[] } {
   const result = agentRadar.sessionsByRange(range.start, range.end, null);
   const lines: string[] = [];
+  const docs: TodoContextDoc[] = [];
   for (const s of result.rows) {
     let firstAsk = '';
     try {
@@ -72,24 +74,28 @@ function collectAiSide(range: { start: number; end: number }): { lines: string[]
       const u = msgs.find((m: any) => String(m.role) === 'user' && String(m.content || '').trim());
       if (u) firstAsk = String(u.content).replace(/\s+/g, ' ').trim().slice(0, PER_MSG_CHARS);
     } catch { /* 单会话取消息失败不影响整体 */ }
-    const seg = [`- [${s.tool}] ${s.title || '（无标题）'}（${fmtTs(s.sourceUpdatedAt)}）`];
+    const title = String(s.title || '（无标题）');
+    const seg = [`- [${s.tool}] ${title}（${fmtTs(s.sourceUpdatedAt)}）`];
     if (s.summary) seg.push(`  摘要：${String(s.summary).replace(/\s+/g, ' ').trim().slice(0, 300)}`);
     if (firstAsk) seg.push(`  首条请求：${firstAsk}`);
     lines.push(seg.join('\n'));
+    // 主题索引用：会话标题 + 摘要 + 首条请求，用于判断待办是否与昨日在做的事相关
+    docs.push({ title, text: [s.summary ? String(s.summary) : '', firstAsk].filter(Boolean).join(' ') });
   }
-  return { lines, count: result.total };
+  return { lines, count: result.total, docs };
 }
 
 /** 昨日笔记库动态：当天更新的文档；待办/跟进为实时状态（归「今日待办」节） */
-function collectNoteSide(range: { start: number; end: number }): {
+function collectNoteSide(range: { start: number; end: number }, digest: any): {
   lines: string[]; pendingTodos: number; followups: number; dayFiles: string[];
   excerpts: Array<{ label: string; content: string }>;
+  dayDocs: TodoContextDoc[];
 } {
   const lines: string[] = [];
   let pendingTodos = 0;
   let followups = 0;
   try {
-    const d: any = extractDigest();
+    const d: any = digest;
     pendingTodos = (d?.todos || []).filter((t: any) => !t.done).length;
     followups = (d?.followups || []).filter((f: any) => !f.done).length;
     if (followups) lines.push(`- 跟进事项 ${followups} 条`);
@@ -100,7 +106,17 @@ function collectNoteSide(range: { start: number; end: number }): {
   const excerpts = files
     .map((f: any) => ({ label: `${f.rel}（${f.projectName}）`, content: readDocExcerpt(f.full, allotment) }))
     .filter((x: any) => x.content);
-  return { lines, pendingTodos, followups, dayFiles, excerpts };
+  // 主题索引：文档名 + 摘录正文（用于判断待办是否与昨天更新的文档相关）
+  // 标题用「文件名（上级目录）」而不是整条路径：路径会自我命中（"商丘爱松桐"必然出现在自己的路径里）
+  const excerptByLabel = new Map(excerpts.map((x: any) => [x.label, x.content]));
+  const dayDocs: TodoContextDoc[] = files.map((f: any) => {
+    const segs = String(f.rel || '').split('/');
+    const base = (segs.pop() || '').replace(/\.md$/i, '');
+    const parent = segs[segs.length - 1] || '';
+    const title = parent ? `${base}（${parent}）` : base;
+    return { title, text: String(excerptByLabel.get(`${f.rel}（${f.projectName}）`) || '').slice(0, 800) };
+  });
+  return { lines, pendingTodos, followups, dayFiles, excerpts, dayDocs };
 }
 
 /** 单篇文档摘录：剥 frontmatter 后按 allotment 截断；读取失败返回空（该篇不进子助手） */
@@ -115,19 +131,30 @@ function readDocExcerpt(full: string, allotment: number): string {
   }
 }
 
-/** 今日待办（实时状态）：本地待办 + 笔记库提炼待办 */
-function collectTodayTodos(): string[] {
-  const lines: string[] = [];
-  try {
-    const local = (db.task.listTodos() as any[]).filter((t: any) => t.status !== 'done').slice(0, 8);
-    for (const t of local) lines.push('- [本地] ' + String(t.content || t.title || '').replace(/\s+/g, ' ').trim().slice(0, 50));
-  } catch { /* 忽略 */ }
-  try {
-    const d: any = extractDigest();
-    const pending = (d?.todos || []).filter((t: any) => !t.done).slice(0, 8);
-    for (const t of pending) lines.push('- [笔记] ' + String(t.text || '').replace(/\s+/g, ' ').trim().slice(0, 50) + (t.file ? `（${String(t.file).replace(/\\/g, '/')}）` : ''));
-  } catch { /* 忽略 */ }
-  return lines;
+/**
+ * 今日待办（实时）：笔记库待办/跟进 + 应用手动待办，过四道闸（已完结、已过时、归档、重复），
+ * 再按「与昨日动态的相关度」排序，只把候选交给 AI，避免整条待办都是陈年旧账。
+ */
+function collectTodayTodos(digest: any, contextDocs: TodoContextDoc[], activeSince: number): { items: PickedTodo[]; dropped: number } {
+  let localTasks: any[] = [];
+  try { localTasks = db.task.listTodos() as any[]; } catch { localTasks = []; }
+  // 时效窗口默认 14 天，可在 config.json 里用 briefTodoWindowDays 调整
+  let windowDays = 0;
+  try { windowDays = Number(appConfig.getConfig('briefTodoWindowDays') || 0); } catch { windowDays = 0; }
+  const picked = pickTodayTodos({
+    digest: digest || { todos: [], followups: [], logs: [] },
+    localTasks,
+    contextDocs,
+    activeSince,
+    windowDays: windowDays > 0 ? windowDays : undefined,
+  });
+  const s = picked.stats;
+  const dropped = s.droppedDone + s.droppedStale + s.droppedArchive + s.droppedDup;
+  logger.info(
+    '[RadarBrief] 今日待办筛选：扫描 %s 条未完成条目 → 保留 %s 条（剔除 已完结 %s / 过时 %s / 归档 %s / 重复 %s），取前 %s 条给 AI',
+    s.total, s.kept, s.droppedDone, s.droppedStale, s.droppedArchive, s.droppedDup, picked.items.length,
+  );
+  return { items: picked.items, dropped };
 }
 
 /** 落盘：默认笔记库「日报/AI活动/YYYY-MM-DD.md」，路径收敛在项目目录内 */
@@ -239,18 +266,25 @@ async function runNoteSubAgent(dk: string, excerpts: Array<{ label: string; cont
 
 async function generateBrief(
   dk: string,
-  ai: { lines: string[]; count: number },
-  note: { lines: string[]; pendingTodos: number; followups: number; dayFiles: string[]; excerpts: Array<{ label: string; content: string }> },
-  todos: string[],
+  ai: { lines: string[]; count: number; docs: TodoContextDoc[] },
+  note: { lines: string[]; pendingTodos: number; followups: number; dayFiles: string[]; excerpts: Array<{ label: string; content: string }>; dayDocs: TodoContextDoc[] },
+  todoItems: PickedTodo[],
+  todoDropped: number,
 ): Promise<string> {
   const runId = Date.now();
   const noteList = [...note.lines, ...note.dayFiles.map((file) => `- ${file}`)];
-  const noteHeading = '## 昨日笔记库动态（当前未勾待办 ' + note.pendingTodos + ' 项，跟进 ' + note.followups + ' 条，昨天更新文档 ' + note.dayFiles.length + ' 篇）';
+  const noteHeading = '## 昨日笔记库动态（昨天更新文档 ' + note.dayFiles.length + ' 篇；今日待办候选 ' + todoItems.length + ' 项，已剔除过时或已完成 ' + todoDropped + ' 项）';
   const requirements = [
     '## 要求',
     '1. 只依据提供的内容，不要编造；某方面没有信息就不要写；所有会话与文档时间均为昨天（' + dk + '），标题和正文不得出现其他日期。',
-    '2. 结构：先一段 2-3 句的总体概述，再用「### 昨日动态」与「### 今日待办」两个小节分点陈述；待办清单原样列出（可精简文字），不要总结成一句话。',
-    '3. 语言精炼（全文 400 字以内），突出做了什么、有什么值得注意的，不复述原始细节。',
+    '2. 结构：先一段 2-3 句的总体概述，再用「### 昨日动态」与「### 今日待办」两个小节分点陈述。',
+    '3. 「今日待办」只能取自下面的候选清单，最多 5 条，按「现在就需要处理」的程度排序；每条一行，写成 `- 事项 —— 为什么现在做：<一句话，25 字以内>`。',
+    '4. 「为什么现在做」只能依据候选清单给出的来源、时效、昨日关联，或事项原文里已有的表述；没有依据就只写事项本身，不要编造理由。候选清单为空时写「（暂无需要立即处理的待办）」。',
+    '5. 语言精炼（全文 600 字以内），突出做了什么、有什么值得注意的，不复述原始细节。',
+  ].join('\n');
+  const todoBlock = [
+    '## 今日待办（候选清单，已剔除过时/已完成）',
+    renderTodoCandidates(todoItems),
   ].join('\n');
 
   if (ai.lines.length <= SHARD_THRESHOLD) {
@@ -262,11 +296,10 @@ async function generateBrief(
       noteHeading,
       noteSummary || noteList.join('\n') || '（无）',
       '',
-      '## 今日待办（实时）',
-      todos.join('\n') || '（无）',
+      todoBlock,
     ].join('\n');
     const prompt = [
-      '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话与笔记库提炼的昨日动态，以及今日待办清单，请汇总成一份简洁的中文 markdown 简报。',
+      '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话与笔记库提炼的昨日动态，以及今日待办候选清单，请汇总成一份简洁的中文 markdown 简报。',
       '', ctx, '', requirements,
     ].join('\n');
     return generateWithPi({ prompt, sessionId: 'brief_' + dk, timeoutMs: BRIEF_TIMEOUT_MS });
@@ -310,8 +343,7 @@ async function generateBrief(
     noteHeading,
     noteSummary || noteList.join('\n') || '（无）',
     '',
-    '## 今日待办（实时）',
-    todos.join('\n') || '（无）',
+    todoBlock,
     '', requirements,
   ].join('\n');
   logger.info('[RadarBrief] 自适应分片: %s 个会话 → %s 片 + 笔记库子助手 %s 篇摘录，最多 %s 路并行，失败降级 %s 片', ai.lines.length, shards.length, note.excerpts.length, MAX_PARALLEL, degraded);
@@ -346,13 +378,16 @@ export async function getBrief(force = false): Promise<any> {
   const job = (async () => {
     try {
       const ai = collectAiSide(range);
-      const note = collectNoteSide(range);
-      const todos = collectTodayTodos();
+      // digest 只采集一次：待办筛选与笔记动态共用同一份口径
+      let digest: any = null;
+      try { digest = extractDigest(); } catch { digest = null; }
+      const note = collectNoteSide(range, digest);
+      const todos = collectTodayTodos(digest, [...ai.docs, ...note.dayDocs], range.start);
       if (!ai.count && !note.dayFiles.length) {
         return { ok: true, empty: true, brief: '' };
       }
 
-      const brief = await generateBrief(dk, ai, note, todos);
+      const brief = await generateBrief(dk, ai, note, todos.items, todos.dropped);
       const generatedAt = dateKey() + ' ' + timeLabel();
       cacheDate = dk;
       cacheBrief = brief;

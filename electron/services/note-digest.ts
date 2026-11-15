@@ -11,11 +11,12 @@ const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 // 锚点文件（TODO 清单、日期命名的日志）无条件扫描，但日志文件按最新 N 个截断防膨胀
 const MAX_ANCHOR_FILES = 60;
 
-export interface DigestTodo { project_id: number; project: string; file: string; line: number; text: string; done: boolean; }
+// mtime：条目所在文件的最后修改时间（判断条目新鲜度）；section：条目所属的最近标题（判断条目属于哪个主题块）
+export interface DigestTodo { project_id: number; project: string; file: string; line: number; text: string; done: boolean; mtime: number; section: string; }
 // resolvable=true 表示来自专门的跟进清单（跟进.md），可在今天页一键结清（回写 [x]）
-export interface DigestFollowup { project_id: number; project: string; file: string; line: number; text: string; resolvable?: boolean; }
+export interface DigestFollowup { project_id: number; project: string; file: string; line: number; text: string; resolvable?: boolean; mtime: number; section: string; }
 export interface DigestLogSection { project_id: number; project: string; file: string; line: number; date: string; heading: string; preview: string; kind?: 'log' | 'doc'; }
-export interface DigestResult { todos: DigestTodo[]; followups: DigestFollowup[]; logs: DigestLogSection[]; scannedFiles: number; generated_at: string; }
+export interface DigestResult { todos: DigestTodo[]; followups: DigestFollowup[]; logs: DigestLogSection[]; doneItems: Array<{ project_id: number; project: string; file: string; line: number; text: string; mtime: number }>; scannedFiles: number; generated_at: string; }
 
 interface Candidate { full: string; rel: string; size: number; m: number; anchor: boolean; }
 
@@ -58,6 +59,16 @@ const NOISE_LINE_RE = /^[|>#]/;
 const NOISE_PATH_RE = /日历|calendar|AGENTS\.md|规则|模板|template|README|决策记录/i;
 // 日志预览要跳过 frontmatter 与标签行
 const SKIP_PREVIEW_RE = /^(---|tags?:|date?:|title?:|\s*$)/i;
+// 已勾选项保留窗口（天）：更早的勾选不会影响任何条目的新旧判定
+const DONE_ITEMS_WINDOW_DAYS = 45;
+
+/** 日期命名文件的内容日期（时间戳），非日期文件返回 0 */
+function fileDateTs(rel: string): number {
+  const m = path.basename(rel).match(DATE_FILE_RE);
+  if (!m) return 0;
+  const d = new Date(Number(m[1].slice(0, 4)), Number(m[1].slice(5, 7)) - 1, Number(m[1].slice(8, 10)), 0, 0, 0, 0);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
 
 function stripFrontmatter(lines: string[]): string[] {
   if (!lines.length || lines[0].trim() !== '---') return lines;
@@ -90,6 +101,11 @@ export function extractDigest(): DigestResult {
   const todos: DigestTodo[] = [];
   const followups: DigestFollowup[] = [];
   const logs: DigestLogSection[] = [];
+  // 已勾选项全量（不去重）：同一件事常常「老文件里还没勾、新文件里已勾」，
+  // 日报模块靠它识别旧账——去重会把「已勾的那一份」吞掉。
+  const doneItems: DigestResult['doneItems'] = [];
+  const nowTs = Date.now();
+  const doneWindowMs = DONE_ITEMS_WINDOW_DAYS * 86_400_000;
   let scannedFiles = 0;
   // 近 N 天更新过的文档都算进工作日志（含非日期命名的普通笔记）
   const RECENT_DOC_DAYS = 7;
@@ -124,27 +140,38 @@ export function extractDigest(): DigestResult {
       // 勾选待办不受影响（复选框本身有勾掉的能力）
       const isLogFile = DATE_FILE_RE.test(path.basename(rel));
       let inTodoSection = false;
+      let currentSection = '';   // 最近一个标题，作为条目的上下文
       let datedLevel = 0;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
 
+        // 标题行：记住最近标题，条目的「所属小节」后面用来判断主题块的新旧
+        if (/^#{1,6}\s/.test(line)) currentSection = cleanText(line.replace(/^#{1,6}\s*/, ''));
+
         if (isFollowupFile) {
           if (/^\s*[-*+]\s+\S/.test(line) && !/^\s*[-*+]\s*\[[xX]\]/.test(line)) {
-            followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^\s*[-*+]\s*(\[[ xX]\]\s*)?/, '')), resolvable: true });
+            followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^\s*[-*+]\s*(\[[ xX]\]\s*)?/, '')), resolvable: true, mtime: cand.m, section: currentSection });
           }
           continue;
         }
         const todoMatch = line.match(TODO_RE);
         if (todoMatch) {
           const text = cleanText(todoMatch[2]);
-          if (text) todos.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text, done: todoMatch[1] !== ' ' });
+          if (text) {
+            const done = todoMatch[1] !== ' ';
+            todos.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text, done, mtime: cand.m, section: currentSection });
+            // 只留近期的已勾项：更早的勾选不可能把任何条目判成「旧账」，留着只会撑大 IPC 载荷
+            if (done && nowTs - Math.max(cand.m, fileDateTs(rel)) <= doneWindowMs) {
+              doneItems.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text, mtime: cand.m });
+            }
+          }
           continue;
         }
         if (isTodoFile) {
           if (/^#{1,4}\s/.test(line)) { inTodoSection = true; continue; }
           if (inTodoSection && /^[-*]\s+\S/.test(line) && !NOISE_LINE_RE.test(line) && line.length > 6) {
-            todos.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')), done: false });
+            todos.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')), done: false, mtime: cand.m, section: currentSection });
           }
         }
         // 日期分节跟踪：同级或更高级的标题结束该日期段，更深的日期标题接续该段
@@ -159,7 +186,7 @@ export function extractDigest(): DigestResult {
         // （「后续跟进：0」「记录跟进：」是 label: value 写法，冒号后只有数字或为空，不是待办）
         const isStatLabel = /跟进[:：]\s*\d*\s*$/.test(line);
         if (FOLLOWUP_RE.test(line) && !isStatLabel && !NOISE_LINE_RE.test(line) && !/\.md/.test(line) && /^[-*+]\s+\S/.test(line)) {
-          followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')) });
+          followups.push({ project_id: proj.id, project: proj.name, file: rel, line: i + 1, text: cleanText(line.replace(/^[-*]\s+/, '')), mtime: cand.m, section: currentSection });
         }
       }
 
@@ -200,7 +227,7 @@ export function extractDigest(): DigestResult {
     return true;
   });
   uniqLogs.sort((a, b) => b.date.localeCompare(a.date));
-  return { todos: uniqTodos, followups, logs: uniqLogs.slice(0, 60), scannedFiles, generated_at: new Date().toISOString() };
+  return { todos: uniqTodos, followups, logs: uniqLogs.slice(0, 60), doneItems, scannedFiles, generated_at: new Date().toISOString() };
 }
 
 /** 勾选/取消勾选笔记待办：把状态回写到笔记文件里的复选框；行号漂移时按文本全文兜底查找 */
