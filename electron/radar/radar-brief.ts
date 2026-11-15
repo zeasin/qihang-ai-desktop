@@ -56,13 +56,9 @@ function fmtTs(ts: number): string {
 }
 
 /** 昨日 AI 会话聚合：标题 + 摘要 + 首条用户消息（廉价探针，每会话只取头部几条） */
-function collectAiSide(range: { start: number; end: number }): { lines: string[]; count: number } {
-  const sessions = (agentRadar.dashboard().sessions || [])
-    .filter((s: any) => {
-      const ts = Number(s.sourceUpdatedAt) || 0;
-      return ts >= range.start && ts < range.end;
-    })
-    .slice(0, MAX_SESSIONS);
+function collectAiSide(range: { start: number; end: number }): { lines: string[]; count: number; included: number } {
+  const result = agentRadar.sessionsByRange(range.start, range.end, MAX_SESSIONS);
+  const sessions = result.rows;
   const lines: string[] = [];
   for (const s of sessions) {
     let firstAsk = '';
@@ -76,7 +72,7 @@ function collectAiSide(range: { start: number; end: number }): { lines: string[]
     if (firstAsk) seg.push(`  首条请求：${firstAsk}`);
     lines.push(seg.join('\n'));
   }
-  return { lines, count: sessions.length };
+  return { lines, count: result.total, included: sessions.length };
 }
 
 /** 昨日笔记库动态：当天更新的文档；待办/跟进为实时状态（归「今日待办」节） */
@@ -90,8 +86,7 @@ function collectNoteSide(range: { start: number; end: number }): { lines: string
     followups = (d?.followups || []).filter((f: any) => !f.done).length;
     if (followups) lines.push(`- 跟进事项 ${followups} 条`);
   } catch { /* 笔记库未配置时跳过 */ }
-  const dayFiles = (projectScan.collectRecentFiles(12) || [])
-    .filter((f: any) => { const m = Number(f.mtime) || 0; return m >= range.start && m < range.end; })
+  const dayFiles = (projectScan.collectRecentFiles(null, range) || [])
     .map((f: any) => `${f.rel}（${f.projectName}，${fmtTs(f.mtime)}）`);
   if (dayFiles.length) lines.push(`- 昨天更新的文档 ${dayFiles.length} 篇：` + dayFiles.slice(0, 8).join('；'));
   return { lines, pendingTodos, followups, dayFiles };
@@ -215,7 +210,7 @@ export async function getBrief(force = false): Promise<any> {
       }
 
       const ctx = [
-        '## 昨日 AI 工具动态（共 ' + ai.count + ' 个会话）',
+        '## 昨日 AI 工具动态（共 ' + ai.count + ' 个会话' + (ai.included < ai.count ? '，以下最近 ' + ai.included + ' 个' : '') + '）',
         ai.lines.join('\n') || '（无）',
         '',
         '## 昨日笔记库动态（当前未勾待办 ' + note.pendingTodos + ' 项，跟进 ' + note.followups + ' 条）',

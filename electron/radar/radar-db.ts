@@ -401,12 +401,19 @@ export class RadarDb {
     `).run(summary || '', msgCount || 0, Date.now(), tool, sessionId);
   }
 
-  /** 高价值但还没摘要的会话（存量补摘要用，最新优先） */
+  /**
+   * 需要补/重摘的高价值会话（存量补摘要用，最新优先）：没摘要的、
+   * 摘要后新内容 ≥4 条的、或源被重采缩水的（摘要比消息还多，摘要是旧素材留底）。
+   * 阈值 4 与 radar-digest 的 MIN_NEW_MSGS 对齐；精确过滤在 digestOne 再兜一道。
+   */
   sessionsNeedingSummary(minScore: number, limit = 200): SessionRow[] {
     const rows = this.db.prepare(`
       SELECT *, ${this.stateExpr()} AS effective_state
       FROM radar_session
-      WHERE value_score >= ? AND summary = '' AND frozen = 0
+      WHERE value_score >= ? AND frozen = 0
+        AND (summary = ''
+             OR message_count - summary_msg_count >= 4
+             OR summary_msg_count > message_count)
       ORDER BY source_updated_at DESC LIMIT ?
     `).all(minScore, Math.min(limit, 500)) as any[];
     return rows.map(rowToSession);
@@ -427,6 +434,22 @@ export class RadarDb {
       ORDER BY ${this.stateExpr('s')} = 'running' DESC, s.source_updated_at DESC LIMIT ? OFFSET ?
     `).all(...params, limit, offset) as any[];
     return { total, rows: rows.map(rowToSession) };
+  }
+
+  /** 按源会话更新时间范围查询，先过滤再限量 */
+  sessionsByRange(start: number, end: number, limit = 20): { total: number; rows: SessionRow[] } {
+    const total = (this.db.prepare(
+      'SELECT count(*) c FROM radar_session WHERE source_updated_at >= ? AND source_updated_at < ?',
+    ).get(start, end) as any).c;
+    const rows = this.db.prepare(`
+      SELECT s.*, ${this.stateExpr('s')} AS effective_state, (
+        SELECT count(*) FROM radar_message m WHERE m.tool = s.tool AND m.session_id = s.session_id
+      ) AS actual_count
+      FROM radar_session s
+      WHERE s.source_updated_at >= ? AND s.source_updated_at < ?
+      ORDER BY s.source_updated_at DESC LIMIT ?
+    `).all(start, end, Math.min(Math.max(limit, 1), 200)) as any[];
+    return { total: Number(total) || 0, rows: rows.map(rowToSession) };
   }
 
   /** 某会话的消息（时间升序） */

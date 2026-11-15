@@ -13,7 +13,8 @@ const MAX_MESSAGES = 32;        // 带入上下文的最大消息条数
 const MAX_CTX_CHARS = 14000;    // 检索片段总字数预算
 const PER_MSG_CHARS = 500;      // 单条消息截断
 const PER_QUERY_LIMIT = 30;     // 每个关键词检索条数
-const MAX_KEYWORDS = 6;         // 最多检索的关键词数
+const MAX_KEYWORDS = 8;         // 最多检索的关键词数
+const PER_SESSION_LIMIT = 5;    // 单会话进上下文的消息上限：防高频会话刷屏挤掉其他会话
 
 export interface AskRadarRef {
   tool: string;
@@ -31,29 +32,34 @@ export interface AskRadarResult {
 /** 常见疑问词/虚词：拆词与过滤时剔除，不作为检索关键词 */
 const STOPWORD_RE = /^(?:的|了|吗|呢|吧|啊|么|哪些|什么|怎么|怎样|如何|为什么|为啥|多少|几|是不是|有没有|有没有可能|哪个|帮忙|帮我|请|查|查下|查一下|看看|看下|一下|这些|这个|那个|以及|还有|和|与|或|在|是|有|个|我|你|他|它|地|得|着|过|会|要|能|可以|应该|需要|现在|告诉|说说|讲讲)$/;
 
-/** 从问题里拆出检索关键词：英文/数字整词 + 中文串拆相邻二字词（trigram/LIKE 双通道都吃得下） */
+/** 停用字：二字滑窗不识词边界，跨词碎片（如「的电」「存为」）几乎必然混入虚字，含任一即弃 */
+const STOP_CHARS_RE = /[的了吗呢吧啊么是和与或也就在有我你他它这那怎什为]/;
+
+/** 从问题里拆出检索关键词：英文/数字整词 + 中文串出完整短语（≤4 字，可被 trigram 精确命中）+
+ *  相邻二字滑窗兜底（LIKE 通道吃二字词）。完整词优先、碎片垫底，避免碎片挤掉核心词。 */
 export function extractKeywords(question: string): string[] {
   const cleaned = String(question || '').replace(/[，。！？、；：“”‘’（）【】《》,!?;:'"()\[\]{}<>|/\\~`@#$%^&*+=]/g, ' ');
   const raw = cleaned.split(/\s+/).filter(Boolean);
-  const out: string[] = [];
+  const primary: string[] = [];
+  const secondary: string[] = [];
   for (const tok of raw) {
     // 纯 ASCII（含数字）整词
-    if (/^[A-Za-z0-9._-]{2,}$/.test(tok)) { out.push(tok); continue; }
-    // 中文（混合）串：整串作为精确短语候选，再拆相邻二字词兜底
+    if (/^[A-Za-z0-9._-]{2,}$/.test(tok)) { primary.push(tok); continue; }
+    // 中文（混合）串：≤4 字整串（短语可精确匹配），更长只出滑窗（长整串要求正文逐字连续，必 0 命中）
     const cjkRuns = tok.match(/[\u4e00-\u9fff]{2,}/g) || [];
     for (const run of cjkRuns) {
-      if (run.length <= 3) { out.push(run); continue; }
-      out.push(run); // 整串（trigram 短语可精确匹配）
-      for (let i = 0; i + 1 < run.length && out.length < MAX_KEYWORDS + 4; i++) {
+      if (run.length <= 4) { primary.push(run); continue; }
+      for (let i = 0; i + 1 < run.length && secondary.length < MAX_KEYWORDS + 4; i++) {
         const bi = run.slice(i, i + 2);
-        if (!STOPWORD_RE.test(bi)) out.push(bi);
+        if (STOPWORD_RE.test(bi) || STOP_CHARS_RE.test(bi)) continue;
+        secondary.push(bi);
       }
     }
   }
-  // 去重 + 滤停用词/单字，控制关键词数量
+  // 去重 + 滤停用词/单字，先取完整词再补碎片，控制关键词数量
   const seen = new Set<string>();
   const kws: string[] = [];
-  for (const k of out) {
+  for (const k of [...primary, ...secondary]) {
     if (k.length < 2 || STOPWORD_RE.test(k) || seen.has(k)) continue;
     seen.add(k);
     kws.push(k);
@@ -62,8 +68,8 @@ export function extractKeywords(question: string): string[] {
   return kws;
 }
 
-/** 多关键词检索并按命中次数+时间排序合并（每条消息记录命中了几个关键词） */
-function searchHits(keywords: string[]): any[] {
+/** 多关键词检索并按命中次数+时间排序合并（每条消息记录命中了几个关键词）；导出供评测脚本复用真实链路 */
+export function searchHits(keywords: string[]): any[] {
   const map = new Map<string, { row: any; hits: number }>();
   for (const kw of keywords) {
     let rows: any[] = [];
@@ -75,10 +81,20 @@ function searchHits(keywords: string[]): any[] {
       else map.set(key, { row: r, hits: 1 });
     }
   }
-  return [...map.values()]
-    .sort((a, b) => (b.hits - a.hits) || ((b.row.ts || 0) - (a.row.ts || 0)))
-    .slice(0, MAX_MESSAGES)
-    .map((x) => ({ ...x.row, _hits: x.hits }));
+  const sorted = [...map.values()]
+    .sort((a, b) => (b.hits - a.hits) || ((b.row.ts || 0) - (a.row.ts || 0)));
+  // 单会话配额后再截总量：一个高频会话最多 PER_SESSION_LIMIT 条，剩下的名额让给别的会话
+  const perCount = new Map<string, number>();
+  const out: any[] = [];
+  for (const x of sorted) {
+    const skey = `${x.row.tool}|${x.row.sessionId}`;
+    const c = perCount.get(skey) || 0;
+    if (c >= PER_SESSION_LIMIT) continue;
+    perCount.set(skey, c + 1);
+    out.push({ ...x.row, _hits: x.hits });
+    if (out.length >= MAX_MESSAGES) break;
+  }
+  return out;
 }
 
 function fmtTime(ts: number): string {

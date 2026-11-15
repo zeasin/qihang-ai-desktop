@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as appConfig from './app-config';
 import logger from './logger';
 import { ALL_TOOLS, ensureDataDir, radarDataDir, type RadarConfig } from '../radar/radar-config';
-import { RadarDb, dbPath } from '../radar/radar-db';
+import { RadarDb, dbPath, type SessionRow } from '../radar/radar-db';
 import type { RoundStat } from '../radar/radar-ingest';
 import type { StateEvent } from '../radar/radar-monitor';
 
@@ -241,6 +241,11 @@ class AgentRadarService {
     const pageSize = Math.min(Math.max(opts.pageSize || 50, 1), 200);
     const page = Math.max(opts.page || 1, 1);
     return db.listSessions({ tool: opts.tool || undefined, limit: pageSize, offset: (page - 1) * pageSize });
+  }
+
+  sessionsByRange(start: number, end: number, limit = 20): { total: number; rows: SessionRow[] } {
+    const db = this.queryDb();
+    return db ? db.sessionsByRange(start, end, limit) : { total: 0, rows: [] };
   }
 
   findSessions(q: string): any[] {

@@ -127,15 +127,18 @@ export function collectPerProject(): Array<{ projectId: number; name: string; is
   });
 }
 
-/** 最近更新的笔记文件：与笔记提炼同口径（跳过代码仓库），按修改时间倒序取前 N 条 */
-export function collectRecentFiles(limit = 6): Array<{ projectId: number; projectName: string; rel: string; mtime: number }> {
+/** 最近更新的笔记文件：与笔记提炼同口径（跳过代码仓库），先按时间范围过滤再取前 N 条；limit=null 不限量 */
+export function collectRecentFiles(limit: number | null = 6, range?: { start: number; end: number }): Array<{ projectId: number; projectName: string; rel: string; mtime: number }> {
   const out: Array<{ projectId: number; projectName: string; rel: string; mtime: number }> = [];
   for (const proj of db.project.list() as any[]) {
     if (proj.type === 'code' || !proj.dir) continue;
-    for (const f of scanProject(proj)) out.push({ projectId: proj.id, projectName: proj.name, rel: f.rel, mtime: f.mtime });
+    for (const f of scanProject(proj)) {
+      if (range && (f.mtime < range.start || f.mtime >= range.end)) continue;
+      out.push({ projectId: proj.id, projectName: proj.name, rel: f.rel, mtime: f.mtime });
+    }
   }
   out.sort((a, b) => b.mtime - a.mtime);
-  return out.slice(0, limit);
+  return limit === null ? out : out.slice(0, limit);
 }
 
 /**

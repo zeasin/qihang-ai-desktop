@@ -1,0 +1,89 @@
+{
+  "name": "radar-retrieval-eval",
+  "createdAt": "2026-11-15",
+  "note": "问雷达检索层评测集：问题 → 期望命中的真实会话（从真库人工标注）。跑分：node eval/run-eval.cjs。新增评测题直接往 cases 里加；期望命中随真库变化，session 失效时替换。",
+  "cases": [
+    {
+      "id": "R1",
+      "question": "点三的电子面单账户拉取接口按钮是怎么开发的？",
+      "expect": [["zcode", "sess_57642ecd-c21e-4197-b4b9-86d158db3e73"]],
+      "note": "单命中；工具名+业务名词"
+    },
+    {
+      "id": "R2",
+      "question": "打单发货的取号接口为什么改回老接口了？",
+      "expect": [["claude-code", "b31d5067-240a-42d1-8e30-a703100ad9a8"]],
+      "note": "单命中；口语化描述技术决策"
+    },
+    {
+      "id": "R3",
+      "question": "快递模板下拉为什么显示 undefined？",
+      "expect": [["claude-code", "477c3e09-dbaa-4244-8b8d-6e7d4c707854"]],
+      "note": "单命中；中文+英文报错词混排"
+    },
+    {
+      "id": "R4",
+      "question": "电子面单接口合并改造完成情况检查了吗？",
+      "expect": [
+        ["pi", "01a1d3fe-3c8d-72ee-bc07-79979755af63"],
+        ["dsh", "session-2f82c093-0ebf-463a-b52b-8128025a5d8c"],
+        ["qoder", "20841490-70ef-4718-9b71-9faee92d697a"]
+      ],
+      "note": "多命中；同一主题跨 3 个工具"
+    },
+    {
+      "id": "R5",
+      "question": "订单审核功能有什么改造方案？",
+      "expect": [
+        ["claude-code", "0164e548-77ae-4c5e-923f-62378659ae66"],
+        ["zcode", "sess_8a5cab47-23d1-46c5-a59d-53869da9622a"]
+      ],
+      "note": "多命中；泛化业务词，预期干扰项多"
+    },
+    {
+      "id": "R6",
+      "question": "雷达里 PI 审批的 bug 修了什么？",
+      "expect": [
+        ["trae", "6af6d4000903dd4a1251773c"],
+        ["trae", "6af84d08fe4117e43761baa3"]
+      ],
+      "note": "多命中；短英文词 PI 走 LIKE 通道"
+    },
+    {
+      "id": "R7",
+      "question": "缓存恢复和并发的 bug 是怎么修的？",
+      "expect": [["qoder", "eac419fd-fe4e-4e89-af3e-df5f108b556f"]],
+      "note": "单命中；抽象概念词"
+    },
+    {
+      "id": "R8",
+      "question": "帮助页面都更新了哪些内容？",
+      "expect": [["trae", "6af888ebfe4117e43761c047"]],
+      "note": "单命中；极泛化词，难度高"
+    },
+    {
+      "id": "R9",
+      "question": "怎么让用户自己选择 AI 大模型？",
+      "expect": [["trae", "6af6f38e0febc36243e9621e"]],
+      "note": "单命中；功能诉求式问法"
+    },
+    {
+      "id": "R10",
+      "question": "订单工作台的快递发货仓批量设置方案是什么？",
+      "expect": [["zcode", "sess_fd89d15f-a8a2-4c6f-9be9-cff9d50d817a"]],
+      "note": "单命中；长业务名词串"
+    },
+    {
+      "id": "R11",
+      "question": "对话详情页面的样式做了什么优化？",
+      "expect": [["trae", "6af864fefe4117e43761bb79"]],
+      "note": "单命中；UI 类泛化词"
+    },
+    {
+      "id": "R12",
+      "question": "ewaybill 账户保存为什么去掉发货人字段？",
+      "expect": [["zcode", "sess_3752b4e5-38ca-4024-a379-cea78cbfd2d8"]],
+      "note": "单命中；英文模块名开头"
+    }
+  ]
+}
