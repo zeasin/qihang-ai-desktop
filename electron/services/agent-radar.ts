@@ -275,6 +275,12 @@ class AgentRadarService {
     return db ? db.stateEvents(tool, sessionId) : [];
   }
 
+  /** 会话消息流（移动端会话详情只读用） */
+  sessionMessages(tool: string, sessionId: string): any[] {
+    const db = this.queryDb();
+    return db ? db.getMessages(tool, sessionId) : [];
+  }
+
   /** UI 查询专用只读连接：库文件出现后才建立（首次开启时线程先建库） */
   private queryDb(): RadarDb | null {
     if (this.queryConn) return this.queryConn;

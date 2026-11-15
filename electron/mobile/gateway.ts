@@ -13,6 +13,10 @@ import * as crypto from 'node:crypto';
 import { app } from 'electron';
 import * as db from '../services/database';
 import { listPiModels } from '../services/pi-agent';
+import { askRadar } from '../radar/radar-ask';
+import { agentRadar } from '../services/agent-radar';
+import { extractDigest, checkDigestTodo } from '../services/note-digest';
+import * as projectScan from '../services/project-scan';
 import logger from '../services/logger';
 
 const BIND_HOST = '127.0.0.1';
@@ -546,6 +550,53 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return;
   }
 
+  // ---------- 雷达会话详情（只读消息流） ----------
+  if (req.method === 'GET' && pathname === '/api/radar/messages') {
+    const tool = String(url.searchParams.get('tool') || '');
+    const sid = String(url.searchParams.get('sessionId') || '');
+    if (!tool || !sid) return sendJson(res, 400, { ok: false, error: '缺少 tool 或 sessionId' });
+    return sendJson(res, 200, { ok: true, messages: agentRadar.sessionMessages(tool, sid) });
+  }
+
+  // ---------- 待办勾选：本地待办改库，笔记提炼待办回写笔记复选框 ----------
+  if (req.method === 'POST' && pathname === '/api/todos/toggle') {
+    const body = await readBody(req);
+    const done = !!body?.done;
+    try {
+      if (body?.kind === 'digest') {
+        const r = checkDigestTodo(Number(body.projectId), String(body.file || ''), Number(body.line) || 0, String(body.text || ''), done);
+        if (!r?.ok) return sendJson(res, 200, { ok: false, error: r?.error || '回写笔记失败' });
+      } else {
+        const id = Number(body?.id);
+        if (!Number.isFinite(id)) return sendJson(res, 400, { ok: false, error: '缺少待办 id' });
+        db.task.update(id, { status: done ? 'done' : 'pending' });
+      }
+      return sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      return sendJson(res, 200, { ok: false, error: e?.message || String(e) });
+    }
+  }
+
+  // ---------- 首页（今天页聚合）：待办 + 笔记提炼 + 雷达动态 + 最近会话 + 工作日志 ----------
+  if (req.method === 'GET' && pathname === '/api/today') {
+    const out: any = { ok: true };
+    try { out.todos = (db.task.listTodos() || []).filter((t: any) => t.status !== 'done').slice(0, 8); } catch { out.todos = []; }
+    try {
+      const d: any = await extractDigest();
+      out.digestTodos = (d?.todos || []).filter((t: any) => !t.done).slice(0, 20);
+    } catch { out.digestTodos = []; }
+    try { out.recentFiles = projectScan.collectRecentFiles(10); } catch { out.recentFiles = []; }
+    try {
+      const d2 = agentRadar.dashboard();
+      out.radar = {
+        enabled: !!agentRadar.status()?.enabled,
+        cards: agentRadar.toolStats(),
+        sessions: (d2.sessions || []).slice(0, 8),
+      };
+    } catch { out.radar = { enabled: false, cards: [], sessions: [] }; }
+    return sendJson(res, 200, out);
+  }
+
   if (req.method === 'GET' && pathname === '/api/projects') {
     const projects = db.project.list().map((p: any) => ({
       id: Number(p.id),
@@ -563,6 +614,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       providerLabel: m.providerLabel || m.provider || '',
     }));
     return sendJson(res, 200, { ok: true, models, error: result.error });
+  }
+  // ---------- 问雷达：基于已采集会话的检索问答（复用桌面端 radar-ask，一次性 AI 调用） ----------
+  if (req.method === 'POST' && pathname === '/api/radar/ask') {
+    const body = await readBody(req);
+    try {
+      const result = await askRadar(String(body?.question || ''), typeof body?.model === 'string' ? body.model : undefined);
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (e: any) {
+      return sendJson(res, 200, { ok: false, error: e?.message || String(e), refs: [] });
+    }
   }
   // ---------- 笔记库（与桌面端读同一个目录，规则收紧一层） ----------
   if (req.method === 'GET' && pathname === '/api/notes/tree') {

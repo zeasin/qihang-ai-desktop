@@ -125,6 +125,113 @@
   @keyframes noticeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
   @keyframes noticeOut { to { opacity: 0; transform: translateY(-8px); } }
 
+  /* 首页（今天页移动版） */
+  .home-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 14px calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px); }
+  .home-date { font-size: 12px; color: #9ca3af; margin: 2px 2px 10px; }
+  .home-body .sec { margin-bottom: 16px; }
+  .sec-t { font-size: 13px; font-weight: 600; color: #374151; margin: 0 2px 8px; display: flex; align-items: center; gap: 6px; }
+  .sec-t em { font-style: normal; font-weight: 400; font-size: 11.5px; color: #9ca3af; }
+  .home-card { background: #fff; border-radius: 14px; padding: 6px 12px; box-shadow: 0 2px 10px rgba(15, 23, 42, .06); }
+  .home-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-bottom: 1px solid #f3f4f6; }
+  .home-row:last-child { border-bottom: 0; }
+  .home-row .dot { width: 6px; height: 6px; border-radius: 999px; background: #d1d5db; margin-top: 6px; flex-shrink: 0; }
+  .home-row .dot.warn { background: #f59e0b; }
+  .home-row .dot.run { background: #16a34a; }
+  .home-row .tx { flex: 1; min-width: 0; font-size: 13px; line-height: 1.5; color: #111827; word-break: break-word; }
+  .home-row .sub { font-size: 11.5px; color: #9ca3af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .home-row .tm { font-size: 11px; color: #9ca3af; flex-shrink: 0; margin-top: 2px; }
+  .home-badge { background: #eff6ff; color: #2563eb; border-radius: 6px; padding: 2px 7px; font-size: 11px; flex-shrink: 0; }
+  .home-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tool-card { background: #fff; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(15, 23, 42, .06); }
+  .tool-card .tc-name { font-size: 13px; font-weight: 600; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-card .tc-num { font-size: 20px; font-weight: 700; color: #2563eb; margin-top: 4px; }
+  .tool-card .tc-sub { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+  .tool-card .tc-run { color: #16a34a; font-size: 11px; font-weight: 600; }
+  .home-empty { padding: 14px 0; text-align: center; color: #9ca3af; font-size: 12.5px; }
+  .home-empty.tap { cursor: pointer; }
+  .home-empty.tap:active { color: #2563eb; }
+  .home-row.click { cursor: pointer; }
+  .home-row.click:active { background: #f8fafc; }
+  .todo-detail-text { font-size: 14px; line-height: 1.6; color: #111827; word-break: break-word; margin-bottom: 8px; }
+  .todo-detail-meta { font-size: 12px; color: #9ca3af; margin-bottom: 12px; }
+
+  /* 雷达会话详情（只读） */
+  .rd-messages { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; padding: 14px 12px calc(20px + env(safe-area-inset-bottom)); }
+  .rd-user {
+    margin: 10px 0 10px auto; max-width: 85%; width: fit-content;
+    background: #0d9488; color: #fff; border-radius: 14px 14px 4px 14px;
+    padding: 9px 12px; font-size: 14px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .rd-ai { margin: 12px 0; font-size: 14px; line-height: 1.7; color: #111827; word-break: break-word; }
+  .rd-ai code { font-size: 12px; background: #f1f5f9; border-radius: 4px; padding: 1px 5px; }
+  .rd-ai pre {
+    background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px;
+    padding: 10px; overflow-x: auto; font-size: 12px; position: relative; max-width: 100%;
+  }
+  .rd-ai img { max-width: 100%; border-radius: 8px; }
+  .rd-think { margin: 6px 0; }
+  .rd-think summary { cursor: pointer; font-size: 12px; color: #9ca3af; }
+  .rd-think-body { font-size: 12.5px; color: #6b7280; white-space: pre-wrap; background: #f8fafc; border: 1px solid #eef1f5; border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
+
+  /* 全屏文档阅读器（工作日志跳转） */
+  .doc-reader { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 50; background: #fff; display: none; flex-direction: column; }
+  .doc-reader.show { display: flex; }
+  .doc-hdr {
+    display: flex; align-items: center; gap: 6px; padding: 12px 14px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    background: #0f172a; color: #fff; flex-shrink: 0;
+  }
+  .doc-hdr .icon-btn { color: #fff; font-size: 20px; }
+  .doc-title { font-size: 15px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 14px calc(24px + env(safe-area-inset-bottom)); font-size: 14px; line-height: 1.7; color: #111827; word-break: break-word; }
+  .doc-body p { margin: 0 0 10px; }
+  .doc-body ul, .doc-body ol { margin: 0 0 10px; padding-left: 20px; }
+  .doc-body code { font-size: 12px; background: #f1f5f9; border-radius: 4px; padding: 1px 5px; }
+  .doc-body pre { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 12px; position: relative; }
+  .doc-body h1, .doc-body h2, .doc-body h3 { font-size: 15px; margin: 10px 0 6px; }
+
+  /* 问雷达页 */
+  .radar-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 14px calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px); }
+  .radar-hero { text-align: center; padding: 14px 0 6px; }
+  .radar-mark { width: 52px; height: 52px; margin: 0 auto 8px; border-radius: 14px; background: #eff6ff; display: flex; align-items: center; justify-content: center; font-size: 26px; }
+  .radar-hero-t { font-size: 17px; font-weight: 600; color: #111827; }
+  .radar-hero-d { font-size: 12px; color: #9ca3af; margin-top: 3px; }
+  .radar-examples { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+  .radar-ex {
+    text-align: left; border: 1px solid #e5e7eb; background: #fff; border-radius: 12px;
+    padding: 10px 12px; font-size: 13px; color: #475569; font-family: inherit;
+  }
+  .radar-ex:active { background: #f1f5f9; }
+  .radar-ex b { color: #2563eb; margin-right: 6px; }
+  .radar-card { background: #fff; border-radius: 14px; padding: 10px 12px; box-shadow: 0 2px 10px rgba(15, 23, 42, .06); }
+  .radar-card textarea {
+    width: 100%; border: 0; outline: none; resize: none; font-family: inherit;
+    font-size: 14px; line-height: 1.5; color: #111827; background: transparent; padding: 0;
+  }
+  .radar-bar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .radar-status { flex: 1; font-size: 12px; color: #2563eb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .radar-status.err { color: #dc2626; }
+  .radar-spin {
+    display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid #bfdbfe; border-top-color: #2563eb;
+    animation: radar-spin .8s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes radar-spin { to { transform: rotate(360deg); } }
+  .radar-answer { background: #fff; border-radius: 14px; padding: 14px; margin-top: 14px; box-shadow: 0 2px 10px rgba(15, 23, 42, .06); }
+  .radar-answer-title { font-size: 12px; font-weight: 600; color: #9ca3af; margin-bottom: 8px; }
+  .radar-answer-body { font-size: 14px; line-height: 1.7; color: #111827; word-break: break-word; }
+  .radar-answer-body p { margin: 0 0 10px; }
+  .radar-answer-body ul, .radar-answer-body ol { margin: 0 0 10px; padding-left: 20px; }
+  .radar-answer-body code { font-size: 12px; background: #f1f5f9; border-radius: 4px; padding: 1px 5px; }
+  .radar-answer-body pre { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 12px; position: relative; }
+  .radar-answer-body pre .copy-btn { position: absolute; top: 6px; right: 6px; border: 0; background: #e2e8f0; color: #475569; border-radius: 6px; font-size: 11px; padding: 3px 8px; }
+  .radar-answer-body h1, .radar-answer-body h2, .radar-answer-body h3 { font-size: 15px; margin: 10px 0 6px; }
+  .radar-refs { margin-top: 12px; border-top: 1px solid #f1f5f9; padding-top: 10px; }
+  .radar-ref { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; color: #6b7280; }
+  .radar-ref .rf-tool { background: #eff6ff; color: #2563eb; border-radius: 6px; padding: 2px 7px; font-size: 11px; flex-shrink: 0; }
+  .radar-ref .rf-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* Android app 内嵌模式（?app=1）：app 自带顶栏，H5 隐藏黑栏，返回改为悬浮钮 */
   body.app-mode .topbar { display: none; }
   body.app-mode #messages { padding-top: 58px; }
@@ -536,11 +643,82 @@
   <div id="notesHandle" class="notes-handle" title="唤出笔记树">☰</div>
 </div>
 
-<!-- 底部常驻导航：仅会话列表/笔记库两个主屏显示（show() 控制），聊天/新建/配对页隐藏 -->
+<!-- 首页：今天页移动版（等你处理 / AI 工具动态 / 最近活跃会话 / 工作日志） -->
+<div id="homeView" class="screen">
+  <div class="topbar">
+    <div class="title">首页</div>
+  </div>
+  <div class="home-body">
+    <div id="homeDate" class="home-date"></div>
+    <div class="sec"><div class="sec-t">🫵 等你处理<em id="homeTodoCount"></em></div>
+      <div class="home-card"><div id="homeTodos"></div></div>
+    </div>
+    <div class="sec"><div class="sec-t">🤖 AI 工具动态<em id="homeRadarHint"></em></div>
+      <div class="home-cards" id="homeToolCards"></div>
+    </div>
+    <div class="sec"><div class="sec-t">🗂️ 最近活跃会话</div>
+      <div class="home-card"><div id="homeSessions"></div></div>
+    </div>
+    <div class="sec"><div class="sec-t">📔 工作日志</div>
+      <div class="home-card"><div id="homeFiles"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 雷达会话详情（只读）：用户消息右对齐气泡，助手消息合并成块，思考过程折叠 -->
+<div id="rdView" class="screen">
+  <div class="topbar">
+    <button id="rdBackBtn" class="icon-btn">‹</button>
+    <div class="title" id="rdTitle">会话</div>
+  </div>
+  <button id="rdBackBtnFloat" class="float-back">‹</button>
+  <div id="rdMessages" class="rd-messages"></div>
+</div>
+
+<!-- 全屏文档阅读器（工作日志跳转） -->
+<div id="docReader" class="doc-reader">
+  <div class="doc-hdr">
+    <button id="docCloseBtn" class="icon-btn" type="button">‹</button>
+    <div class="doc-title" id="docTitle">文档</div>
+  </div>
+  <div id="docBody" class="doc-body"></div>
+</div>
+
+<!-- 问雷达：基于已采集会话的检索问答（复用桌面端 radar-ask，一次性 AI 调用） -->
+<div id="radarView" class="screen">
+  <div class="topbar">
+    <div class="title">问雷达</div>
+  </div>
+  <div class="radar-body">
+    <div class="radar-hero">
+      <div class="radar-mark">📡</div>
+      <div class="radar-hero-t">问雷达</div>
+      <div class="radar-hero-d">向本机采集的全部 AI 工具会话提问</div>
+    </div>
+    <div id="radarExamples" class="radar-examples"></div>
+    <div class="radar-card">
+      <textarea id="radarInput" rows="2" placeholder="例如：昨天支付模块做了哪些改动？"></textarea>
+      <div class="radar-bar">
+        <button id="radarModelBtn" class="model-chip" type="button">默认模型 ▾</button>
+        <span id="radarStatus" class="radar-status"></span>
+        <button id="radarAskBtn" class="nc-send" disabled>↑</button>
+      </div>
+    </div>
+    <div id="radarAnswerWrap" class="radar-answer hidden">
+      <div class="radar-answer-title">回答</div>
+      <div id="radarAnswerBody" class="radar-answer-body"></div>
+      <div id="radarRefs" class="radar-refs hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 底部常驻导航：仅会话列表/问雷达/笔记库三个主屏显示（show() 控制），聊天/新建/配对页隐藏 -->
 <!-- 实时通知横幅栈 -->
 <div id="noticeStack" class="notice-stack"></div>
 <nav id="tabBar" class="tab-bar hidden">
-  <button id="tabList" class="tab-item active" type="button"><span class="tab-ico">💬</span><span id="tabListBadge" class="tab-badge hidden">0</span>对话</button>
+  <button id="tabHome" class="tab-item active" type="button"><span class="tab-ico">🏠</span>首页</button>
+  <button id="tabList" class="tab-item" type="button"><span class="tab-ico">💬</span><span id="tabListBadge" class="tab-badge hidden">0</span>对话</button>
+  <button id="tabRadar" class="tab-item" type="button"><span class="tab-ico">📡</span>雷达</button>
   <button id="tabNotes" class="tab-item" type="button"><span class="tab-ico">📁</span>笔记</button>
 </nav>
 
@@ -567,6 +745,20 @@
   </div>
 </div>
 
+<!-- 待办详情弹层：点击看详情，按钮确认完成（不一点就完成） -->
+<div id="todoSheet" class="sheet-mask">
+  <div class="sheet">
+    <h3>待办详情</h3>
+    <div id="todoSheetText" class="todo-detail-text"></div>
+    <div id="todoSheetMeta" class="todo-detail-meta"></div>
+    <div class="row">
+      <button id="todoSheetOpen" class="btn-cancel" type="button" hidden>打开来源笔记</button>
+      <button id="todoSheetCancel" class="btn-cancel" type="button">关闭</button>
+      <button id="todoSheetOk" class="btn-ok" type="button">标记完成</button>
+    </div>
+  </div>
+</div>
+
 <script src="/vendor/marked.umd.js"></script>
 <script>
 (function () {
@@ -574,6 +766,7 @@
 
   var TOKEN_KEY = 'qihang_mobile_token';
   var NAME_KEY = 'qihang_mobile_name';
+  var RADAR_MODEL_KEY = 'qihang_mobile_radar_model';
 
   // Android app 内嵌模式：WebView 默认 UA 带 "; wv" 标记，此时隐藏 H5 顶栏（app 自带顶栏）
   if (/;\s*wv\)/.test(navigator.userAgent)) {
@@ -590,6 +783,7 @@
     current: '',
     unread: 0,
     currentModel: '',
+    radarModel: localStorage.getItem(RADAR_MODEL_KEY) || '',
     messages: [],
     streaming: false,
     live: null,
@@ -647,6 +841,34 @@
   var readerToggleBtn = document.getElementById('readerToggleBtn');
   var noticeStack = document.getElementById('noticeStack');
   var tabListBadge = document.getElementById('tabListBadge');
+  var radarModelBtn = document.getElementById('radarModelBtn');
+  var tabRadar = document.getElementById('tabRadar');
+  var homeView = document.getElementById('homeView');
+  var tabHome = document.getElementById('tabHome');
+  var homeDate = document.getElementById('homeDate');
+  var homeTodoCount = document.getElementById('homeTodoCount');
+  var homeRadarHint = document.getElementById('homeRadarHint');
+  var homeTodos = document.getElementById('homeTodos');
+  var homeToolCards = document.getElementById('homeToolCards');
+  var homeSessions = document.getElementById('homeSessions');
+  var homeFiles = document.getElementById('homeFiles');
+  var rdView = document.getElementById('rdView');
+  var rdBackBtn = document.getElementById('rdBackBtn');
+  var rdBackBtnFloat = document.getElementById('rdBackBtnFloat');
+  var rdTitle = document.getElementById('rdTitle');
+  var rdMessages = document.getElementById('rdMessages');
+  var docReader = document.getElementById('docReader');
+  var docCloseBtn = document.getElementById('docCloseBtn');
+  var docTitle = document.getElementById('docTitle');
+  var docBody = document.getElementById('docBody');
+  var radarView = document.getElementById('radarView');
+  var radarInput = document.getElementById('radarInput');
+  var radarAskBtn = document.getElementById('radarAskBtn');
+  var radarStatus = document.getElementById('radarStatus');
+  var radarExamples = document.getElementById('radarExamples');
+  var radarAnswerWrap = document.getElementById('radarAnswerWrap');
+  var radarAnswerBody = document.getElementById('radarAnswerBody');
+  var radarRefs = document.getElementById('radarRefs');
 
   // ---------- Markdown ----------
   function escHtml(s) {
@@ -732,12 +954,14 @@
   });
 
   function show(view) {
-    [pairView, listView, chatView, composeView, notesView].forEach(function (el) { el.classList.remove('active'); });
+    [pairView, listView, chatView, composeView, notesView, radarView, homeView].forEach(function (el) { el.classList.remove('active'); });
     view.classList.add('active');
-    // 底部导航只在两个主屏（会话列表 / 笔记库）常驻；聊天/新建/配对页隐藏
-    var onRoot = (view === listView || view === notesView);
+    // 底部导航只在四个主屏（首页 / 会话列表 / 问雷达 / 笔记库）常驻；聊天/新建/配对页隐藏
+    var onRoot = (view === homeView || view === listView || view === notesView || view === radarView);
     tabBar.classList.toggle('hidden', !onRoot);
+    tabHome.classList.toggle('active', view === homeView);
     tabList.classList.toggle('active', view === listView);
+    tabRadar.classList.toggle('active', view === radarView);
     tabNotes.classList.toggle('active', view === notesView);
     // 回到对话列表视为已读：清掉未读角标
     if (view === listView && state.unread) {
@@ -752,8 +976,9 @@
     history.pushState({ screen: screen }, '', location.href);
   }
   window.addEventListener('popstate', function () {
-    show(listView);
-    loadSessions();
+    // 雷达会话详情返回回首页，其余子页回对话列表
+    if (rdView.classList.contains('active')) show(homeView);
+    else { show(listView); loadSessions(); }
   });
   // 从 bfcache 恢复时 DOM 是导航离开那一刻的冻结快照，可能与当前代码/状态不一致
   // （曾出现笔记 tab 高亮却显示新建对话页的脏快照）；强制重载拿一份一致的新文档。
@@ -840,7 +1065,8 @@
 
   function enterApp() {
     state.stopped = false;
-    show(listView);
+    show(homeView);
+    loadToday();
     loadSessions();
     loadProjects();
     connectEvents();
@@ -1176,7 +1402,9 @@
   });
 
   // ---------- 模型切换 ----------
+  // modelSheetTarget 决定选择结果落到哪：'chat' 改当前会话模型（PATCH 会话），'radar' 只改问雷达的本地偏好
   var cachedModels = null;
+  var modelSheetTarget = 'chat';
 
   function modelLabel(pattern) {
     if (!pattern) return '默认模型';
@@ -1198,8 +1426,9 @@
     });
   }
 
-  function openModelSheet() {
-    if (!state.current || state.streaming) return;
+  function openModelSheet(target) {
+    modelSheetTarget = target || 'chat';
+    if (modelSheetTarget === 'chat' && (!state.current || state.streaming)) return;
     modelSheet.classList.add('show');
     modelList.innerHTML = '<div class="empty" style="padding:20px">加载中…</div>';
     ensureModels().then(renderModelList).catch(function (e) {
@@ -1213,10 +1442,11 @@
 
   function renderModelList(models) {
     modelList.innerHTML = '';
+    var cur = modelSheetTarget === 'radar' ? state.radarModel : state.currentModel;
     var options = [{ pattern: '', name: '默认模型', providerLabel: '' }].concat(models || []);
     options.forEach(function (m) {
       var row = document.createElement('div');
-      row.className = 'model-item' + (m.pattern === state.currentModel ? ' current' : '');
+      row.className = 'model-item' + (m.pattern === cur ? ' current' : '');
       var text = document.createElement('div');
       var label = document.createElement('div');
       label.textContent = m.name || m.pattern || '默认模型';
@@ -1236,6 +1466,15 @@
   }
 
   function selectModel(pattern) {
+    // 问雷达的目标路由：只记本地偏好，随下次提问带上
+    if (modelSheetTarget === 'radar') {
+      state.radarModel = pattern;
+      localStorage.setItem(RADAR_MODEL_KEY, pattern);
+      updateRadarModelChip();
+      closeModelSheet();
+      toast(pattern ? '问雷达已切换：' + modelLabel(pattern) : '问雷达已切回默认模型');
+      return;
+    }
     var sid = state.current;
     if (!sid) return;
     request('/api/sessions/' + encodeURIComponent(sid), {
@@ -1252,7 +1491,7 @@
   }
 
   function closeModelSheet() { modelSheet.classList.remove('show'); }
-  modelBtn.addEventListener('click', openModelSheet);
+  modelBtn.addEventListener('click', function () { openModelSheet('chat'); });
   modelCancel.addEventListener('click', closeModelSheet);
   modelSheet.addEventListener('click', function (e) { if (e.target === modelSheet) closeModelSheet(); });
 
@@ -1847,6 +2086,444 @@
     }
   }
 
+  // ---------- 首页（今天页移动版） ----------
+  // GET /api/today 聚合：本地待办 + 笔记提炼待办 + 雷达工具卡片/最近会话 + 工作日志（最近更新文档）。
+  // 每次切到首页 Tab 重新拉取，数据量小、无需本地缓存。
+  var homeLoading = false;
+  var homeTodosExpanded = false;
+  var homeData = null;
+
+  function fmtHomeTime(ts) {
+    var n = Number(ts);
+    if (!n) return '';
+    var d = new Date(n);
+    var now = new Date();
+    var pad = function (x) { return (x < 10 ? '0' : '') + x; };
+    var hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    if (d.toDateString() === now.toDateString()) return '今天 ' + hm;
+    if (new Date(now - 86400000).toDateString() === d.toDateString()) return '昨天 ' + hm;
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+  }
+  function todayStrLocal() {
+    var d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth() < 9 ? '0' : '') + (d.getMonth() + 1) + '-' + (d.getDate() < 10 ? '0' : '') + d.getDate();
+  }
+  function enterHome() {
+    show(homeView);
+    loadToday();
+  }
+  function loadToday() {
+    if (homeLoading) return;
+    homeLoading = true;
+    var d = new Date();
+    homeDate.textContent = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+      + ' · ' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    homeTodos.innerHTML = '';
+    homeTodos.appendChild(emptyNode('加载中…'));
+    request('/api/today').then(function (data) {
+      homeLoading = false;
+      homeData = data || {};
+      renderHome(homeData);
+    }).catch(function () {
+      homeLoading = false;
+      homeTodos.innerHTML = '';
+      homeTodos.appendChild(emptyNode('加载失败，重新切到首页可重试'));
+    });
+  }
+
+  function renderHome(data) {
+    var todos = data.todos || [];
+    var digestTodos = data.digestTodos || [];
+    var total = todos.length + digestTodos.length;
+    homeTodoCount.textContent = total ? total + ' 项' : '';
+
+    // 等你处理：本地待办（逾期标黄）+ 笔记提炼待办（带来源文件）
+    homeTodos.innerHTML = '';
+    if (!total) {
+      homeTodos.appendChild(emptyNode('暂时没有需要你动手的事'));
+    } else {
+      var today = todayStrLocal();
+      todos.forEach(function (t) {
+        var row = document.createElement('div');
+        row.className = 'home-row click';
+        var overdue = t.due_date && String(t.due_date) < today;
+        row.innerHTML = '<div class="dot' + (overdue ? ' warn' : '') + '"></div>'
+          + '<div class="tx">' + escHtml(String(t.title || '')) + '</div>'
+          + (t.due_date ? '<div class="tm">' + escHtml(String(t.due_date)) + '</div>' : '');
+        row.addEventListener('click', function () { openTodoSheet('local', t); });
+        homeTodos.appendChild(row);
+      });
+      digestTodos.forEach(function (t) {
+        var row = document.createElement('div');
+        row.className = 'home-row click';
+        var fname = String(t.file || '').split(/[\\/]/).pop() || '';
+        row.innerHTML = '<div class="dot"></div>'
+          + '<div class="tx">' + escHtml(String(t.text || '')) + '<div class="sub">📝 ' + escHtml(fname) + '</div></div>';
+        row.addEventListener('click', function () { openTodoSheet('digest', t); });
+        homeTodos.appendChild(row);
+      });
+    }
+
+    // 折叠：默认最多 5 条，点「展开更多」看全部，展开状态跨刷新保留
+    var rows = [].slice.call(homeTodos.children);
+    if (rows.length > 5) {
+      rows.forEach(function (el, i) { el.classList.toggle('hidden', i >= 5 && !homeTodosExpanded); });
+      var fold = document.createElement('div');
+      fold.className = 'home-empty tap';
+      fold.textContent = homeTodosExpanded ? '收起' : '展开更多（还有 ' + (rows.length - 5) + ' 条）';
+      fold.addEventListener('click', function () {
+        homeTodosExpanded = !homeTodosExpanded;
+        if (homeData) renderHome(homeData);
+      });
+      homeTodos.appendChild(fold);
+    }
+
+    // AI 工具动态：一行 2 卡，运行中会话标绿
+    var cards = (data.radar && data.radar.cards) || [];
+    homeRadarHint.textContent = (data.radar && data.radar.enabled === false) ? '雷达未开启' : '';
+    homeToolCards.innerHTML = '';
+    if (!cards.length) {
+      var em = document.createElement('div');
+      em.className = 'home-empty';
+      em.textContent = '还没有采集到 AI 会话';
+      homeToolCards.appendChild(em);
+    } else {
+      cards.forEach(function (c) {
+        var el = document.createElement('div');
+        el.className = 'tool-card';
+        el.innerHTML = '<div class="tc-name">' + escHtml(String(c.tool || '')) + '</div>'
+          + '<div class="tc-num">' + Number(c.sessions || 0) + '</div>'
+          + '<div class="tc-sub">会话' + (Number(c.running) > 0 ? ' · <span class="tc-run">运行中</span>' : '') + '</div>';
+        homeToolCards.appendChild(el);
+      });
+    }
+
+    // 最近活跃会话：运行中的排前（服务端已排序），标题 + 工具徽标 + 时间
+    var sessions = (data.radar && data.radar.sessions) || [];
+    homeSessions.innerHTML = '';
+    if (!sessions.length) {
+      homeSessions.appendChild(emptyNode('暂无活跃会话'));
+    } else {
+      sessions.forEach(function (s) {
+        var row = document.createElement('div');
+        row.className = 'home-row click';
+        var run = String(s.state) === 'running';
+        row.innerHTML = '<span class="home-badge">' + escHtml(String(s.tool || '')) + '</span>'
+          + '<div class="tx">' + escHtml(String(s.title || '（无标题会话）')) + '</div>'
+          + (run ? '<div class="dot run"></div>' : '<div class="tm">' + fmtHomeTime(s.sourceUpdatedAt) + '</div>');
+        row.addEventListener('click', function () { openRadarSession(s.tool, s.sessionId, s.title); });
+        homeSessions.appendChild(row);
+      });
+    }
+
+    // 工作日志：笔记库最近更新的文档流
+    var files = data.recentFiles || [];
+    homeFiles.innerHTML = '';
+    if (!files.length) {
+      homeFiles.appendChild(emptyNode('笔记库还没有更新'));
+    } else {
+      files.forEach(function (f) {
+        var row = document.createElement('div');
+        row.className = 'home-row click';
+        var fname = String(f.rel || '').split(/[\\/]/).pop() || '';
+        row.innerHTML = '<div class="dot"></div>'
+          + '<div class="tx">' + escHtml(fname) + '<div class="sub">' + escHtml(String(f.projectName || '')) + '</div></div>'
+          + '<div class="tm">' + fmtHomeTime(f.mtime) + '</div>';
+        row.addEventListener('click', function () { openHomeDoc(f); });
+        homeFiles.appendChild(row);
+      });
+    }
+  }
+
+  // ---------- 首页交互：会话详情 / 文档阅读 / 待办勾选 ----------
+  // 会话详情（只读）：连续助手消息合并为一块，思考过程折叠，工具调用暂不展示
+  function openRadarSession(tool, sessionId, title) {
+    rdTitle.textContent = String(title || '会话');
+    rdMessages.innerHTML = '';
+    rdMessages.appendChild(emptyNode('加载中…'));
+    show(rdView);
+    pushScreen('radarSession');
+    request('/api/radar/messages?tool=' + encodeURIComponent(String(tool || '')) + '&sessionId=' + encodeURIComponent(String(sessionId || '')))
+      .then(function (data) { renderRadarMessages((data && data.messages) || []); })
+      .catch(function (e) {
+        rdMessages.innerHTML = '';
+        rdMessages.appendChild(emptyNode(e.message || '加载失败'));
+      });
+  }
+  function backFromRd() {
+    if (history.state && history.state.screen) history.back();
+    else show(homeView);
+  }
+  function renderRadarMessages(msgs) {
+    rdMessages.innerHTML = '';
+    if (!msgs.length) { rdMessages.appendChild(emptyNode('没有消息')); return; }
+    // 连续非用户消息合并为一块（与桌面会话详情同一策略）
+    var blocks = [];
+    msgs.forEach(function (m) {
+      var last = blocks[blocks.length - 1];
+      if (last && last.role !== 'user' && String(m.role) !== 'user') last.items.push(m);
+      else blocks.push({ role: String(m.role || 'assistant'), items: [m] });
+    });
+    blocks.forEach(function (b) {
+      if (b.role === 'user') {
+        b.items.forEach(function (m) {
+          var el = document.createElement('div');
+          el.className = 'rd-user';
+          el.textContent = String(m.content || '');
+          rdMessages.appendChild(el);
+        });
+        return;
+      }
+      var wrap = document.createElement('div');
+      wrap.className = 'rd-ai';
+      var html = '';
+      b.items.forEach(function (m) {
+        var think = String(m.thinking || '').trim();
+        if (think) {
+          html += '<details class="rd-think"><summary>💭 思考过程</summary><div class="rd-think-body">' + escHtml(think) + '</div></details>';
+        }
+        if (m.content) html += mdRender(String(m.content));
+      });
+      if (!html.trim()) html = '<div class="rd-think-body">（此条无正文，仅思考或工具调用）</div>';
+      wrap.innerHTML = html;
+      decorateCode(wrap);
+      rdMessages.appendChild(wrap);
+    });
+    // 默认定位到最新消息（与桌面会话详情一致）
+    rdMessages.scrollTop = rdMessages.scrollHeight;
+  }
+
+  // 工作日志 → 全屏文档阅读器（复用 /api/notes/file，与笔记页同一读取通道）
+  function openHomeDoc(f) {
+    var proj = null;
+    (cachedProjects || []).forEach(function (p) { if (Number(p.id) === Number(f.projectId)) proj = p; });
+    if (!proj || !proj.dir) { toast('找不到该笔记所属项目，请先进入一次笔记页'); return; }
+    docTitle.textContent = String(f.rel || '').split(/[\\/]/).pop() || '文档';
+    docBody.innerHTML = '';
+    docBody.appendChild(emptyNode('加载中…'));
+    docReader.classList.add('show');
+    request('/api/notes/file?dir=' + encodeURIComponent(String(proj.dir)) + '&path=' + encodeURIComponent(String(f.rel || '')))
+      .then(function (data) {
+        docBody.innerHTML = '';
+        if (!data || !data.ok) { docBody.appendChild(emptyNode((data && data.error) || '读取失败')); return; }
+        var ext = String(data.ext || '').toLowerCase();
+        if (ext === '.md' || ext === '.markdown') {
+          docBody.innerHTML = mdRender(String(data.content || ''));
+          decorateCode(docBody);
+        } else {
+          var pre = document.createElement('pre');
+          pre.style.cssText = 'white-space:pre-wrap;font-size:13px;line-height:1.6;';
+          pre.textContent = String(data.content || '');
+          docBody.appendChild(pre);
+        }
+      })
+      .catch(function (e) {
+        docBody.innerHTML = '';
+        docBody.appendChild(emptyNode(e.message || '读取失败'));
+      });
+  }
+  function closeHomeDoc() {
+    docReader.classList.remove('show');
+    docBody.innerHTML = '';
+  }
+
+  // 待办详情弹层：点击行看全文与来源，点「标记完成」才真正完成
+  var todoSheet = document.getElementById('todoSheet');
+  var todoSheetText = document.getElementById('todoSheetText');
+  var todoSheetMeta = document.getElementById('todoSheetMeta');
+  var todoSheetOk = document.getElementById('todoSheetOk');
+  var todoSheetCancel = document.getElementById('todoSheetCancel');
+  var todoSheetOpen = document.getElementById('todoSheetOpen');
+  var todoSheetItem = null;
+  function openTodoSheet(kind, t) {
+    todoSheetItem = { kind: kind, t: t };
+    todoSheetText.textContent = kind === 'local' ? String(t.title || '') : String(t.text || '');
+    if (kind === 'local') {
+      todoSheetMeta.textContent = (t.due_date ? '截止 ' + t.due_date + ' · ' : '') + '本地待办';
+      todoSheetOpen.hidden = true;
+      todoSheetOk.textContent = '标记完成';
+    } else {
+      todoSheetMeta.textContent = '来自笔记：' + (String(t.file || '').split(/[\\/]/).pop() || '') + (t.line ? '（第 ' + t.line + ' 行）' : '');
+      todoSheetOpen.hidden = false;
+      todoSheetOk.textContent = '勾选完成（回写笔记）';
+    }
+    todoSheet.classList.add('show');
+  }
+  function closeTodoSheet() {
+    todoSheet.classList.remove('show');
+    todoSheetItem = null;
+  }
+  todoSheetCancel.addEventListener('click', closeTodoSheet);
+  todoSheet.addEventListener('click', function (e) { if (e.target === todoSheet) closeTodoSheet(); });
+  todoSheetOpen.addEventListener('click', function () {
+    if (!todoSheetItem || todoSheetItem.kind !== 'digest') return;
+    var t = todoSheetItem.t;
+    closeTodoSheet();
+    openHomeDoc({ projectId: t.project_id, rel: t.file, projectName: '' });
+  });
+  todoSheetOk.addEventListener('click', function () {
+    if (!todoSheetItem) return;
+    var kind = todoSheetItem.kind;
+    var t = todoSheetItem.t;
+    closeTodoSheet();
+    if (kind === 'local') toggleHomeTodo(t);
+    else toggleHomeDigestTodo(t);
+  });
+
+  // 待办勾选：本地待办改库，笔记提炼待办回写笔记复选框；成功后刷新首页数据
+  function toggleHomeTodo(t) {
+    var done = String(t.status) !== 'done';
+    postJson('/api/todos/toggle', { kind: 'local', id: t.id, done: done })
+      .then(function (r) {
+        if (!r || !r.ok) { toast(r && r.error || '操作失败'); return; }
+        toast(done ? '已完成' : '已恢复未完成');
+        loadToday();
+      })
+      .catch(function (e) { toast(e.message || '操作失败'); });
+  }
+  function toggleHomeDigestTodo(t) {
+    var done = !t.done;
+    postJson('/api/todos/toggle', {
+      kind: 'digest',
+      projectId: t.project_id,
+      file: t.file,
+      line: t.line,
+      text: t.text,
+      done: done
+    }).then(function (r) {
+      if (!r || !r.ok) { toast(r && r.error || '回写笔记失败'); return; }
+      toast(done ? '已勾选，笔记已同步' : '已恢复，笔记已同步');
+      loadToday();
+    }).catch(function (e) { toast(e.message || '操作失败'); });
+  }
+
+  rdBackBtn.addEventListener('click', backFromRd);
+  rdBackBtnFloat.addEventListener('click', backFromRd);
+  docCloseBtn.addEventListener('click', closeHomeDoc);
+  // 会话详情 / 文档阅读器的代码块复制（与对话页同款交互）
+  [rdMessages, docBody].forEach(function (el) {
+    el.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('.copy-btn') : null;
+      if (!btn) return;
+      var pre = btn.parentNode;
+      var code = pre.querySelector('code');
+      copyText(((code || pre).innerText || '').replace(/\n$/, ''), function () {
+        btn.textContent = '已复制';
+        setTimeout(function () { btn.textContent = '复制'; }, 1200);
+      });
+    });
+  });
+
+  // ---------- 问雷达 ----------
+  // 基于已采集的 AI 工具会话检索问答：POST /api/radar/ask（一次性 AI 调用，服务端 120s 硬超时）。
+  // 空态显示示例问题卡片，点击直接提问；回答 markdown 渲染，来源列表展示命中会话。
+  var radarAsking = false;
+  var RADAR_EXAMPLES = [
+    { icon: '🔧', text: 'Claude Code 最近帮我修了哪些 bug？' },
+    { icon: '💬', text: '本周我在 Qoder 里讨论过什么？' },
+    { icon: '📦', text: '支付模块最近做过哪些改动？' }
+  ];
+
+  function renderRadarExamples() {
+    radarExamples.innerHTML = '';
+    RADAR_EXAMPLES.forEach(function (ex) {
+      var b = document.createElement('button');
+      b.className = 'radar-ex';
+      b.type = 'button';
+      b.innerHTML = '<b>' + ex.icon + '</b>' + escHtml(ex.text);
+      b.addEventListener('click', function () {
+        radarInput.value = ex.text;
+        updateRadarSend();
+        askRadarFlow();
+      });
+      radarExamples.appendChild(b);
+    });
+  }
+
+  function updateRadarSend() {
+    radarAskBtn.disabled = radarAsking || !radarInput.value.trim();
+  }
+  radarAskBtn.addEventListener('click', askRadarFlow);
+  radarInput.addEventListener('input', updateRadarSend);
+  radarInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!radarAskBtn.disabled) askRadarFlow();
+    }
+  });
+
+  function setRadarStatus(html, isErr) {
+    radarStatus.innerHTML = html || '';
+    radarStatus.classList.toggle('err', !!isErr);
+  }
+
+  function updateRadarModelChip() {
+    var label = modelLabel(state.radarModel);
+    radarModelBtn.textContent = (label.length > 14 ? label.slice(0, 14) + '…' : label) + ' ▾';
+  }
+  radarModelBtn.addEventListener('click', function () { openModelSheet('radar'); });
+  updateRadarModelChip();
+
+  function enterRadar() {
+    show(radarView);
+    if (!radarExamples.children.length) renderRadarExamples();
+    updateRadarSend();
+  }
+
+  function askRadarFlow() {
+    var q = radarInput.value.trim();
+    if (!q || radarAsking) return;
+    radarAsking = true;
+    updateRadarSend();
+    setRadarStatus('<span class="radar-spin"></span>正在检索已采集对话并汇总…');
+    postJson('/api/radar/ask', { question: q, model: state.radarModel || undefined })
+      .then(function (data) {
+        radarAsking = false;
+        updateRadarSend();
+        setRadarStatus('');
+        radarAnswerWrap.classList.remove('hidden');
+        if (!data.ok) {
+          radarAnswerBody.textContent = data.error || '提问失败';
+          radarRefs.classList.add('hidden');
+          return;
+        }
+        radarAnswerBody.innerHTML = mdRender(String(data.answer || ''));
+        decorateCode(radarAnswerBody);
+        var refs = data.refs || [];
+        if (refs.length) {
+          radarRefs.classList.remove('hidden');
+          radarRefs.innerHTML = '';
+          refs.forEach(function (r) {
+            var row = document.createElement('div');
+            row.className = 'radar-ref';
+            row.innerHTML = '<span class="rf-tool">' + escHtml(r.tool || '') + '</span>'
+              + '<span class="rf-title">' + escHtml(r.title || '（无标题会话）') + '</span>';
+            radarRefs.appendChild(row);
+          });
+        } else {
+          radarRefs.classList.add('hidden');
+        }
+        radarAnswerWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      })
+      .catch(function (e) {
+        radarAsking = false;
+        updateRadarSend();
+        setRadarStatus(e.message || '提问失败', true);
+      });
+  }
+
+  // 回答区代码块复制（与对话页同款交互）
+  radarAnswerBody.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest('.copy-btn') : null;
+    if (!btn) return;
+    var pre = btn.parentNode;
+    var code = pre.querySelector('code');
+    copyText(((code || pre).innerText || '').replace(/\n$/, ''), function () {
+      btn.textContent = '已复制';
+      setTimeout(function () { btn.textContent = '复制'; }, 1200);
+    });
+  });
+
   // ---------- 笔记库 ----------
   // 左侧树面板：文件夹点按原地展开（懒加载子层），文件点开 → 全屏阅读器，树收起到左侧；
   // 阅读栏 ☰ 或左侧把手唤回树面板（不关闭文件）。
@@ -2229,7 +2906,9 @@
     });
   });
 
+  tabHome.addEventListener('click', enterHome);
   tabNotes.addEventListener('click', enterNotes);
+  tabRadar.addEventListener('click', enterRadar);
   tabList.addEventListener('click', backToList);
   notesBackBtn.addEventListener('click', backNotes);
   notesBackBtnFloat.addEventListener('click', backNotes);
