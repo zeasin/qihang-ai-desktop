@@ -23,123 +23,140 @@
       </div>
 
       <div class="card" id="sec-core">
-        <h2 style="font-size:17px;">✨ 核心卖点：一条完整的自动化链路</h2>
-        <p class="text-muted mb-2">启航AI工作台不是"对话框 + 一堆孤立功能"，而是一套完整的自动化流程：</p>
+        <h2 style="font-size:17px;">✨ 核心卖点：一条完整的 AI 工作闭环</h2>
+        <p class="text-muted mb-2">启航AI工作台不是"对话框 + 一堆孤立功能"，而是一套覆盖「记录 → 派活 → 观测 → 审批 → 推送」的完整闭环：</p>
         <div style="text-align:center;padding:12px 0;font-size:14px;font-weight:600;color:var(--primary);">
-          采集 → 分析 → 建议 → 执行 → 推送
+          记录 → 派活 → 观测 → 审批 → 推送
         </div>
         <ol style="margin:8px 0;padding-left:20px;font-size:13px;line-height:1.8;">
-          <li><strong>采集</strong>：Markdown 笔记随手记，外部系统数据经 MCP 数据源接入，自动归档进本地项目</li>
-          <li><strong>分析</strong>：AI 基于你的笔记、MCP 数据源里的业务数据回答提问、查数据、读文件，而不是凭空瞎编</li>
-          <li><strong>建议</strong>：AI 不只是回答问题，还给出可执行的建议——该做的事、该记的档、该跟进的事项</li>
-          <li><strong>执行</strong>：对话落成定时任务，AI 还能读写笔记文件、操作本地数据</li>
-          <li><strong>推送</strong>：定时提醒、每日 AI 日报自动汇总，通过飞书推送到你的群和联系人</li>
+          <li><strong>记录</strong>：笔记库随手记，待办、工作日志、引擎简报自动从笔记提炼</li>
+          <li><strong>派活</strong>：桌面对话、定时任务、飞书 Bot 三个入口把活派给 AI，由本地引擎（pi / opencode）执行</li>
+          <li><strong>观测</strong>：雷达自动采集本机各 AI 编码工具（Trae、Qoder、Claude Code、Codex 等）的会话，今天页集中看动态</li>
+          <li><strong>审批</strong>：Claude Code / pi / DSH 的敏感工具调用推送飞书审批卡，回合完成、失败实时通知</li>
+          <li><strong>推送</strong>：综合日报、定时提醒、任务结果、审批卡片全部推送到飞书，出门也不掉线</li>
         </ol>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
           <div style="flex:1;min-width:140px;padding:10px;background:var(--success-soft);border-radius:8px;border:1px solid var(--success-soft);font-size:12px;line-height:1.5;">
             <strong style="color:var(--success);">🔒 数据安全</strong><br>
-            <span class="text-muted">笔记、对话、待办、数据全部存在本机，不上传云端</span>
+            <span class="text-muted">笔记、对话、待办、采集数据全部存在本机，不上传云端</span>
           </div>
           <div style="flex:1;min-width:140px;padding:10px;background:var(--surface-2);border-radius:8px;border:1px solid #b3d4f7;font-size:12px;line-height:1.5;">
             <strong style="color:#2563eb;">🧠 模型自由</strong><br>
             <span class="text-muted">DeepSeek、OpenAI 兼容、Ollama 本地模型，配置多个随时切换</span>
           </div>
           <div style="flex:1;min-width:140px;padding:10px;background:#fefce8;border-radius:8px;border:1px solid #fde68a;font-size:12px;line-height:1.5;">
-            <strong style="color:var(--warning);">🚀 持续进化</strong><br>
-            <span class="text-muted">超过能力自动升级，无需手动安装任何终端工具</span>
+            <strong style="color:var(--warning);">📱 随身可用</strong><br>
+            <span class="text-muted">frp 内网穿透 + 手机浏览器 PWA，出差在外照样遥控家里电脑的 AI</span>
           </div>
         </div>
       </div>
 
       <div class="card card-prereq" id="sec-prereq">
         <h2 style="font-size:17px;">📋 使用前必读：两个前置条件</h2>
-        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中项目是 AI 功能的前置条件：支持添加多个项目，一个都没有时，AI 对话、任务执行、日报生成、知识库浏览会被门禁拦截并提示；数据源、提醒、日志不受影响。</p>
+        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中笔记库（项目）是 AI 功能的前置条件：支持添加多个，一个都没有时，AI 对话、任务执行、日报生成、待办/工作日志提炼会被门禁拦截并提示；数据源、提醒、日志不受影响。</p>
 
         <div class="prereq-item">
           <div class="prereq-number">1</div>
           <div class="prereq-content">
             <strong>配置 AI 对话大模型</strong>
-            <p class="text-muted">所有 AI 对话、工具调用、日报生成都由大模型驱动。进入「设置 → 💬 对话模型配置」，填写接入点信息（接入名称、服务地址、API Key、模型名称），支持 OpenAI 兼容接口（如 DeepSeek、Ollama、LM Studio 等），可配置多个接入，每个接入可包含多个模型。改动自动保存并立即生效，点「测试」可验证连接是否正常。</p>
+            <p class="text-muted">所有 AI 对话、工具调用、日报生成都由大模型驱动。进入「设置 → 💬 对话模型配置」，填写接入点信息（接入名称、服务地址、API Key、模型 ID），支持 OpenAI 兼容接口（如 DeepSeek、硅基流动、Ollama、LM Studio 等），可配置多个接入，每个接入可管理多个模型（上下文窗口、推理模型、是否支持图片等属性可逐个设置）。改动自动保存并立即生效，点「测试」可验证连接是否正常。</p>
           </div>
         </div>
 
         <div class="prereq-item">
           <div class="prereq-number">2</div>
           <div class="prereq-content">
-            <strong>添加项目</strong>
-            <p class="text-muted">进入「设置 → 📁 项目」，点击「➕ 添加项目」选择一个本地文件夹，可添加多个并指定默认项目。添加后即可在「知识库」页浏览文件、在对话与任务中选择目标项目，让 AI 基于你的笔记回答问题、自动保存任务执行结果。综合日报则始终基于全部项目生成。一个项目都没有时，AI 相关入口会提示先添加项目。</p>
+            <strong>添加笔记库（项目）</strong>
+            <p class="text-muted">进入「设置 → 📁 项目」，点击「➕ 添加项目」选择一个本地文件夹作为笔记库，可添加多个并指定默认项目。添加后即可在「笔记」页浏览文件、在对话与任务中选择目标项目，让 AI 基于你的笔记回答问题、自动保存任务执行结果。综合日报则始终基于全部项目生成。待办、工作日志、引擎简报也从笔记库自动提炼。一个笔记库都没有时，AI 相关入口会提示先添加。</p>
           </div>
         </div>
       </div>
 
       <div class="card" id="sec-quickstart">
         <h2>🚀 快速开始</h2>
-        <p class="text-muted mb-2">启航AI工作台是一款桌面应用，将本地笔记知识库、结构化数据、任务提醒、飞书推送和 AI 智能体整合成一套完整的工作流。所有数据保存在本机，模型自由选择。</p>
+        <p class="text-muted mb-2">启航AI工作台是一款桌面应用，将本地笔记库、AI 编码工具会话采集、任务执行、飞书推送和 AI 智能体整合成一套完整的工作流。所有数据保存在本机，模型自由选择。</p>
         <ol style="margin:8px 0;padding-left:20px;font-size:13px;line-height:1.8;">
           <li>完成上方两个前置条件配置</li>
-          <li>在「对话」页开始与 AI 对话（支持图片粘贴/上传、切换模型），在「概览」页查看综合看板</li>
+          <li>在「今天」页查看引擎简报、AI 工具动态与工作日志，用「问雷达」向已采集的 AI 会话提问</li>
+          <li>在「对话」页开始与 AI 对话（支持图片粘贴/上传、切换模型），左侧面板管理会话列表</li>
           <li>在「任务」页创建定时/循环任务，让 AI 定期自动执行（也可交由飞书 Bot 下发指令）</li>
-          <li>在「数据源」页接入外部 MCP 数据源（可选）：AI 对话即可查询外部系统的业务数据，页面内可浏览数据、跑 AI 分类</li>
-          <li>在「工具箱」页使用演示生成、周报日报、思维导图、抓取等 AI 工具</li>
-          <li>在「设置」页配置飞书集成、日报、数据备份等高级功能</li>
+          <li>在「数据源」页接入外部 MCP 数据源（可选）：AI 对话即可查询外部系统的业务数据</li>
+          <li>在「待办」页管理待办清单与定时提醒，在「笔记」页浏览笔记库</li>
+          <li>在「设置」页配置飞书集成、审批通道、移动端、雷达采集、数据备份等高级功能</li>
         </ol>
       </div>
 
       <div class="card" id="sec-nav">
         <h2>🧭 页面导航</h2>
+        <p class="text-muted mb-2">侧栏为 64px 图标栏，图标上、小字下，悬停即见名称：</p>
         <table class="help-table">
           <thead><tr><th>菜单</th><th>说明</th></tr></thead>
           <tbody>
-          <tr><td>📊 概览</td><td>综合看板：统计卡片（项目、待办、提醒、对话）、综合日报、待办列表、提醒列表；点击「项目」卡片进入知识库浏览</td></tr>
-          <tr><td>💬 对话</td><td>对话工作台，支持多轮对话、图片识别、模型切换；可查询 MCP 数据源、检索项目、联网搜索，引用外部数据时注明来源</td></tr>
-          <tr><td>📋 任务</td><td>任务中心，管理挂在项目下的定时/循环任务，支持立即执行、指定时间、周期循环</td></tr>
+          <tr><td>📅 今天</td><td>每日工作台：引擎简报、AI 工具动态（雷达已并入）、最近活动、等你处理、工作日志、最近活跃会话；运行中的 AI 会话数徽标挂在此入口</td></tr>
+          <tr><td>💬 对话</td><td>对话工作台：会话列表内嵌在页面左侧（可折叠），支持多轮对话、图片识别、模型切换、新建对话独立页</td></tr>
+          <tr><td>📈 任务</td><td>任务中心，管理挂在项目下的定时/循环任务，支持立即执行、指定时间、周期循环，任务详情含对话记录与执行记录</td></tr>
           <tr><td>🔌 数据源</td><td>接入外部 MCP server（Streamable HTTP）：配置/连接测试、业务域数据浏览、AI 分类打标、「让 AI 分析」直达对话</td></tr>
-          <tr><td>🔔 提醒</td><td>定时提醒统一管理，支持每日/每周/每月/每年/一次性，系统通知 + 飞书推送</td></tr>
-          <tr><td>🔧 工具箱（beta）</td><td>AI 内容生成工具集：演示、周报/日报、思维导图、文案、网站抓取、图片生成</td></tr>
-          <tr><td>⚙️ 设置</td><td>系统配置：项目、对话模型、飞书、数据备份、日报等</td></tr>
-          <tr><td>📋 日志</td><td>操作日志查看，支持级别过滤、文件切换、自动刷新</td></tr>
-          <tr><td>❓ 帮助</td><td>使用指南（当前页面）</td></tr>
+          <tr><td>✅ 待办</td><td>本地待办清单（逾期/今日/即将到来分组）+ 定时提醒（每日/每周/每月/每年/一次性），系统通知 + 飞书推送</td></tr>
+          <tr><td>📚 笔记</td><td>笔记库：目录树浏览项目文件、Markdown 渲染预览、文件名关键词搜索</td></tr>
+          <tr><td>✨ 技能（beta）</td><td>AI 内容生成工具集：演示、周报/日报、思维导图、文案、网站抓取、图片生成</td></tr>
+          <tr><td>⚙️ 设置</td><td>系统配置：项目、对话模型、飞书、审批通道、移动端、雷达采集、数据备份等</td></tr>
+          <tr><td>🖥️ 日志</td><td>运行日志查看，支持级别过滤、文件切换、自动刷新</td></tr>
+          <tr><td>❓ 帮助</td><td>使用指南（当前页面，入口在顶栏右侧）</td></tr>
           </tbody>
         </table>
+        <p class="text-muted" style="margin-top:8px;">今天页的二级页面：「问雷达」（向采集的会话提问）、「会话详情」（查看单条会话完整消息流）、「会话档案」（全部采集会话的筛选与搜索）。</p>
+      </div>
+
+      <div class="card" id="sec-radar">
+        <h2>📡 今天页与雷达（AI 会话观测）</h2>
+        <p class="text-muted mb-2">雷达已并入「今天」页，作为其中的 AI 工具动态区域。雷达自动采集本机常用的 AI 编码工具会话（Trae、Qoder、Claude Code、Codex、pi、DSH 等），无需任何手动操作，采集到的会话成为「问雷达」和会话档案的数据基础。</p>
+        <table class="help-table">
+          <thead><tr><th>板块</th><th>说明</th></tr></thead>
+          <tbody>
+          <tr><td>📜 引擎简报</td><td>由笔记库与任务数据自动汇编的当日简报</td></tr>
+          <tr><td>🤖 AI 工具动态</td><td>左右两栏：左侧为各 AI 工具的会话统计卡片（一行 2 个），右侧为最近活动；同一会话的连续运行事件自动合并为带持续时长的时段条目，运行中的会话标注「运行中」</td></tr>
+          <tr><td>🫵 等你处理</td><td>笔记提炼的待处理事项 + 本地待办汇总；与工作日志一行两列并排，窄窗口自动回落单列</td></tr>
+          <tr><td>📔 工作日志</td><td>笔记库最近更新的文档流（含日期日志与普通文档），按修改时间倒序，点击直接跳进笔记页对应文件</td></tr>
+          <tr><td>🗂️ 最近活跃会话</td><td>最近采集的 AI 会话列表，点标题右侧「查看全部」进入会话档案</td></tr>
+          <tr><td>🔍 问雷达</td><td>基于全部已采集会话的智能问答：输入问题（如「上周我为支付模块做过哪些改动」），AI 检索相关会话片段后汇总作答并标注来源；支持选择大模型；点击来源可跳转对应会话详情</td></tr>
+          <tr><td>📄 会话档案</td><td>全部采集会话的独立页（/radar/all）：按工具筛选、全文搜索（标题命中优先、正文相关度次之）、每页 50 条分页浏览</td></tr>
+          <tr><td>💬 会话详情</td><td>单条会话的完整消息流：白纸面板通高排版、连续助手消息自动合并、思考过程与工具调用默认折叠、支持插入对话（追问）；顶部纯箭头返回，默认定位到最新消息</td></tr>
+          <tr><td>🔔 通知栈</td><td>今天页右上角浮动通知：回合完成/失败、待审批三类事件实时推送；待审批可就地「允许一次/拒绝」或输入追问，完成的通知 30 秒自动消退</td></tr>
+          </tbody>
+        </table>
+        <p class="text-muted" style="margin-top:8px;">采集行为在「设置 → 雷达采集」中调整：对话入库间隔、状态探针间隔、排除目录。未开启雷达或无数据时，「问雷达」会直接给出换词建议，不调用 AI。</p>
       </div>
 
       <div class="card" id="sec-chat">
         <h2>💬 AI 对话</h2>
-        <p class="text-muted mb-2">本地 AI 助理，支持多轮对话、图片上传/粘贴、图片理解、模型切换（切换当前接入下的不同模型）。</p>
+        <p class="text-muted mb-2">本地 AI 助理，支持多轮对话、图片上传/粘贴、图片理解、模型切换。会话列表内嵌在对话页左侧（可折叠，折叠状态会记住），新建对话走独立页面。</p>
         <table class="help-table">
           <thead><tr><th>能力</th><th>说明</th></tr></thead>
           <tbody>
           <tr><td>💬 日常问答</td><td>通用对话，无需绑定项目即可提问</td></tr>
-          <tr><td>📚 知识库检索</td><td>添加项目并在对话左上角选择项目后，AI 会自己到该项目目录里搜、读笔记并回答</td></tr>
+          <tr><td>📚 知识库检索</td><td>添加笔记库并在对话中选择项目后，AI 会自己到该项目目录里搜、读笔记并回答</td></tr>
           <tr><td>🔌 MCP 数据源查询</td><td>已接入数据源（「数据源」页配置）的业务数据，AI 直接调用对应工具查询并在回答中注明来源</td></tr>
-          <tr><td>📁 笔记读写</td><td>在项目目录中浏览、新建、编辑 Markdown 文件</td></tr>
-          <tr><td>🌐 联网搜索</td><td>网页搜索与抓取，实时信息补充回答</td></tr>
+          <tr><td>📁 笔记读写</td><td>在笔记库目录中浏览、新建、编辑 Markdown 文件</td></tr>
+          <tr><td>🌐 联网搜索</td><td>网页搜索与抓取，实时信息补充回答（搜索通道在设置页配置）</td></tr>
           <tr><td>🖼️ 图片识别</td><td>支持粘贴或上传图片，AI 自动识别内容</td></tr>
+          <tr><td>🔀 会话管理</td><td>左侧面板新建/切换/折叠会话列表；会话列表同时覆盖桌面对话、飞书、手机端三个来源，自动刷新</td></tr>
           </tbody>
         </table>
         <p class="text-muted" style="margin-top:8px;">对话模型在「设置 → 💬 对话模型配置」中增减配置，维护多条接入后可在输入框上方切换模型。</p>
       </div>
 
-      <div class="card" id="sec-kb">
-        <h2>📚 知识库与概览</h2>
-        <p class="text-muted mb-2">「概览」为左侧栏独立菜单；知识库从概览页的「📚 项目」卡片进入。</p>
-        <ul>
-          <li><strong>📚 知识库</strong> — 左侧目录树浏览项目文件（顶部可切换项目），右侧预览 Markdown 渲染内容，支持文件名关键词搜索，也可让 AI 基于它们回答问题</li>
-          <li><strong>📊 概览</strong> — 综合看板：统计卡片（项目、待办、提醒、对话、今日数据）、综合日报、待办列表、提醒列表、待处理记录；一个项目都没有时「综合日报」区域会提示先添加</li>
-        </ul>
-      </div>
-
       <div class="card" id="sec-tasks">
-        <h2>📋 任务中心</h2>
-        <p class="text-muted mb-2">任务中心在左侧栏「任务」页，管理挂在项目下的任务（每个任务需选择所属项目，执行基于该项目）：</p>
+        <h2>📈 任务中心</h2>
+        <p class="text-muted mb-2">任务中心在侧栏「任务」页，管理挂在项目下的任务（每个任务需选择所属项目，执行基于该项目）：</p>
         <table class="help-table">
           <thead><tr><th>能力</th><th>说明</th></tr></thead>
           <tbody>
           <tr><td>📚 笔记任务</td><td>挂在某个项目下的任务：让 AI 定时读书、写周报、汇总文档，结果自动保存到该项目目录，可推送到飞书</td></tr>
           <tr><td>📊 综合日报（内置）</td><td>任务页默认内置「生成综合日报」任务：绑定笔记库并开启后，每天定时聚合所有项目生成日报，展示在「今天」页并可推送飞书；日报提示词在该任务的编辑弹窗中修改，任务不可删除、只能暂停</td></tr>
+          <tr><td>🤖 引擎运行时</td><td>任务由本地 AI 引擎执行：优先使用内置 opencode，其次全局安装，均不可用时回落 pi；对话页可按会话切换引擎与模型，仅当前会话生效</td></tr>
           </tbody>
         </table>
-        <p class="text-muted" style="margin-top:8px;">任务触发方式支持：⚡ 立即执行 / ⏰ 指定时间 / 🔁 定时循环（每天/每周/每月/Cron），循环任务可随时「开启/暂停调度」。任务详情可全屏查看，支持「执行记录」回放（每次运行的状态与结果都会留档）。任务完成后结果保存在所属项目的指定相对路径。</p>
+        <p class="text-muted" style="margin-top:8px;">任务触发方式支持：⚡ 立即执行 / ⏰ 指定时间 / 🔁 定时循环（每天/每周/每月/Cron），循环任务可随时「开启/暂停调度」。任务详情可全屏查看，含「对话记录」与「执行记录」回放（每次运行的状态与结果都会留档）。任务完成后结果保存在所属项目的指定相对路径。</p>
       </div>
 
       <div class="card" id="sec-data">
@@ -152,24 +169,33 @@
           <li><strong>让 AI 分析</strong> — 一键创建对话并自动发出分析请求，AI 自己拉最新数据、可追问、可存档</li>
           <li><strong>对话直查</strong> — 已接入源的工具进入对话工具面，回答注明数据来源；接入新源只是添加一条配置，无需开发</li>
         </ul>
-        <p class="text-muted" style="margin-top:8px;">原「数据」页的本地数据集已退役（存量数据保留在本地库并已导出至笔记库「数据集存档/」）；外部数据走数据源，个人结构化记录由 AI 直接读写笔记库文件。</p>
       </div>
 
-      <div class="card" id="sec-reminders">
-        <h2>🔔 提醒</h2>
-        <p class="text-muted mb-2">独立提醒页，支持多种频率提醒，触发时发送系统通知；已配置飞书 Webhook 时同步推送消息到飞书群。</p>
+      <div class="card" id="sec-todo">
+        <h2>✅ 待办与提醒</h2>
+        <p class="text-muted mb-2">侧栏「待办」页集中管理需要你动手的事：上半区是待办清单，下半区是定时提醒。待办会同步写入笔记库，并与「今天」页「等你处理」板块联动。</p>
+        <table class="help-table">
+          <thead><tr><th>板块</th><th>说明</th></tr></thead>
+          <tbody>
+          <tr><td>🗒️ 待办清单</td><td>顶部输入框回车快速添加（可选截止日期），按逾期/今日/即将到来自动分组，逾期标红；可标记完成、删除、切换「显示已完成」</td></tr>
+          <tr><td>🔔 定时提醒</td><td>每日（如每天 09:00）/ 每周（选周几）/ 每月（如每月 5 号）/ 每年（纪念日）/ 一次性（指定日期时间）；触发时发系统通知，已配置飞书 Webhook 时同步推送飞书群；每条可开关、可「测试触发」</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" id="sec-notes">
+        <h2>📚 笔记库</h2>
+        <p class="text-muted mb-2">侧栏「笔记」页：左侧目录树浏览笔记库文件（顶部可切换项目），右侧 Markdown 渲染预览，支持文件名关键词搜索。</p>
         <ul>
-          <li><strong>每日</strong> — 每天固定时间触发（如每天 09:00）</li>
-          <li><strong>每周</strong> — 选择周一~周日中若干天触发</li>
-          <li><strong>每月</strong> — 每月某一天触发（如每月 5 号）</li>
-          <li><strong>每年</strong> — 纪念日提醒（如每年 1 月 1 日）</li>
-          <li><strong>一次</strong> — 指定日期时间触发一次</li>
+          <li>笔记库是整个工作台的数据底座：待办、工作日志、引擎简报都从笔记库自动提炼</li>
+          <li>AI 对话与任务可直接读写笔记库中的 Markdown 文件，无需建索引</li>
+          <li>「今天」页工作日志条目点击后直接跳转到对应笔记文件</li>
+          <li>任务执行结果默认落盘到所属项目的指定相对路径，在笔记页即可查看</li>
         </ul>
-        <p class="text-muted">每条提醒可开关、可「测试触发」验证通知是否送达。</p>
       </div>
 
       <div class="card" id="sec-tools">
-        <h2>🔧 工具箱（beta）</h2>
+        <h2>✨ 技能（beta）</h2>
         <p class="text-muted mb-2">AI 内容工具集，每个工具都有「生成 / 历史」两个 Tab，历史记录可复制、导出、删除。</p>
         <table class="help-table">
           <thead><tr><th>工具</th><th>说明</th></tr></thead>
@@ -190,17 +216,41 @@
         <table class="help-table">
           <thead><tr><th>配置项</th><th>说明</th></tr></thead>
           <tbody>
-          <tr><td>📁 项目</td><td>统一管理：添加/重命名/换目录/删除项目，指定默认项目；AI 直接读取项目目录里的 Markdown 文件作答，无需建索引；飞书对话与任务归档固定使用默认项目，桌面对话与任务可逐条选择项目</td></tr>
-          <tr><td>💬 对话模型配置</td><td>新增/编辑多个模型接入点（名称、服务地址、API Key、模型列表），内置 DeepSeek、硅基流动、Ollama、自定义等快捷模板，支持连接测试</td></tr>
+          <tr><td>📁 项目</td><td>统一管理笔记库：添加/重命名/换目录/删除项目，指定默认项目；AI 直接读取项目目录里的 Markdown 文件作答，无需建索引；飞书对话与任务归档固定使用默认项目，桌面对话与任务可逐条选择项目</td></tr>
+          <tr><td>💬 对话模型配置</td><td>新增/编辑多个模型接入点（名称、服务地址、API Key、模型列表），内置 DeepSeek、硅基流动、Ollama、自定义等快捷模板，模型可逐个设置上下文窗口/推理/图片能力，支持连接测试</td></tr>
+          <tr><td>🔍 搜索通道</td><td>AI 联网搜索使用的通道与 API Key（选填）</td></tr>
           <tr><td>🔗 飞书 Webhook</td><td>消息推送 URL，用于发送日报和提醒到飞书群（仅发送）</td></tr>
           <tr><td>📩 飞书 Bot</td><td>App ID / Secret，WebSocket 长连接接收消息，可在飞书内直接对话、下发任务；卡片按钮选项目见下方「📩 飞书卡片交互」</td></tr>
-          <tr><td>💾 数据备份与恢复</td><td>一键备份、每日自动备份（保留 N 份）、从备份文件恢复</td></tr>
+          <tr><td>🛡️ 审批通道</td><td>飞书审批卡接收会话 chat_id、本地审批服务端口（默认 8790）、DSH / claude 路径、pi 终端审批扩展部署状态；详见下方「🛡️ 飞书审批通道」</td></tr>
+          <tr><td>📱 移动端</td><td>移动网关端口（默认 8791）、frpc 程序与配置路径、随 App 启动；详见下方「📱 手机访问（frp）」</td></tr>
+          <tr><td>📡 雷达采集</td><td>对话入库间隔、状态探针间隔、排除目录（逗号分隔前缀匹配）</td></tr>
+          <tr><td>💾 数据备份与恢复</td><td>一键备份、每日自动备份（保留 N 份）、从备份文件恢复；备份目录建议选其他盘符</td></tr>
           </tbody>
         </table>
       </div>
 
+      <div class="card" id="sec-approval">
+        <h2>🛡️ 飞书审批通道</h2>
+        <p class="text-muted mb-2">针对外部 AI 工具会话的「拦截通道」：当 Claude Code / pi / DSH 要执行敏感操作（如写文件、跑命令）时，推送飞书审批卡，你在手机上就能放行或拒绝；任务回合完成、失败也会实时通知到飞书。</p>
+        <table class="help-table">
+          <thead><tr><th>通道</th><th>说明</th></tr></thead>
+          <tbody>
+          <tr><td>Claude Code</td><td>通过本地 HTTP hook（127.0.0.1:8790）拦截工具调用，仅 CLI 会话生效（App 内会话走原生弹框）；hook 覆盖全部工具</td></tr>
+          <tr><td>pi</td><td>通过 pi 扩展（pi-approver-gate）实现，随审批通道启动自动部署；<b>默认完全关闭拦截</b>（工具调用零拦截，与工作台是否启动完全无关），仅保留回合完成/失败通知与追问能力，显式开启后才拦截</td></tr>
+          <tr><td>DSH</td><td>通过 ACP 反向请求拦截，DSH 桌面端默认安装路径已内置</td></tr>
+          </tbody>
+        </table>
+        <ul style="margin:8px 0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>审批卡可就地操作：允许一次 / 拒绝 / 允许本会话；也可在卡片输入框输入内容点「💬 接着问」继续对话（30 秒快速追问窗口，配置为 0 才关闭）</li>
+          <li>人工决策<b>不设超时</b>，一直挂起等你处理；会话死亡按拒绝收口；挂起超 60 分钟自动过期</li>
+          <li>任务回合收口三路通知：飞书任务卡片 + 桌面系统通知 + 今天页通知栈（失败任务会明确标注，不会假报「任务完成」）</li>
+          <li>「接着问」会注入原终端会话触发新回合：pi/DSH 需终端保持打开，Claude Code 仅 30 秒窗口内可用</li>
+          <li>审计日志落 <code>~/.qihang-ai-desktop/approval/history.jsonl</code></li>
+        </ul>
+      </div>
+
       <div class="card" id="sec-feishu-card">
-        <h2>📩 飞书卡片交互</h2>
+        <h2>📩 飞书卡片交互（Bot 派活）</h2>
         <p class="text-muted mb-2">配置飞书 Bot 后，机器人通过交互卡片与你确认每条消息落在哪个项目，再执行。核心策略：<strong>每条消息先确认落点，再执行</strong>——即使会话之前选过项目，也会作为默认选项让你再确认一次，绝不静默落错项目。</p>
 
         <p style="font-weight:600;margin:10px 0 6px;font-size:13px;">三种卡片</p>
@@ -283,11 +333,12 @@ remotePort = 18791</pre>
           <li>状态区显示「运行中 + PID」即成功；关闭 App 会一并关闭 frpc</li>
           <li>点「生成配对码」，手机访问 <code>http://公网IP:18791/</code> 输入 6 位配对码（5 分钟有效、一次性）</li>
         </ol>
+        <p class="text-muted" style="margin-top:8px;">手机端是独立的移动界面：新建对话选项目/模型、会话列表带项目标签、SSE 实时流式回答；长期使用建议域名 + HTTPS（nginx 反代，SSE 需关闭 proxy_buffering）。</p>
 
         <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">五、安全建议</p>
         <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
           <li><code>frpc.toml</code> 是本机私密配置，不要提交到代码仓库（文档中的 token 均为占位符）</li>
-          <li>公网 <code>18791</code> 适合联调期，长期建议域名 + HTTPS（nginx 反代到 18791）后关闭公网端口</li>
+          <li>公网 <code>18791</code> 适合联调期，长期建议域名 + HTTPS（nginx 反代到 18791）后关闭公网端口，最终仅开放 443 / 80 / 7000</li>
           <li>更换/丢失手机：清空 <code>~/.qihang-ai-desktop/mobile-devices.json</code> 撤销全部设备，再重新配对</li>
         </ul>
 
@@ -305,7 +356,7 @@ remotePort = 18791</pre>
       </div>
 
       <div class="card" id="sec-log">
-        <h2>📋 日志</h2>
+        <h2>🖥️ 日志</h2>
         <p class="text-muted mb-2">查看应用运行日志，用于排查问题。</p>
         <ul>
           <li><strong>级别过滤</strong> — 全部级别 / ERROR / WARN / INFO / DEBUG</li>
@@ -320,14 +371,19 @@ remotePort = 18791</pre>
         <table class="help-table">
           <thead><tr><th>问题</th><th>原因</th><th>解决</th></tr></thead>
           <tbody>
-          <tr><td>对话为空或超时</td><td>对话模型未配置或配置有误</td><td>在「设置 → 💬 对话模型配置」填写服务地址、API Key 和模型名称，并点「测试」验证</td></tr>
-          <tr><td>AI 答非所问，没有用到笔记</td><td>项目未添加或所选项目内容较少</td><td>在「设置 → 📁 项目」添加包含 Markdown 文件的文件夹，或在对话左上角切换项目后重新提问</td></tr>
+          <tr><td>对话为空或超时</td><td>对话模型未配置或配置有误</td><td>在「设置 → 💬 对话模型配置」填写服务地址、API Key 和模型 ID，并点「测试」验证</td></tr>
+          <tr><td>AI 答非所问，没有用到笔记</td><td>笔记库未添加或所选项目内容较少</td><td>在「设置 → 📁 项目」添加包含 Markdown 文件的文件夹，或在对话左上角切换项目后重新提问</td></tr>
           <tr><td>模型下拉是空的/不可用</td><td>接入点没有可用模型</td><td>到「设置 → 💬 对话模型配置」为接入添加模型 ID（管理模型）并测试连接</td></tr>
+          <tr><td>问雷达答非所问或无结果</td><td>雷达未采集到会话，或关键词太泛</td><td>确认今天页 AI 工具动态里已有该工具的会话；换更具体的关键词（工具名、功能名）重试；采集配置见「设置 → 雷达采集」</td></tr>
+          <tr><td>某个 AI 工具的会话没被采集</td><td>该工具在本机无会话数据，或目录被排除</td><td>先在该工具里正常使用一轮对话，等待下一轮自动采集（约 1-2 分钟）；检查排除目录配置是否误伤</td></tr>
+          <tr><td>飞书审批卡不弹 / 收不到</td><td>审批通道未开启，或机器人不在配置的群里</td><td>确认「设置 → 审批通道」已启用，chat_id 对应的群里已加入机器人；点「测试」验证</td></tr>
+          <tr><td>审批卡提示「审批服务不可用」</td><td>审批服务端口被占用或未启动</td><td>检查 8790 端口是否被旧进程占用，重启应用；pi 默认零拦截，不影响 pi 正常使用</td></tr>
+          <tr><td>追问提交了但 pi 终端没收到</td><td>终端里的 pi 未加载新版扩展或终端已关闭</td><td>pi CLI 终端退出重进以加载扩展；终端需保持打开，追问暂存 10 分钟内有效</td></tr>
           <tr><td>飞书消息收不到</td><td>Webhook 或 Bot 配置有误</td><td>在设置页检查飞书配置，点「测试」验证</td></tr>
           <tr><td>飞书卡片按钮点了没反应</td><td>飞书后台未订阅「卡片回传交互」回调</td><td>按上方「📩 飞书卡片交互」的开通步骤，在「回调配置」订阅 <code>card.action.trigger</code>（长连接）并发布生效；或直接回复序号 /「/项目 名称」</td></tr>
           <tr><td>点卡片按钮提示"目标回调服务超时未响应"</td><td>旧版本应用把任务执行等在了回调里，超过飞书 3 秒响应时限</td><td>升级/重启本应用后重试；该报错不代表任务没执行——出现「已接单」即已派活，结果卡片会稍后送达</td></tr>
           <tr><td>任务没有按计划执行</td><td>任务触发方式或时间设置不对</td><td>到「任务」页检查任务的触发方式（立即/指定时间/定时循环）与最近执行记录</td></tr>
-          <tr><td>提醒没弹出</td><td>提醒未启用或时间/日期不对</td><td>到「提醒」页检查开关状态，点「测试触发」验证通知</td></tr>
+          <tr><td>提醒没弹出</td><td>提醒未启用或时间/日期不对</td><td>到「待办」页检查提醒开关状态，点「测试触发」验证通知</td></tr>
           <tr><td>可以完全离线使用吗</td><td>—</td><td>可以。对话模型配置为 Ollama 本地模型即可完全离线</td></tr>
           <tr><td>提示"模型连接失败"</td><td>模型配置有误或 Ollama 未启动</td><td>到「设置 → 💬 对话模型配置」检查服务地址、模型名称并点「测试」；Ollama 需先 <code>ollama pull</code> 模型并确保服务运行</td></tr>
           <tr><td>数据会丢失吗</td><td>—</td><td>数据保存在本机数据库，正常退出不丢失；可在「设置 → 数据备份与恢复」一键备份、每日自动备份（保留 N 份）或从备份恢复</td></tr>
@@ -338,8 +394,9 @@ remotePort = 18791</pre>
       <div class="card" id="sec-privacy">
         <h2>🔒 数据与隐私</h2>
         <ul>
-          <li>数据保存在本机数据库（<code>~/.qihang-ai-desktop/qihang-ai-desktop.db</code>）与你的笔记文件夹中，不上传任何云端</li>
+          <li>数据保存在本机数据库（<code>~/.qihang-ai-desktop/qihang-ai-desktop.db</code>）与你的笔记库文件夹中，不上传任何云端</li>
           <li>对话内容默认会发送给你配置的模型服务商（DeepSeek 等）用于生成回复</li>
+          <li>雷达采集的 AI 工具会话只读取本机工具的本地数据目录，仅在设备上留存</li>
           <li>如需<strong>完全离线</strong>：使用 Ollama 作为对话模型即可（除软件自动更新外无任何网络请求）</li>
           <li>「设置 → 数据备份与恢复」支持一键备份、每日自动备份（保留 N 份）与一键恢复</li>
         </ul>
@@ -362,16 +419,18 @@ const sections = [
   { id: 'sec-prereq', icon: '📋', label: '使用前必读' },
   { id: 'sec-quickstart', icon: '🚀', label: '快速开始' },
   { id: 'sec-nav', icon: '🧭', label: '页面导航' },
+  { id: 'sec-radar', icon: '📡', label: '今天页与雷达' },
   { id: 'sec-chat', icon: '💬', label: 'AI 对话' },
-  { id: 'sec-kb', icon: '📚', label: '知识库与概览' },
-  { id: 'sec-tasks', icon: '📋', label: '任务中心' },
-  { id: 'sec-data', icon: '🗃️', label: '数据' },
-  { id: 'sec-reminders', icon: '🔔', label: '提醒' },
-  { id: 'sec-tools', icon: '🔧', label: '工具箱' },
+  { id: 'sec-tasks', icon: '📈', label: '任务中心' },
+  { id: 'sec-data', icon: '🔌', label: '数据源' },
+  { id: 'sec-todo', icon: '✅', label: '待办与提醒' },
+  { id: 'sec-notes', icon: '📚', label: '笔记库' },
+  { id: 'sec-tools', icon: '🎨', label: '技能' },
   { id: 'sec-config', icon: '⚙️', label: '系统配置' },
+  { id: 'sec-approval', icon: '🛡️', label: '飞书审批通道' },
   { id: 'sec-feishu-card', icon: '📩', label: '飞书卡片交互' },
   { id: 'sec-mobile', icon: '📱', label: '手机访问（frp）' },
-  { id: 'sec-log', icon: '📋', label: '日志' },
+  { id: 'sec-log', icon: '🖥️', label: '日志' },
   { id: 'sec-faq', icon: '❓', label: '常见问题' },
   { id: 'sec-privacy', icon: '🔒', label: '数据与隐私' },
 ];

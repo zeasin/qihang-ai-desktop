@@ -2347,8 +2347,11 @@ app.whenReady().then(async () => {
   if (agentRadar.isEnabled()) {
     agentRadar.start().catch((e) => logger.error('[Radar] auto start failed: %s', e?.message || e));
   }
-  // 审批事件（桌面待审批面板）：审批挂起/决策时实时刷新列表
-  approver.onApprovalEvent((e) => sendToRenderer('approver:event', e));
+  // 审批事件（桌面待审批面板）：审批挂起/决策时实时刷新列表；同步广播给在线手机（H5 顶部横幅）
+  approver.onApprovalEvent((e) => {
+    sendToRenderer('approver:event', e);
+    broadcastMobileEvent('approver:event', e);
+  });
   startupElapsed('services started');
 
   // 移动端本机网关：默认关，设置页开启后随启动自启

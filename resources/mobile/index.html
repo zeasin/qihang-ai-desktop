@@ -86,6 +86,45 @@
   .tab-item.active { color: #2563eb; font-weight: 600; }
   .tab-item:active { background: #f8fafc; }
 
+  /* 对话 Tab 未读角标 */
+  .tab-item { position: relative; }
+  .tab-badge {
+    position: absolute; top: 7px; left: calc(50% + 6px); z-index: 2;
+    min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px;
+    background: #dc2626; color: #fff; font-size: 10px; line-height: 16px;
+    font-weight: 600; text-align: center;
+  }
+  .tab-badge.hidden { display: none; }
+
+  /* 顶部实时通知横幅（回合收口/失败/待审批） */
+  .notice-stack {
+    position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 10px; right: 10px; z-index: 60;
+    display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+  }
+  .notice {
+    pointer-events: auto; display: flex; gap: 10px; align-items: flex-start;
+    background: #fff; border-radius: 12px; padding: 10px 12px;
+    border-left: 4px solid #2563eb; box-shadow: 0 6px 20px rgba(15, 23, 42, .18);
+    animation: noticeIn .2s ease-out; overflow: hidden;
+  }
+  .notice.ok { border-left-color: #16a34a; }
+  .notice.err { border-left-color: #dc2626; }
+  .notice.appr { border-left-color: #d97706; }
+  .notice .n-ico { font-size: 16px; line-height: 20px; flex-shrink: 0; }
+  .notice .n-body { flex: 1; min-width: 0; }
+  .notice .n-title { font-size: 13px; font-weight: 600; color: #111827; }
+  .notice .n-brief {
+    font-size: 12px; color: #6b7280; margin-top: 2px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .notice .n-close {
+    border: 0; background: transparent; color: #9ca3af; font-size: 15px;
+    padding: 2px 4px; flex-shrink: 0;
+  }
+  .notice.out { animation: noticeOut .18s ease-in forwards; }
+  @keyframes noticeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  @keyframes noticeOut { to { opacity: 0; transform: translateY(-8px); } }
+
   /* Android app 内嵌模式（?app=1）：app 自带顶栏，H5 隐藏黑栏，返回改为悬浮钮 */
   body.app-mode .topbar { display: none; }
   body.app-mode #messages { padding-top: 58px; }
@@ -498,8 +537,10 @@
 </div>
 
 <!-- 底部常驻导航：仅会话列表/笔记库两个主屏显示（show() 控制），聊天/新建/配对页隐藏 -->
+<!-- 实时通知横幅栈 -->
+<div id="noticeStack" class="notice-stack"></div>
 <nav id="tabBar" class="tab-bar hidden">
-  <button id="tabList" class="tab-item active" type="button"><span class="tab-ico">💬</span>对话</button>
+  <button id="tabList" class="tab-item active" type="button"><span class="tab-ico">💬</span><span id="tabListBadge" class="tab-badge hidden">0</span>对话</button>
   <button id="tabNotes" class="tab-item" type="button"><span class="tab-ico">📁</span>笔记</button>
 </nav>
 
@@ -547,6 +588,7 @@
     sessionsLoadingMore: false,
     sessionsRefreshing: false,
     current: '',
+    unread: 0,
     currentModel: '',
     messages: [],
     streaming: false,
@@ -603,6 +645,8 @@
   var readerTitle = document.getElementById('readerTitle');
   var readerCloseBtn = document.getElementById('readerCloseBtn');
   var readerToggleBtn = document.getElementById('readerToggleBtn');
+  var noticeStack = document.getElementById('noticeStack');
+  var tabListBadge = document.getElementById('tabListBadge');
 
   // ---------- Markdown ----------
   function escHtml(s) {
@@ -695,6 +739,11 @@
     tabBar.classList.toggle('hidden', !onRoot);
     tabList.classList.toggle('active', view === listView);
     tabNotes.classList.toggle('active', view === notesView);
+    // 回到对话列表视为已读：清掉未读角标
+    if (view === listView && state.unread) {
+      state.unread = 0;
+      renderTabBadge();
+    }
   }
 
   // 进入聊天/新建页时压一条浏览器历史：Android app 返回手势/按键触发 webView.goBack()
@@ -1675,33 +1724,126 @@
     onEvent(event, payload);
   }
 
-  function onEvent(event, data) {
-    var sid = String(data && data.sessionId || '');
-    if (!sid || sid !== state.current) return;
+  // ---------- 实时通知横幅 ----------
+  // 非当前会话的回合收口/失败、外部 agent 的待审批与任务收口，弹顶部横幅提醒。
+  // 成功类 8 秒自动消退；失败/待审批常驻，点 ✕ 关闭（待审批在 approval.decided 到达时自动收）。
+  function sessionTitleOf(sid) {
+    for (var i = 0; i < state.sessions.length; i++) {
+      if (String(state.sessions[i].id) === String(sid)) return state.sessions[i].title || '未命名对话';
+    }
+    return '新对话';
+  }
+  function dirName(cwd) {
+    return String(cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd || '?';
+  }
+  function renderTabBadge() {
+    tabListBadge.textContent = state.unread > 99 ? '99+' : String(state.unread);
+    tabListBadge.classList.toggle('hidden', state.unread <= 0);
+  }
+  function markUnread() {
+    // 只有不在对话列表页时才累积角标（列表页用户直接看得到横幅）
+    if (!listView.classList.contains('active')) {
+      state.unread += 1;
+      renderTabBadge();
+    }
+  }
+  var NOTICE_MAX = 3;
+  function pushNotice(opts) {
+    if (opts.id && noticeStack.querySelector('[data-id="' + opts.id + '"]')) return;
+    var el = document.createElement('div');
+    el.className = 'notice ' + (opts.kind || 'ok');
+    if (opts.id) el.setAttribute('data-id', opts.id);
+    el.innerHTML = '<div class="n-ico">' + opts.icon + '</div>'
+      + '<div class="n-body"><div class="n-title">' + escHtml(opts.title) + '</div>'
+      + (opts.brief ? '<div class="n-brief">' + escHtml(opts.brief) + '</div>' : '')
+      + '</div><button class="n-close" type="button">✕</button>';
+    el.querySelector('.n-close').addEventListener('click', function () { removeNotice(el); });
+    noticeStack.appendChild(el);
+    while (noticeStack.children.length > NOTICE_MAX) removeNotice(noticeStack.firstElementChild);
+    if (!opts.sticky) setTimeout(function () { removeNotice(el); }, 8000);
+  }
+  function removeNotice(el) {
+    if (!el || !el.parentNode) return;
+    el.classList.add('out');
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 180);
+  }
 
-    if (event === 'chat:delta') {
-      appendText(String(data.text || ''));
-      statusEl.textContent = '';
-    } else if (event === 'chat:thinking') {
-      appendThinking(String(data.text || ''));
-    } else if (event === 'chat:tool') {
-      showTool(data);
-    } else if (event === 'chat:status') {
-      statusEl.textContent = String(data.text || '');
-    } else if (event === 'chat:done') {
-      state.streaming = false;
-      statusEl.textContent = '';
-      finalizeLive();
-      updateSendState();
-      loadMessages();
-      loadSessions();
+  // 外部 agent 审批通道事件（与桌面今天页通知栈同源：approval.required / approval.decided / task-done）
+  function onApproverEvent(e) {
+    if (e && e.type === 'approval.required' && e.request) {
+      var req = e.request;
+      pushNotice({
+        id: 'ap-' + req.id,
+        kind: 'appr',
+        icon: '🛡️',
+        title: '待审批 · ' + (req.tool || '') + '（' + (req.agent || '') + '）',
+        brief: req.inputSummary || '请在电脑端或飞书卡片中处理',
+        sticky: true
+      });
+    } else if (e && e.type === 'approval.decided') {
+      var apId = e.request && e.request.id;
+      if (apId) removeNotice(noticeStack.querySelector('[data-id="ap-' + apId + '"]'));
+    } else if (e && e.type === 'task-done' && e.report) {
+      var r = e.report;
+      var ok = r.ok !== false;
+      pushNotice({
+        kind: ok ? 'ok' : 'err',
+        icon: ok ? '✅' : '❌',
+        title: (ok ? '任务完成' : '任务失败') + ' · ' + dirName(r.cwd) + '（' + (r.agent || '') + '）',
+        brief: String(ok ? (r.task || '') : (r.error || r.task || '')).replace(/\s+/g, ' ').trim().slice(0, 120),
+        sticky: !ok
+      });
+      if (!ok) markUnread();
+    }
+  }
+
+  function onEvent(event, data) {
+    if (event === 'approver:event') return onApproverEvent(data);
+
+    var sid = String(data && data.sessionId || '');
+    if (!sid) return;
+
+    // 当前会话：流式事件由对话页自己渲染（原有逻辑）
+    if (sid === state.current) {
+      if (event === 'chat:delta') {
+        appendText(String(data.text || ''));
+        statusEl.textContent = '';
+      } else if (event === 'chat:thinking') {
+        appendThinking(String(data.text || ''));
+      } else if (event === 'chat:tool') {
+        showTool(data);
+      } else if (event === 'chat:status') {
+        statusEl.textContent = String(data.text || '');
+      } else if (event === 'chat:done') {
+        state.streaming = false;
+        statusEl.textContent = '';
+        finalizeLive();
+        updateSendState();
+        loadMessages();
+        loadSessions();
+      } else if (event === 'chat:error') {
+        state.streaming = false;
+        statusEl.textContent = '';
+        finalizeLive();
+        updateSendState();
+        messagesEl.appendChild(bubbleWrap('system', String(data.text || '回答失败')));
+        scrollBottom();
+      }
+      return;
+    }
+
+    // 非当前会话：delta/tool 等中间事件太吵不打扰，只在回合收口时弹横幅
+    if (event === 'chat:done') {
+      pushNotice({ kind: 'ok', icon: '✅', title: 'AI 回答完成 · ' + sessionTitleOf(sid), brief: '' });
+      markUnread();
     } else if (event === 'chat:error') {
-      state.streaming = false;
-      statusEl.textContent = '';
-      finalizeLive();
-      updateSendState();
-      messagesEl.appendChild(bubbleWrap('system', String(data.text || '回答失败')));
-      scrollBottom();
+      pushNotice({
+        kind: 'err', icon: '⚠️',
+        title: '回答失败 · ' + sessionTitleOf(sid),
+        brief: String(data.text || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        sticky: true
+      });
+      markUnread();
     }
   }
 
