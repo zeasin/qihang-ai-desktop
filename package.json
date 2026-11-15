@@ -126,6 +126,10 @@
       {
         "from": "pi-approver-gate/pi-approver-gate.ts",
         "to": "pi-approver-gate.ts"
+      },
+      {
+        "from": "opencode-qihang-gate/qihang-gate.ts",
+        "to": "qihang-gate.ts"
       }
     ],
     "win": {

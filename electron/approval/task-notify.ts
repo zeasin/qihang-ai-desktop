@@ -102,6 +102,48 @@ async function fromClaudeStop(body: any): Promise<TaskReport | null> {
 }
 
 /**
+ * Claude Code StopFailure 钩子：回合**异常终止**（API 429 限流 / 模型不可用 / 网络错误等）。
+ *
+ * 为什么要单独一个事件：Claude Code 把「正常完成」和「异常失败」拆成两个 hook，
+ * 错误回合只发 StopFailure、**不发 Stop**，所以只配 Stop 时 429 之类的失败完全静默。
+ * 载荷（v2.1.312 内置）：{ session_id, transcript_path, cwd, hook_event_name:'StopFailure',
+ *                         error, error_details?, last_assistant_message? }
+ *
+ * 【只做通知】该事件 CLI 不等 hook 返回（实测报错后 1~2 秒即退回提示符），
+ * 因此**不能**用它挂起等追问、也绝不触发任何后台接管——只归一化成一条失败卡。
+ */
+async function fromClaudeStopFailure(body: any): Promise<TaskReport | null> {
+  const sessionId = str(body?.session_id);
+  if (!sessionId) return null;
+  const transcriptPath = str(body?.transcript_path);
+  const tail = await readClaudeTaskTail(transcriptPath);
+  const details = body?.error_details;
+  const detailsText =
+    typeof details === 'string'
+      ? details
+      : details && typeof details === 'object'
+        ? str(details.message) || str(details.error) || JSON.stringify(details).slice(0, 300)
+        : '';
+  const error =
+    str(body?.error) ||
+    detailsText ||
+    tail.error ||
+    detectClaudeErrorText(str(body?.last_assistant_message)) ||
+    '回合异常终止';
+  return {
+    agent: 'claude',
+    sessionId,
+    label: `Claude 外部会话 ${shortId(sessionId)}`,
+    cwd: str(body?.cwd) || tail.cwd,
+    task: tail.task,
+    ok: false,
+    durationMs: tail.durationMs,
+    result: undefined,
+    error,
+  };
+}
+
+/**
  * pi CLI 终端 task-done 上报（pi-approver-gate 扩展在 agent_end 时 POST）：
  * camelCase，sessionId/cwd/task/result 由扩展从 agent_end 的 messages 提取。
  * aborted 属用户主动中止，不通知（与 DSH 一致）。
@@ -125,6 +167,27 @@ function fromPiHook(body: any): TaskReport | null {
 }
 
 /**
+ * OpenCode 回合收口上报（qihang-gate 插件在 session.execution.succeeded/failed 时 POST）：
+ * camelCase，sessionId/cwd/task/result 由插件从事件流还原。
+ */
+function fromOpenCodeHook(body: any): TaskReport | null {
+  const sessionId = str(body?.sessionId);
+  if (!sessionId) return null;
+  const ok = body?.ok !== false;
+  return {
+    agent: 'opencode',
+    sessionId,
+    label: `OpenCode 外部会话 ${shortId(sessionId)}`,
+    cwd: str(body?.cwd),
+    task: str(body?.task),
+    ok,
+    durationMs: num(body?.durationMs),
+    result: str(body?.result) || undefined,
+    error: ok ? undefined : `${str(body?.reason) || 'error'}${str(body?.errorMessage) ? `：${body.errorMessage}` : ''}`,
+  };
+}
+
+/**
  * 钩子请求体归一化：外部 agent 自己跑完一回合后 POST 过来。
  * 字段缺失/来源不认识返回 null，路由按无操作响应，不打断 agent。
  */
@@ -132,6 +195,8 @@ export async function normalizeTaskDone(body: any): Promise<TaskReport | null> {
   if (!body || typeof body !== 'object') return null;
   if (str(body.source).toLowerCase() === 'dsh') return fromDshHook(body);
   if (str(body.source).toLowerCase() === 'pi') return fromPiHook(body);
+  if (str(body.source).toLowerCase() === 'opencode') return fromOpenCodeHook(body);
+  if (str(body.hook_event_name) === 'StopFailure') return fromClaudeStopFailure(body);
   if (str(body.hook_event_name) === 'Stop') return fromClaudeStop(body);
   return null;
 }

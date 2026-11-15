@@ -11,6 +11,7 @@ const AGENT_LABEL: Record<AgentKind, string> = {
   claude: 'Claude',
   dsh: 'DSH',
   pi: 'Pi',
+  opencode: 'OpenCode',
 };
 
 function dirName(cwd: string): string {
@@ -23,9 +24,43 @@ function fence(detail: string): string {
   return `\n**内容**：\n\`\`\`\n${detail.replace(/```/g, '〰〰〰')}\n\`\`\``;
 }
 
+/**
+ * 审批按钮文案。
+ * opencode 的语义与 claude/dsh 不同：opencode 只有 once / always / reject 三种回复，
+ * 其中 always 会**持久保存成项目级放行规则**（不是「本会话」），所以这里单独用词，
+ * 避免用户以为只是临时放行，结果后面同类命令全被免检。
+ */
+const APPROVAL_BUTTONS: Record<AgentKind, { label: string; decision: Decision }[]> = {
+  claude: [
+    { label: '允许一次', decision: 'allow_once' },
+    { label: '本会话放行', decision: 'allow_session' },
+    { label: '拒绝', decision: 'deny' },
+  ],
+  dsh: [
+    { label: '允许一次', decision: 'allow_once' },
+    { label: '本会话放行', decision: 'allow_session' },
+    { label: '拒绝', decision: 'deny' },
+  ],
+  pi: [
+    { label: '允许一次', decision: 'allow_once' },
+    { label: '本会话放行', decision: 'allow_session' },
+    { label: '拒绝', decision: 'deny' },
+  ],
+  opencode: [
+    { label: '允许一次', decision: 'allow_once' },
+    { label: '允许并记住（项目级）', decision: 'allow_session' },
+    { label: '拒绝', decision: 'deny' },
+  ],
+};
+
 /** 审批卡：三按钮（允许一次 / 本会话放行 / 拒绝），点击经 card.action.trigger 回传 value */
 export function buildApprovalCard(req: ApprovalRequest): string {
   const agentLabel = AGENT_LABEL[req.agent] || req.agent;
+  const buttons = APPROVAL_BUTTONS[req.agent] || APPROVAL_BUTTONS.claude;
+  const note =
+    req.agent === 'opencode'
+      ? '决策会回灌到你正在用的 opencode 窗口；「允许并记住」会在该项目里保存放行规则（以后同类命令不再询问）'
+      : '审批在终端原会话内执行；60 分钟无人处理将自动过期';
   return JSON.stringify({
     config: { wide_screen_mode: true },
     header: {
@@ -39,13 +74,14 @@ export function buildApprovalCard(req: ApprovalRequest): string {
       },
       {
         tag: 'action',
-        actions: [
-          { tag: 'button', text: { tag: 'plain_text', content: '允许一次' }, type: 'primary', value: { act: 'approval', approvalId: req.id, decision: 'allow_once' } },
-          { tag: 'button', text: { tag: 'plain_text', content: '本会话放行' }, type: 'primary', value: { act: 'approval', approvalId: req.id, decision: 'allow_session' } },
-          { tag: 'button', text: { tag: 'plain_text', content: '拒绝' }, type: 'danger', value: { act: 'approval', approvalId: req.id, decision: 'deny' } },
-        ],
+        actions: buttons.map((b) => ({
+          tag: 'button',
+          text: { tag: 'plain_text', content: b.label },
+          type: b.decision === 'deny' ? 'danger' : 'primary',
+          value: { act: 'approval', approvalId: req.id, decision: b.decision },
+        })),
       },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: `审批 ${req.id.slice(0, 8)} · 60 分钟无人处理将自动过期` }] },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: note }] },
     ],
   });
 }
@@ -54,7 +90,9 @@ export function buildApprovalCard(req: ApprovalRequest): string {
 export function buildDecidedCard(req: ApprovalRequest): string {
   const agentLabel = AGENT_LABEL[req.agent] || req.agent;
   const approved = req.decision === 'allow_once' || req.decision === 'allow_session';
-  const label = req.decision ? DECISION_LABEL[req.decision] : '已处理';
+  // 终端先答复 → 卡片作废（不是拒绝）
+  const voided = req.decidedBy === 'terminal-answered';
+  const label = voided ? '终端已处理' : req.decision ? DECISION_LABEL[req.decision] : '已处理';
   return JSON.stringify({
     config: { wide_screen_mode: true },
     header: {

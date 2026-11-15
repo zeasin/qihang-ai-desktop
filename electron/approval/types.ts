@@ -4,8 +4,9 @@
  * 托管/附加 Claude Code 与 DSH 会话，承接权限请求并转发飞书审批。
  */
 
-/** claude/dsh 有托管 adapter；pi 只走外部 hook 审批（pi-approver-gate 扩展），无托管 adapter */
-export type AgentKind = 'claude' | 'dsh' | 'pi';
+/** claude/dsh 有托管 adapter；pi 只走外部 hook 审批（pi-approver-gate 扩展），无托管 adapter；
+ *  opencode 走外部插件通道（qihang-gate 插件）：审批 + 回合上报 + 接着问，无托管 adapter */
+export type AgentKind = 'claude' | 'dsh' | 'pi' | 'opencode';
 
 /** 用户决策：允许一次 / 本会话放行 / 拒绝（按拍板：不设超时，无 timeout_allow） */
 export type Decision = 'allow_once' | 'allow_session' | 'deny';

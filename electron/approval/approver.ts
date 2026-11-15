@@ -29,6 +29,10 @@ import { DECISIONS } from './types';
 import type { Decision } from './types';
 import { deployPiGate, piGateTargetDir, PI_GATE_FILENAME } from './pi-gate-deploy';
 import type { PiGateDeployResult } from './pi-gate-deploy';
+import { deployOpenCodeGate, openCodeGateTargetDir, OPENCODE_GATE_FILENAME } from './opencode-gate-deploy';
+import type { OpenCodeGateDeployResult } from './opencode-gate-deploy';
+import { deployClaudeHooks } from './claude-hook-deploy';
+import type { ClaudeHookDeployResult } from './claude-hook-deploy';
 import * as feishu from '../services/feishu';
 import * as appConfig from '../services/app-config';
 import { notify } from '../services/notify';
@@ -46,6 +50,17 @@ const HOOK_WAIT_MS = 540_000;
  */
 const DEFAULT_QUICK_WINDOW_SEC = 30;
 
+/**
+ * 「继续」快速通道窗口（秒）：claudeStop 每轮调用读一次，启动时的 hook 自愈部署也用它
+ * 生成 Stop hook timeout。注意：getConfig 对缺失键返回 ''，Number('') = 0 会被 isFinite
+ * 判为合法值，把「未配置」误当成「显式 0=关闭」。必须用 raw 非空判断区分两者。
+ */
+function quickWindowSec(): number {
+  const raw = String(appConfig.getConfig('approverQuickWindowSec') || '').trim();
+  const cfg = Number(raw);
+  return raw !== '' && Number.isFinite(cfg) && cfg >= 0 ? cfg : DEFAULT_QUICK_WINDOW_SEC;
+}
+
 /** DSH 桌面端默认安装路径（可被 config.dshPath 覆盖） */
 const DEFAULT_DSH_PATH = 'C:/Users/ASUS/AppData/Local/Programs/DeepSeek Harness/resources/runtime/cli/bin/dsh.cmd';
 
@@ -53,8 +68,24 @@ function approvalDataDir(): string {
   return path.join(os.homedir(), '.qihang-ai-desktop', 'approval');
 }
 
-function hookDetail(toolName: string, input: any): string {
-  if (toolName === 'Bash' && typeof input?.command === 'string') return String(input.command).slice(0, 2000);
+/**
+ * 等一次审批决策，最多 waitMs 毫秒。
+ * 超时返回 null（调用方返回空结果，客户端下一轮再来）——
+ * 不能一直挂住：插件侧的 HTTP 客户端有响应体超时（5 分钟），
+ * 人若在飞书上隔几分钟才点「允许」，长连接会被掐断，决策就送不回终端。
+ */
+function waitForDecision(promise: Promise<Decision>, waitMs: number): Promise<Decision | null> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), waitMs);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<Decision | null>;
+}
+
+function hookDetail(toolName: string, input: any): string {  if (toolName === 'Bash' && typeof input?.command === 'string') return String(input.command).slice(0, 2000);
   if ((toolName === 'Write' || toolName === 'Edit') && typeof input?.file_path === 'string') {
     const body = toolName === 'Write' ? String(input.content ?? '').slice(0, 1500)
       : `- ${String(input.old_string ?? '').slice(0, 600)}\n+ ${String(input.new_string ?? '').slice(0, 1200)}`;
@@ -74,8 +105,22 @@ class ApproverService {
   private lastError = '';
   /** 最近一次 pi-approver-gate 扩展部署结果（status() 暴露给 UI） */
   private lastPiGateDeploy: PiGateDeployResult | null = null;
+  /** 最近一次 qihang-gate（OpenCode 插件）部署结果 */
+  private lastOpenCodeGateDeploy: OpenCodeGateDeployResult | null = null;
   /** 渲染层事件订阅（桌面审批面板）：审批挂起/决策时扇出 */
   private readonly approvalSubs = new Set<(e: any) => void>();
+  /**
+   * opencode 权限镜像卡登记：key = `${sessionId}::${requestId}` → 工作台侧审批 id + 决策 promise。
+   * opencode 终端先答复时据此找到卡片并作废（避免飞书上重复决策）。
+   */
+  private readonly opencodeMirrors = new Map<
+    string,
+    { approvalId: string; promise: Promise<Decision>; createdAt: number }
+  >();
+  /** 已被终端作废的镜像 key：用于区分「用户点了拒绝」和「终端先答了」 */
+  private readonly opencodeCancelled = new Set<string>();
+  /** 最近一次 Claude Code hooks 自动部署结果 */
+  private lastClaudeHookDeploy: ClaudeHookDeployResult | null = null;
   /**
    * 正挂在 /api/hooks/claude-stop 上等追问的外部 claude 会话 id。
    * 「接着问」据此分流：在册 → stash 交给终端原会话（快速通道）；
@@ -160,14 +205,24 @@ class ApproverService {
         target: this.lastPiGateDeploy?.target || path.join(piGateTargetDir(), PI_GATE_FILENAME),
         error: this.lastPiGateDeploy?.error,
       },
+      opencodeGate: {
+        targetDir: openCodeGateTargetDir(),
+        file: OPENCODE_GATE_FILENAME,
+        installed: !!this.lastOpenCodeGateDeploy && this.lastOpenCodeGateDeploy.ok,
+        action: this.lastOpenCodeGateDeploy?.action || 'none',
+        target: this.lastOpenCodeGateDeploy?.target || path.join(openCodeGateTargetDir(), OPENCODE_GATE_FILENAME),
+        error: this.lastOpenCodeGateDeploy?.error,
+      },
     };
   }
 
-  /** 手动重新部署 pi-approver-gate 扩展（UI「重新部署」按钮）；端口取当前配置 */
-  deployGate(): PiGateDeployResult {
+  /** 手动重新部署 pi 扩展 + OpenCode 插件 + Claude hooks（UI「重新部署」按钮）；端口取当前配置 */
+  deployGate(): PiGateDeployResult & { opencode: OpenCodeGateDeployResult; claude: ClaudeHookDeployResult } {
     const port = Number(appConfig.getConfig('approverPort')) || 8790;
     this.lastPiGateDeploy = deployPiGate(port);
-    return this.lastPiGateDeploy;
+    this.lastOpenCodeGateDeploy = deployOpenCodeGate(port);
+    this.lastClaudeHookDeploy = deployClaudeHooks(port, quickWindowSec());
+    return { ...this.lastPiGateDeploy, opencode: this.lastOpenCodeGateDeploy, claude: this.lastClaudeHookDeploy };
   }
 
   async start(): Promise<void> {
@@ -238,7 +293,54 @@ class ApproverService {
           await feishu.sendTextToChat(chatId, text);
         });
     };
+    /**
+     * Claude Code 回合收口处理（Stop 事件）：
+     * 1) 按 task-done 上报（完成/失败都出卡，失败带 error 正文），不等飞书；
+     * 2) 挂起快速通道等「继续」追问：decision:block + reason → 终端把 reason 当新指令在**原会话**续跑。
+     *
+     * 这是把追问注回 Claude Code 终端的唯一通道：CLI 只在 Stop 时会等 hook 返回。
+     * 回合因 API 错误结束时 Claude Code 只发 StopFailure、不发 Stop（且不等 hook），
+     * 那种情况注入不了，用户回终端自己输入即可——所以这里不做任何后台接管。
+     * @param tag 日志标签（排查时区分来源）
+     */
+    const claudeTurnEnded = async (body: any, tag: string): Promise<any> => {
+      try {
+        notifyTask(await normalizeTaskDone(body));
+      } catch (e: any) {
+        logger.error('[Approver] 外部回合上报处理失败: %s', e?.message || e);
+      }
+      const sessionId = String(body?.session_id || '');
+      const windowSec = quickWindowSec();
+      if (!sessionId || windowSec <= 0) return {};
+      logger.info('[Approver] %s 快速通道挂起: session=%s window=%ss', tag, sessionId.slice(0, 24), windowSec);
+      this.quickPollers.add(sessionId);
+      try {
+        const text = await takeFollowup(sessionId, windowSec * 1000);
+        // decision:block + reason → Claude Code 拿 reason 当指令在终端继续跑；
+        // 跑完再次 Stop 会重新进来，多轮追问天然成环，每轮都要人拍板不会失控
+        return text ? { decision: 'block', reason: text } : {};
+      } finally {
+        this.quickPollers.delete(sessionId);
+      }
+    };
     // autoAllowed 目前只有 dsh 会用（claude 的会话级放行走 SDK suggestions）
+    /**
+     * Claude Code StopFailure（回合异常终止：429/模型不可用/网络错误等）：
+     * 只上报失败通知，立即返回。**不挂起、不接管、不返回 block**。
+     *
+     * 原因（实测 + 日志实证）：StopFailure 在 CLI / app 里都**不等待 hook 返回、不读取 stdout**，
+     * decision:block 对它完全无效；若照 Stop 那样挂起等「继续」，追问暂存后 CLI 根本不会来取，
+     * 反而会**阻塞同一会话后续的正常 Stop**（失败回合的挂起没超时，堵住下一次完成事件的收口）。
+     * 所以这里只发卡，用户回终端自己输入即可。
+     */
+    const claudeStopFailureNotifyOnly = async (body: any): Promise<any> => {
+      try {
+        notifyTask(await normalizeTaskDone(body));
+      } catch (e: any) {
+        logger.error('[Approver] StopFailure 失败通知上报处理失败: %s', e?.message || e);
+      }
+      return {};
+    };
     const deps: AgentDeps = {
       requestApproval: (input) => center.request(input),
       autoAllowed: (input) => center.recordAutoAllowed({ agent: 'dsh', ...input }),
@@ -273,6 +375,13 @@ class ApproverService {
     // 自动部署 pi-approver-gate 扩展到 ~/.pi/agent/extensions/：外部 pi 终端的回合上报/接着问依赖它。
     // 失败不阻断启动，下次启动重试。
     this.lastPiGateDeploy = deployPiGate(port);
+    // 自动部署 qihang-gate 插件到 ~/.config/opencode/plugins/：外部 opencode 会话的
+    // 回合上报/审批/接着问依赖它。失败不阻断启动，下次启动重试。
+    this.lastOpenCodeGateDeploy = deployOpenCodeGate(port);
+    // 自愈部署 Claude Code hooks 到 ~/.claude/settings.json：外部 claude 会话的
+    // 审批/完成通知/继续对话依赖它；settings.json 被整体替换（切模型）后 hooks 会丢。
+    // 只合并我们的条目、不动其余字段；失败不阻断启动，下次启动重试。
+    this.lastClaudeHookDeploy = deployClaudeHooks(port, quickWindowSec());
     this.server = await startApproverServer({
       port,
       health: () => ({
@@ -347,6 +456,88 @@ class ApproverService {
         });
         return { decision };
       },
+      opencodePolicy: () => ({
+        // 额外加严的动作名（逗号分隔，如 shell,edit）。
+        // 默认空 = 不加严：只有 opencode 自己判为 ask 的动作才进飞书审批。
+        escalate: String(appConfig.getConfig('opencodeEscalateActions') || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      }),
+      opencodeApprovalRequest: async (body) => {
+        // 只处理 opencode 真的发起权限请求（permission.asked）的镜像。
+        // 非法/不完整输入：返回空对象（无决策），opencode 终端照常弹原生提示。
+        const tool = String(body?.tool || '');
+        if (!body || !tool) return {};
+        const sessionId = String(body?.sessionId || '');
+        const requestId = String(body?.requestId || '');
+        const resources: string[] = Array.isArray(body?.resources)
+          ? body.resources.map((r: any) => String(r))
+          : [];
+        const save: string[] = Array.isArray(body?.save) ? body.save.map((r: any) => String(r)) : [];
+        const key = `${sessionId}::${requestId}`;
+        const detail = [
+          `动作：${tool}`,
+          `资源：${resources.join(', ') || '-'}`,
+          save.length ? `「允许并记住」将保存：${save.join(', ')}` : '',
+          body?.summary ? `摘要：${String(body.summary)}` : '',
+        ].filter(Boolean).join('\n').slice(0, 2000);
+        let approvalId = '';
+        // 注意：不 await —— 审批卡先发出去，决策由 /api/hooks/opencode-decision 端点等。
+        // 这里如果一直挂住不返回，插件侧长连接会被 Node 的响应体超时（5 分钟）掐断，
+        // 人在飞书上想几分钟再点「允许」就送不回终端了。
+        const promise = center.request({
+          agent: 'opencode',
+          sessionId: `oc-ext-${sessionId.slice(0, 40) || 'unknown'}`,
+          cwd: String(body?.cwd || ''),
+          tool,
+          inputSummary: String(body?.summary || tool).slice(0, 200),
+          detail,
+        }, (id) => {
+          approvalId = id;
+        });
+        if (requestId && approvalId) {
+          // 清扫过期镜像登记（插件放弃等待后不会再轮询，这里兜底防泄漏）
+          const stale = Date.now() - 65 * 60_000;
+          for (const [k, v] of this.opencodeMirrors) {
+            if (v.createdAt < stale) this.opencodeMirrors.delete(k);
+          }
+          this.opencodeMirrors.set(key, { approvalId, promise, createdAt: Date.now() });
+        }
+        return { approvalId };
+      },
+      opencodeDecisionPoll: async (body) => {
+        // 插件轮询取决策：最多等 waitMs（超过就返回空，插件下一轮再来）
+        const sessionId = String(body?.sessionId || '');
+        const requestId = String(body?.requestId || '');
+        const key = `${sessionId}::${requestId}`;
+        const entry = this.opencodeMirrors.get(key);
+        if (!entry) return {};
+        const waitMs = Math.min(Math.max(Number(body?.waitMs) || 25_000, 1000), 60_000);
+        const decision = await waitForDecision(entry.promise, waitMs);
+        if (!decision) return {}; // 还没人拍板：插件继续轮询
+        this.opencodeMirrors.delete(key);
+        // 终端先答了 → 这张卡已被作废，不能当成「拒绝」回灌给 opencode
+        if (this.opencodeCancelled.has(key)) {
+          this.opencodeCancelled.delete(key);
+          return { cancelled: true };
+        }
+        return { decision };
+      },
+      opencodeApprovalCancel: async (body) => {
+        // opencode 终端自己答复了 → 把飞书那张镜像卡撤掉（避免重复决策）
+        const sessionId = String(body?.sessionId || '');
+        const requestId = String(body?.requestId || '');
+        const key = `${sessionId}::${requestId}`;
+        const entry = this.opencodeMirrors.get(key);
+        if (!entry) return { ok: true };
+        this.opencodeMirrors.delete(key);
+        this.opencodeCancelled.add(key);
+        this.center?.cancelExternal(entry.approvalId, 'terminal-answered');
+        logger.info('[Approver] opencode 终端已答复，飞书镜像卡作废：session=%s request=%s',
+          sessionId.slice(0, 24), requestId.slice(0, 12));
+        return { ok: true };
+      },
       taskDone: async (body) => {
         try {
           notifyTask(await normalizeTaskDone(body));
@@ -355,30 +546,11 @@ class ApproverService {
         }
       },
       claudeStop: async (body) => {
-        // 先按 task-done 收口上报（不等飞书），再挂起等快速追问
-        try {
-          notifyTask(await normalizeTaskDone(body));
-        } catch (e: any) {
-          logger.error('[Approver] 外部回合上报处理失败: %s', e?.message || e);
-        }
-        const sessionId = String(body?.session_id || '');
-        // 注意：getConfig 对缺失键返回 ''，Number('') = 0 会被 isFinite 判为合法值，
-        // 把「未配置」误当成「显式 0=关闭」。必须用 raw 非空判断区分两者。
-        const raw = String(appConfig.getConfig('approverQuickWindowSec') || '').trim();
-        const cfg = Number(raw);
-        const windowSec = raw !== '' && Number.isFinite(cfg) && cfg >= 0 ? cfg : DEFAULT_QUICK_WINDOW_SEC;
-        if (!sessionId || windowSec <= 0) return {};
-        logger.info('[Approver] claude-stop 快速通道挂起: session=%s window=%ss',
-          sessionId.slice(0, 24), windowSec);
-        this.quickPollers.add(sessionId);
-        try {
-          const text = await takeFollowup(sessionId, windowSec * 1000);
-          // decision:block + reason → Claude Code 拿 reason 当指令在终端继续跑；
-          // 跑完再次 Stop 会重新进来，多轮追问天然成环，每轮都要人拍板不会失控
-          return text ? { decision: 'block', reason: text } : {};
-        } finally {
-          this.quickPollers.delete(sessionId);
-        }
+        return claudeTurnEnded(body, 'claude-stop');
+      },
+      claudeStopFailure: async (body) => {
+        // 回合异常终止：只通知，立即返回。详见 claudeStopFailureNotifyOnly 的注释。
+        return claudeStopFailureNotifyOnly(body);
       },
       dshFollowupPoll: async (sessionId) => {
         const text = await takeFollowup(sessionId, 25_000);
@@ -436,7 +608,7 @@ class ApproverService {
       return { toast: { type: 'error', content: '请先在输入框填写追问内容' } };
     }
     const ref: TaskFollowupRef = {
-      agent: value.agent === 'dsh' ? 'dsh' : value.agent === 'pi' ? 'pi' : 'claude',
+      agent: value.agent === 'dsh' ? 'dsh' : value.agent === 'pi' ? 'pi' : value.agent === 'opencode' ? 'opencode' : 'claude',
       cwd: String(value.cwd || ''),
       sessionId: value.sessionId ? String(value.sessionId) : undefined,
       resume: value.resume === '1',
@@ -457,6 +629,13 @@ class ApproverService {
       logger.info('[Approver] pi 追问已暂存(终端原会话取走): session=%s', ref.sessionId || '(无)');
       return { toast: { type: 'success', content: '已提交追问，pi 终端原会话将取走执行（终端需保持打开）' } };
     }
+    // OpenCode 外部会话：追问暂存，由 qihang-gate 插件长轮询取走后 ctx.session.prompt() 注入原会话，
+    // 回答回到用户开着的那扇 opencode 窗口（不接管不 fork）
+    if (ref.resume && ref.agent === 'opencode') {
+      stashFollowup(ref.sessionId || '', text.slice(0, 4000));
+      logger.info('[Approver] opencode 追问已暂存(插件注入原会话): session=%s', ref.sessionId || '(无)');
+      return { toast: { type: 'success', content: '已提交追问，opencode 原会话将取走执行（窗口需保持打开）' } };
+    }
     // 外部 DSH 会话：本进程无法 resume 被桌面端占用的会话，追问暂存由插件长轮询取走
     if (ref.resume && ref.agent === 'dsh') {
       stashFollowup(ref.sessionId || '', text.slice(0, 4000));
@@ -469,12 +648,10 @@ class ApproverService {
         logger.info('[Approver] 追问走快速通道(终端原会话): session=%s', ref.sessionId.slice(0, 24));
         return { toast: { type: 'success', content: '已提交，终端会话正在等待，将取走继续执行' } };
       }
-      // 外部 claude 会话兜底：不在快速通道窗口内（超窗/终端已关），按 SDK resume 接管续跑
-      void (async () => {
-        const s = await this.manager!.createSession(ref.agent, ref.cwd, `飞书续聊 ${ref.sessionId?.slice(0, 8) || ''}`.trim(), ref.sessionId);
-        await this.manager!.prompt(s.id, text.slice(0, 4000));
-      })().catch(fail);
-      return { toast: { type: 'success', content: '终端会话不在等待窗口，已由工作台接管续跑，完成后回新卡片' } };
+      // 外部 claude 会话兜底：不在快速通道窗口内（超窗/终端已关）→ **不接管、不新建会话**。
+      // 工作台接管会在后台另起一份会话，与「在原 Claude Code 窗口继续」的预期相反，
+      // 所以这里只提示回终端；真正的注入只走上面的快速通道（decision:block 注回原会话）。
+      return { toast: { type: 'info', content: '终端会话已不在等待窗口，请回到原 Claude Code 窗口继续输入' } };
     }
     const s = ref.sessionId ? this.manager.get(ref.sessionId) : undefined;
     if (!s) return { toast: { type: 'error', content: '原会话已不存在，请重新发起' } };

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell, session } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -215,10 +215,18 @@ function createWindow() {
 
   const isDev = process.argv.includes('--dev');
   if (isDev) {
-    mainWindow!.loadURL('http://localhost:15174');
-    mainWindow!.webContents.once('did-finish-load', () => {
-      mainWindow!.webContents.openDevTools({ mode: 'detach' });
-    });
+    // dev 资源来自 vite 预构建产物（带 immutable 强缓存），用户资料目录里的磁盘缓存
+    // 条目一旦损坏就会 ERR_CACHE_READ_FAILURE → 动态 import 失败 → 路由起不来 → 整个窗口白屏。
+    // 启动时先清一次 HTTP 缓存，避免脏缓存把开发环境卡死。
+    session.defaultSession
+      .clearCache()
+      .catch((e) => logger.warn('[Startup] clearCache failed: %s', e?.message || e))
+      .finally(() => {
+        mainWindow!.loadURL('http://localhost:15174');
+        mainWindow!.webContents.once('did-finish-load', () => {
+          mainWindow!.webContents.openDevTools({ mode: 'detach' });
+        });
+      });
   } else {
     // dist-electron/electron -> 项目根目录 dist/，需要向上两级
     mainWindow!.loadFile(path.join(__dirname, '../../dist/index.html'));
@@ -1367,21 +1375,23 @@ ipcMain.handle('radar:digest-backfill', () => {
   }
 });
 // 雷达详情页/通知栈「插入对话」：把追问文本按 sessionId 暂存，由外部 agent 的扩展/插件取走注入原会话
-// （pi → pi-approver-gate /api/hooks/pi-followup；dsh → dsh-approver 插件；claude → claude-stop 挂起快速通道）
+// （pi → pi-approver-gate /api/hooks/pi-followup；dsh → dsh-approver 插件；claude → claude-stop 挂起快速通道；
+//  opencode → qihang-gate 插件 /api/hooks/opencode-followup，取走后 session.prompt 注入原会话）
 ipcMain.handle('radar:followup', (_, { tool, sessionId, text }) => {
   const sid = String(sessionId || '').trim();
   const body = String(text || '').trim();
   // 雷达工具枚举是 'claude-code'，审批通道用 'claude'：这里统一映射，别处新增入口也不用各自转换
   const rawTool = String(tool || '');
   const toolName = rawTool === 'claude-code' ? 'claude' : rawTool;
-  if (!['pi', 'dsh', 'claude'].includes(toolName)) {
-    return { ok: false, error: '该工具暂不支持插入对话（仅 pi / DSH / Claude Code 外部会话）' };
+  if (!['pi', 'dsh', 'claude', 'opencode'].includes(toolName)) {
+    return { ok: false, error: '该工具暂不支持插入对话（仅 pi / DSH / Claude Code / OpenCode 外部会话）' };
   }
   if (!sid || !body) return { ok: false, error: '需要 sessionId 和消息内容' };
-  // claude 没有常驻长轮询：只有会话正挂在 claude-stop 上等追问（默认 30 秒窗口）时暂存才会被取走，
-  // 窗口外暂存只会躺到 TTL 过期，直接拒绝并提示
+  // claude 没有常驻长轮询：只有会话正挂在 claude-stop 上等追问（快速通道窗口内）时，
+  // 暂存才会被取走、经 decision:block 注回原终端执行。窗口外不接管、不新建会话，
+  // 直接提示回终端继续（工作台接管会产生第二份会话，与「在原窗口继续」的预期相反）。
   if (toolName === 'claude' && !approver.isQuickPoller(sid)) {
-    return { ok: false, error: '终端会话不在等待窗口（回合收口后约 30 秒内），请用飞书卡片继续' };
+    return { ok: false, error: '终端会话已不在等待窗口，请回到原 Claude Code 窗口继续输入' };
   }
   try {
     // 受管会话（工作台托管，sessionId 是本进程 id）直接续跑，stash 没人会取走；
@@ -2074,6 +2084,7 @@ ipcMain.handle('config:get', () => {
     approverPort: appConfig.getConfig('approverPort') || '8790',
     dshPath: appConfig.getConfig('dshPath') || '',
     claudePath: appConfig.getConfig('claudePath') || '',
+    opencodeEscalateActions: appConfig.getConfig('opencodeEscalateActions') || '',
   };
 });
 ipcMain.handle('config:set', (_, cfg) => {

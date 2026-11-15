@@ -441,6 +441,60 @@
             <span v-if="gateStatusText" class="text-muted" style="font-size:12px;">{{ gateStatusText }}</span>
           </div>
         </div>
+
+        <!-- OpenCode 插件自动部署 -->
+        <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg);">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px;">OpenCode 接入插件</div>
+          <div class="text-muted" style="font-size:12px;margin-bottom:8px;">
+            外部 opencode 会话（CLI/桌面端）的回合完成/失败通知、工具审批与「接着问」依赖此插件。插件随审批通道启动自动部署到
+            <code>~/.config/opencode/plugins/qihang-gate.ts</code>，无需手动复制；文件变更后 opencode 自动热重载。
+          </div>
+          <div class="text-muted" style="font-size:12px;margin-bottom:8px;">
+            审批是<b>双通道</b>：opencode 终端照常弹它自己的原生权限提示（不会被冻结、不会被改判）；
+            只有 opencode <b>自己判为 ask</b> 的动作才会额外镜像一张飞书审批卡，
+            飞书上的决策会回灌到<b>同一扇窗口</b>；终端先答了，飞书那张卡自动作废。
+            <br />
+            注：opencode 的 <code>opencode run</code> 非交互模式会直接拒绝无法当面确认的权限请求，
+            所以飞书审批只在你<b>开着交互窗口</b>时可用。
+          </div>
+          <div v-if="openCodeGateStatus" class="text-muted" style="font-size:12px;margin-bottom:8px;">
+            状态：
+            <template v-if="openCodeGateStatus.installed">
+              <span style="color:var(--green);">● 已部署</span>（{{ actionLabel(openCodeGateStatus.action) }}）
+            </template>
+            <template v-else-if="openCodeGateStatus.action === 'failed'">
+              <span style="color:var(--red);">● 部署失败</span>：{{ openCodeGateStatus.error }}
+            </template>
+            <template v-else>○ 未检测（审批通道未启动或未运行）</template>
+            <template v-if="openCodeGateStatus.target"> ｜ 路径：<code>{{ openCodeGateStatus.target }}</code></template>
+          </div>
+          <div class="form-group" style="margin-bottom:8px;">
+            <label style="font-size:12px;">额外加严的动作（默认关闭，逗号分隔，如 shell,edit）</label>
+            <input v-model="openCodeEscalateActions" type="text" class="form-control" placeholder="留空 = 只送审 opencode 规则命中 ask 的动作">
+            <div class="text-muted" style="font-size:12px;">
+              opencode 自己的权限规则命中 <code>ask</code> 的动作<b>始终</b>会送飞书审批；这里填的动作是在此基础上<b>额外加严</b>（连本该放行的也送审）。
+              日常建议留空——否则 git status、git diff 这类读操作也会弹审批。
+            </div>
+            <div class="text-muted" style="font-size:12px;margin-top:6px;">
+              想让「高危操作」走飞书审批，推荐改用 opencode 自己的规则（只命中危险命令），在
+              <code>~/.config/opencode/opencode.jsonc</code> 里加：
+            </div>
+            <pre style="margin:4px 0 0;padding:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;font-size:11px;overflow:auto;white-space:pre-wrap;">{
+  "permissions": [
+    { "action": "shell", "resource": "rm *", "effect": "ask" },
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
+    { "action": "shell", "resource": "git reset --hard *", "effect": "ask" },
+    { "action": "external_directory", "resource": "*", "effect": "ask" }
+  ]
+}</pre>
+          </div>
+          <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-secondary" style="font-size:12px;padding:4px 10px;"
+                    @click="redeployGate" :disabled="gateDeploying">
+              {{ gateDeploying ? '部署中…' : '重新部署' }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Backup / Restore -->
@@ -581,6 +635,7 @@ const approverEnabled = ref(false);
 const approverPort = ref('8790');
 const dshPath = ref('');
 const claudePath = ref('');
+const openCodeEscalateActions = ref('');
 const feishuChatList = ref<{ chatId: string; name: string }[]>([]);
 const chatListLoading = ref(false);
 const approverStatus = ref<any>(null);
@@ -588,6 +643,7 @@ const approverStatusText = ref('');
 
 // pi CLI 终端审批扩展部署
 const piGateStatus = ref<any>(null);
+const openCodeGateStatus = ref<any>(null);
 const gateDeploying = ref(false);
 const gateStatusText = ref('');
 
@@ -1163,6 +1219,7 @@ async function loadConfig() {
     approverPort.value = cfg.approverPort || '8790';
     dshPath.value = cfg.dshPath || '';
     claudePath.value = cfg.claudePath || '';
+    openCodeEscalateActions.value = cfg.opencodeEscalateActions || '';
   } catch { console.warn('加载配置失败'); }
 }
 
@@ -1175,6 +1232,7 @@ async function saveApproverConfig() {
       approverPort: approverPort.value.trim() || '8790',
       dshPath: dshPath.value.trim(),
       claudePath: claudePath.value.trim(),
+      opencodeEscalateActions: openCodeEscalateActions.value.trim(),
     });
     await API.approver.apply();
     await queryApproverStatus();
@@ -1207,6 +1265,7 @@ async function queryApproverStatus() {
   try {
     approverStatus.value = await API.approver.status();
     if (approverStatus.value?.piGate) piGateStatus.value = approverStatus.value.piGate;
+    if (approverStatus.value?.opencodeGate) openCodeGateStatus.value = approverStatus.value.opencodeGate;
   } catch { approverStatus.value = null; }
 }
 
@@ -1227,6 +1286,7 @@ async function redeployGate() {
     const res = await API.approver.deployGate();
     if (approverStatus.value) approverStatus.value = { ...approverStatus.value, ...res };
     if (res.piGate) piGateStatus.value = res.piGate;
+    if (res.opencodeGate) openCodeGateStatus.value = res.opencodeGate;
     gateStatusText.value = res.ok
       ? `✅ 已${actionLabel(res.piGate?.action || 'installed')}`
       : `❌ 部署失败：${res.error || '未知错误'}`;

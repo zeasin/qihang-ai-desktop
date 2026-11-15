@@ -32,47 +32,22 @@
       </div>
     </div>
 
-    <!-- 审批（雷达子功能；飞书不可用/离线时在此决策，与飞书卡片同一决策状态机） -->
-    <div v-if="pending.length" class="section approval-sec">
-      <div class="sec-title"><i class="bar bar-warn"></i>
-        待审批 · {{ pending.length }} 条
-        <span v-if="!feishuOn" class="text-muted" style="font-size:12px;font-weight:400;margin-left:6px;">（飞书未启用，仅桌面可决策）</span>
-      </div>
-      <div class="approval-table">
-        <div v-for="a in pending" :key="a.id" class="approval-row">
-          <div class="ap-main" @click="toggleDetail(a.id)">
-            <div class="ap-top">
-              <span class="badge" :class="agentBadgeClass(a.agent)">
-                {{ agentLabel(a.agent) }}
-              </span>
-              <span class="ap-tool">{{ a.tool }}</span>
-              <span class="ap-summary">{{ a.inputSummary }}</span>
-              <span class="ap-time">{{ fmtIso(a.createdAt) }}</span>
-            </div>
-            <pre v-if="expandedId === a.id" class="ap-detail">{{ a.detail || '（无正文）' }}</pre>
-          </div>
-          <div class="ap-actions">
-            <button class="btn btn-primary btn-sm" @click.stop="decide(a, 'allow_once')">允许一次</button>
-            <button class="btn btn-secondary btn-sm" @click.stop="decide(a, 'allow_session')">本会话放行</button>
-            <button class="btn btn-danger btn-sm" @click.stop="decide(a, 'deny')">拒绝</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 页面通知：回合完成/失败 + 待审批，可就地决策或追加对话（事件推送驱动，右上角浮动） -->
+    <!-- 页面通知：回合完成/失败 + 待审批，可就地决策或追加对话（事件推送驱动，固定在应用顶部右侧）
+         待审批只有这一处入口：桌面不再另开「待审批」列表，避免同一条审批在页面上出现两遍 -->
     <div v-if="notices.length" class="notice-stack">
       <div v-for="n in notices" :key="n.id" class="notice" :class="{ fail: n.kind === 'task' && n.ok === false, sent: n.sent }">
         <div class="nt-head" title="点击查看详情" @click="openDetail(n)">
           <span class="badge" :class="agentBadgeClass(n.agent)">{{ agentLabel(n.agent) }}</span>
           <span class="nt-title">{{ n.title }}</span>
-          <button class="nt-close" title="关闭" @click.stop="dismiss(n.id)">×</button>
+          <!-- 待审批必须决策（或等 TTL 过期）才消失，不给关闭按钮，避免审批被藏起来 -->
+          <button v-if="n.kind !== 'approval'" class="nt-close" title="关闭" @click.stop="dismiss(n.id)">×</button>
         </div>
         <div class="nt-brief nt-clickable" :title="n.brief" @click="openDetail(n)">{{ n.brief }}</div>
         <div v-if="n.kind === 'approval'" class="nt-actions">
           <button class="btn btn-primary btn-sm" @click="decideNotice(n, 'allow_once')">允许一次</button>
+          <button class="btn btn-secondary btn-sm" @click="decideNotice(n, 'allow_session')">本会话放行</button>
           <button class="btn btn-danger btn-sm" @click="decideNotice(n, 'deny')">拒绝</button>
-          <span class="text-muted nt-tip-inline">本会话放行等完整选项见待审批列表</span>
+          <span v-if="!feishuOn" class="text-muted nt-tip-inline">飞书未启用，仅桌面可决策</span>
         </div>
         <div v-if="n.kind === 'task' && canFollowup(n.agent) && !n.sent" class="nt-actions">
           <button class="btn btn-primary btn-sm" @click="sendNoticeFollowup(n, '继续')">▶️ 继续</button>
@@ -238,33 +213,10 @@ const sessions = ref<any[]>([]);
 const scanning = ref(false);
 const toggling = ref(false);
 
-// ========== 审批（雷达子功能；飞书兜底决策面，同一 ApprovalCenter 状态机） ==========
-const pending = ref<ApprovalRequest[]>([]);
-const expandedId = ref('');
+// ========== 审批（飞书兜底决策面，同一 ApprovalCenter 状态机） ==========
+// 桌面侧只有顶部通知栈一个入口：待审批卡片常驻到人决策，完整选项在卡片和详情弹层里。
 const feishuOn = ref(false);
 const pendingStatus = ref('');
-
-async function loadPending() {
-  try { pending.value = (await API.approver.pending()) || []; } catch { pending.value = []; }
-}
-function toggleDetail(id: string) {
-  expandedId.value = expandedId.value === id ? '' : id;
-}
-async function decide(a: ApprovalRequest, decision: 'allow_once' | 'allow_session' | 'deny') {
-  const r = await API.approver.decide(a.id, decision);
-  if (!r?.ok) {
-    pendingStatus.value = '❌ ' + (r?.error || '决策失败');
-  } else {
-    pendingStatus.value = '✅ 已受理：' + (a.inputSummary.slice(0, 20) || a.tool);
-  }
-  setTimeout(() => { pendingStatus.value = ''; }, 3000);
-  await loadPending();
-}
-function fmtIso(iso: string): string {
-  if (!iso) return '';
-  const t = new Date(iso).getTime();
-  return t ? fmtClock(t) : '';
-}
 
 const TOOL_LABELS: Record<string, string> = {
   zcode: 'ZCode', 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode',
@@ -274,13 +226,13 @@ const toolLabel = (t: string) => TOOL_LABELS[t] || t;
 
 // 审批来源标识：pi 走 pi-approver-gate 扩展上报，此前被写死成 DSH 分支导致显示错误
 const AGENT_LABELS: Record<string, string> = {
-  claude: 'Claude Code', dsh: 'DSH', pi: 'Pi',
+  claude: 'Claude Code', dsh: 'DSH', pi: 'Pi', opencode: 'OpenCode',
 };
 const agentLabel = (a: string) => AGENT_LABELS[a] || a;
 const agentBadgeClass = (a: string) =>
-  a === 'claude' ? 'badge-primary' : a === 'pi' ? 'badge-warning' : 'badge-success';
+  a === 'claude' ? 'badge-primary' : a === 'pi' ? 'badge-warning' : a === 'opencode' ? 'badge-info' : 'badge-success';
 
-// ========== 页面通知：回合完成/失败 + 待审批（approver:event 推送驱动，右上角浮动） ==========
+// ========== 页面通知：回合完成/失败 + 待审批（approver:event 推送驱动，固定在应用顶部） ==========
 // 完成的通知 30s 自动消退；失败/待审批保留到人处理（就地决策或追加对话后关闭）。
 // 状态回调：点过「继续/发送」的通知转入 sent 态（按钮隐藏，提示常驻），同一会话的下一轮
 // task-done 到达时自动收掉——新结果弹新通知，形成「失败 → 继续 → 新结果」闭环。
@@ -301,12 +253,12 @@ interface Notice {
   request?: any;
 }
 const notices = ref<Notice[]>([]);
-const FOLLOWUP_AGENTS = new Set(['pi', 'dsh', 'claude']); // 外部会话追问走暂存，由原终端取走执行
+const FOLLOWUP_AGENTS = new Set(['pi', 'dsh', 'claude', 'opencode']); // 外部会话追问走暂存，由原终端取走执行
 const canFollowup = (a: string) => FOLLOWUP_AGENTS.has(a);
-// claude 无常驻长轮询，只有回合收口后的等待窗口（默认 30 秒）能接住追问；pi/DSH 扩展收口后轮询 10 分钟
+// claude 无常驻长轮询，只有回合收口后的等待窗口能接住追问（注回原终端）；pi/DSH/OpenCode 收口后轮询 10 分钟
 const followupHint = (a: string) =>
   a === 'claude'
-    ? '终端会话正在等待（约 30 秒窗口），超窗请用飞书卡片'
+    ? '终端会话正在等待窗口内，追问会注回原窗口；超窗请回 Claude Code 窗口继续输入'
     : '原终端会话将在 10 分钟内取走执行（终端需保持打开）';
 
 function dirName(cwd: string): string {
@@ -318,9 +270,31 @@ function dismiss(id: string) {
 function pushNotice(n: Notice) {
   if (notices.value.some((x) => x.id === n.id)) return;
   notices.value.unshift(n);
-  if (notices.value.length > 5) notices.value.pop(); // 最多留 5 条，防刷屏
+  // 任务类最多留 5 条防刷屏；待审批卡片要留到人决策，不参与裁剪（否则审批会被挤掉、等不到决策）
+  if (n.kind === 'task') {
+    const tasks = notices.value.filter((x) => x.kind === 'task');
+    if (tasks.length > 5) {
+      const oldest = tasks[tasks.length - 1];
+      notices.value = notices.value.filter((x) => x.id !== oldest.id);
+    }
+  }
   if (n.kind === 'task' && n.ok !== false) {
     setTimeout(() => dismiss(n.id), 30_000);
+  }
+}
+/** 补单：组件挂载之前发起的审批（事件被错过）→ 拉一次挂起列表补进顶部栈 */
+async function hydratePendingNotices() {
+  let list: any[] = [];
+  try { list = (await API.approver.pending()) || []; } catch { return; }
+  for (const r of list) {
+    pushNotice({
+      id: 'ap-' + r.id,
+      kind: 'approval',
+      agent: r.agent,
+      title: `待审批 · ${r.tool}`,
+      brief: r.inputSummary || '（无摘要）',
+      request: r,
+    });
   }
 }
 function onApproverNotice(e: any) {
@@ -393,7 +367,6 @@ async function decideNotice(n: Notice, decision: 'allow_once' | 'allow_session' 
     if (detailNotice.value === n) setTimeout(closeDetail, 1200);
     setTimeout(() => dismiss(n.id), 1500);
   }
-  await loadPending();
 }
 async function sendNoticeFollowup(n: Notice, text: string) {
   const body = String(text || '').trim();
@@ -404,7 +377,7 @@ async function sendNoticeFollowup(n: Notice, text: string) {
     // 提示常驻，等该会话下一轮 task-done 到达时整条收掉（见 onApproverNotice）
     n.sent = true;
     n.text = '';
-    n.tip = '已发送，' + followupHint(n.agent);
+    n.tip = r?.tip ? String(r.tip) : '已发送，' + followupHint(n.agent);
     n.tipOk = true;
   } else {
     n.tip = '提交失败：' + (r?.error || '未知错误');
@@ -538,9 +511,9 @@ function onRadarEvent() {
   eventTimer = window.setTimeout(() => { void loadDashboard(); }, 800);
 }
 
-// 审批/回合收口事件推送：刷新待审批列表 + 页面通知（完成/失败/待审批）
+// 审批/回合收口事件推送：页面通知（完成/失败/待审批）
+// 待审批由事件推送进顶部栈；已决策/过期（TTL）会再推 approval.decided 把卡片收掉
 function onApproverEvent(payload?: any) {
-  void loadPending();
   onApproverNotice(payload);
 }
 
@@ -550,7 +523,7 @@ onMounted(async () => {
   await loadStatus();
   // 审批是雷达子功能，但审批通道独立于雷达开关：雷达没开也能在此决策
   try { const s = await API.service.status(); feishuOn.value = !!s?.feishu; } catch { /* 静默 */ }
-  await loadPending();
+  await hydratePendingNotices();
   if (status.value.enabled) await loadDashboard();
 });
 onUnmounted(() => {
@@ -829,77 +802,16 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* ===== 审批（雷达子功能） ===== */
-.bar-warn { background: var(--danger, #e5484d); }
-.approval-table {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  overflow: hidden;
-}
-.approval-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.approval-row:last-child { border-bottom: none; }
-.approval-row:nth-child(odd) { background: var(--danger-soft, rgba(229, 72, 77, 0.04)); }
-.ap-main { flex: 1; min-width: 0; cursor: pointer; }
-.ap-top {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-.ap-tool {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  background: var(--hover);
-  color: var(--text-secondary);
-  padding: 1px 6px;
-  border-radius: 4px;
-  flex-shrink: 0;
-}
-.ap-summary {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 12.5px;
-  color: var(--text-primary);
-}
-.ap-time {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.ap-detail {
-  margin: 9px 0 0;
-  padding: 10px 12px;
-  background: var(--hover);
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 260px;
-  overflow-y: auto;
-  color: var(--text-secondary);
-}
-.ap-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
-/* ===== 页面通知（右上角浮动栈） ===== */
+/* ===== 页面通知（应用顶部右侧浮动栈） ===== */
+/* 固定在窗口顶部（标题栏 38px 下方），不随页面内容滚动。
+   早前是 absolute + 锚在 .radar-view 上，雷达整体并入「今天」页后，
+   通知会跟着版块掉到页面中部——这里改为相对视口定位。 */
 .notice-stack {
-  position: absolute;
-  top: 12px;
-  right: 24px;
+  position: fixed;
+  top: 46px;
+  right: 22px;
   width: 380px;
-  max-height: calc(100% - 40px);
+  max-height: calc(100vh - 62px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -916,6 +828,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  animation: nt-drop 0.18s ease-out;
+}
+/* 自顶部滑入（与手机端顶部横幅一致的手感） */
+@keyframes nt-drop {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: none; }
 }
 .notice.fail { border-left-color: var(--danger); }
 .notice.sent { border-left-color: var(--warning); }

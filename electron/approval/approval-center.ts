@@ -150,6 +150,30 @@ export class ApprovalCenter {
     }
   }
 
+  /**
+   * 外部作废（opencode 终端先答复了，飞书那张镜像卡要撤掉）：
+   * 挂起中的审批标记为 expired、审计留痕、卡片原位更新，并让等待中的请求方立刻收口。
+   * 这里刻意不给「决策语义」：真正的决策已经发生在 opencode 侧（终端），工作台只是撤卡。
+   */
+  cancelExternal(id: string, by: string): 'ok' | 'not_pending' {
+    const entry = this.pending.get(id);
+    if (!entry) return 'not_pending';
+    this.pending.delete(id);
+    const req = entry.req;
+    req.status = 'expired';
+    req.decidedAt = new Date().toISOString();
+    req.decidedBy = by;
+    this.deps.history.append({ type: 'expired', at: req.decidedAt, id, by });
+    this.deps.bus.emit({ type: 'approval.decided', request: req });
+    if (req.feishuMessageId && this.deps.patchCard) {
+      this.deps.patchCard(req).catch((e: any) => logger.error('[Approver] 作废卡片更新失败: %s', e?.message || e));
+    }
+    // 请求方还在等决策：让它立刻返回（插件侧据此知道「别回灌了」）
+    entry.resolve('deny');
+    logger.info('[Approver] 审批被外部作废 %s（by %s）', id.slice(0, 8), by);
+    return 'ok';
+  }
+
   /** dsh 会话级放行（allowlist）命中的自动应答：不挂起，直接落一条已决记录供审计 */
   recordAutoAllowed(input: { agent: AgentKind; sessionId: string; cwd: string; tool: string; inputSummary: string; detail: string }): void {
     const now = new Date().toISOString();

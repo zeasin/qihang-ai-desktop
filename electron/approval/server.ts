@@ -13,6 +13,12 @@ import logger from '../services/logger';
  *   GET  /api/hooks/dsh-followup        DSH 插件长轮询「接着问」追问
  *   POST /api/hooks/dsh-followup        直接暂存一条追问（调试）
  *   GET  /api/hooks/pi-followup         pi 扩展长轮询「接着问」追问（与 dsh-followup 共用暂存 Map）
+ *   POST /api/hooks/opencode-approval   OpenCode qihang-gate 插件审批镜像：opencode 真的发起权限请求
+ *                                       （permission.asked）时才进来；登记飞书审批卡，立刻返回 { approvalId }
+ *   GET  /api/hooks/opencode-decision   OpenCode 插件轮询取决策：等 waitMs 毫秒，有人拍板返回 { decision }
+ *   POST /api/hooks/opencode-approval-cancel  opencode 终端先答复了 → 撤掉飞书那张镜像卡
+ *   GET  /api/hooks/opencode-followup   OpenCode qihang-gate 插件长轮询「接着问」追问（与 dsh-followup 共用暂存 Map）
+ *   GET  /api/hooks/opencode-policy     OpenCode 插件拉取送审策略（强制送审的动作名列表）
  *   POST /api/hooks/debug               插件侧诊断打点透传
  *   GET  /health                        健康检查
  *   GET/POST /api/sessions*、/api/approvals*、/api/local-sessions*  调试/面板用 REST
@@ -37,8 +43,18 @@ export interface ApproverServerDeps {
   taskDone(body: any): Promise<void>;
   /** Claude Code Stop 快速通道：task-done 上报后挂起等追问，返回 Stop hook 决策（block=继续跑 / 空=正常收尾） */
   claudeStop(body: any): Promise<any>;
+  /** Claude Code StopFailure（回合异常终止）：只上报失败通知，立即返回，不挂起不接管 */
+  claudeStopFailure(body: any): Promise<any>;
   /** DSH 插件长轮询「接着问」追问：无追问等 waitMs 后返回 {} */
   dshFollowupPoll(sessionId: string): Promise<{ text?: string }>;
+  /** OpenCode qihang-gate 插件审批镜像：登记一张飞书审批卡，立刻返回 { approvalId } */
+  opencodeApprovalRequest(body: any): Promise<any>;
+  /** OpenCode 插件轮询取决策：等 waitMs 毫秒，有人拍板返回 { decision }，否则返回 {} */
+  opencodeDecisionPoll(body: any): Promise<any>;
+  /** OpenCode 终端先答复了：作废飞书那张镜像卡 */
+  opencodeApprovalCancel(body: any): Promise<any>;
+  /** OpenCode 插件拉取送审策略：强制送审的动作名列表 */
+  opencodePolicy(): { escalate: string[] };
   /** 测试用：直接暂存一条追问（免飞书卡片回调） */
   stashDshFollowup(sessionId: string, text: string): void;
   subscribe(fn: (e: BusEvent) => void): () => void;
@@ -198,11 +214,51 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
         return sendJsonLongPoll(res, deps.claudeStop(body));
       }
 
+      // Claude Code StopFailure：回合**异常终止**（429/模型不可用等）才触发的事件，只用于通知。
+      // 与 claude-stop 的关键差别：CLI 不等这个 hook 返回，所以这里立刻回、不挂起、不接管，
+      // 否则只会拖住一个没人等的请求。
+      if (pathname === '/api/hooks/claude-stop-failure' && req.method === 'POST') {
+        const body = await readBody(req);
+        return sendJson(res, 200, await deps.claudeStopFailure(body));
+      }
+
       // pi 扩展长轮询「接着问」追问：与 dsh-followup 共用同一暂存 Map（takeFollowup），语义一致
       if (pathname === '/api/hooks/pi-followup' && req.method === 'GET') {
         const sessionId = url.searchParams.get('sessionId') || '';
         const out = await deps.dshFollowupPoll(sessionId);
         return sendJson(res, 200, out);
+      }
+
+      // OpenCode qihang-gate 插件审批镜像：登记飞书审批卡，立刻返回 { approvalId }（不挂起）
+      if (pathname === '/api/hooks/opencode-approval' && req.method === 'POST') {
+        const body = await readBody(req);
+        return sendJson(res, 200, await deps.opencodeApprovalRequest(body));
+      }
+
+      // OpenCode 插件轮询取决策：等 waitMs 毫秒，有人拍板就返回 { decision }
+      if (pathname === '/api/hooks/opencode-decision' && req.method === 'GET') {
+        const sessionId = url.searchParams.get('sessionId') || '';
+        const requestId = url.searchParams.get('requestId') || '';
+        const waitMs = Number(url.searchParams.get('waitMs')) || 25_000;
+        return sendJson(res, 200, await deps.opencodeDecisionPoll({ sessionId, requestId, waitMs }));
+      }
+
+      // OpenCode 终端先答复 → 撤掉飞书镜像卡
+      if (pathname === '/api/hooks/opencode-approval-cancel' && req.method === 'POST') {
+        const body = await readBody(req);
+        return sendJson(res, 200, await deps.opencodeApprovalCancel(body));
+      }
+
+      // OpenCode qihang-gate 插件长轮询「接着问」追问：与 dsh-followup 共用暂存 Map
+      if (pathname === '/api/hooks/opencode-followup' && req.method === 'GET') {
+        const sessionId = url.searchParams.get('sessionId') || '';
+        const out = await deps.dshFollowupPoll(sessionId);
+        return sendJson(res, 200, out);
+      }
+
+      // OpenCode 插件拉取送审策略（opencode 默认全放行，这里告诉它哪些动作要强制送审）
+      if (pathname === '/api/hooks/opencode-policy' && req.method === 'GET') {
+        return sendJson(res, 200, deps.opencodePolicy());
       }
 
       // DSH 插件长轮询「接着问」追问

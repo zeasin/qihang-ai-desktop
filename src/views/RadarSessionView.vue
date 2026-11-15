@@ -274,7 +274,7 @@ const mergedMessages = computed(() => {
 // ========== 插入对话（pi / DSH 外部会话追问） ==========
 // 文本按 sessionId 暂存到审批通道（TTL 10 分钟），由原终端会话的扩展/插件长轮询取走注入执行，
 // 不接管不 fork：pi 走 pi-approver-gate，DSH 走 dsh-approver 插件；终端已关时按 TTL 过期。
-const FOLLOWUP_LABELS: Record<string, string> = { pi: 'Pi', dsh: 'DSH', 'claude-code': 'Claude Code' };
+const FOLLOWUP_LABELS: Record<string, string> = { pi: 'Pi', dsh: 'DSH', 'claude-code': 'Claude Code', opencode: 'OpenCode' };
 const followupSupported = computed(() => !!FOLLOWUP_LABELS[tool.value]);
 const followupHint = computed(() => {
   if (!followupSupported.value) return '';

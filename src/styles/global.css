@@ -180,6 +180,14 @@ body { display: flex; background: var(--bg-main); color: var(--text-primary); }
 .page-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 .page-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
+/* 通知栈固定在窗口右上角（见 AgentRadarView 的 .notice-stack）。
+   通知出现时给「今天」页页头右侧留出 404px，避免遮住「重新扫描」等按钮；
+   :has() 必须写在全局样式里——通知栈属于子组件，scoped 的 hash 对不上。 */
+.today-view:has(.notice-stack) .page-head {
+  padding-right: 404px;
+  transition: padding-right 0.18s ease;
+}
+
 .sec-label {
   display: flex;
   align-items: center;

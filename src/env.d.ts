@@ -9,7 +9,7 @@ interface TreeNode {
 /** 审批请求（桌面待审批面板 / 飞书卡片共用同一份结构） */
 interface ApprovalRequest {
   id: string;
-  agent: 'claude' | 'dsh';
+  agent: 'claude' | 'dsh' | 'pi' | 'opencode';
   sessionId: string;
   cwd: string;
   tool: string;
@@ -179,13 +179,26 @@ interface ElectronAPI {
         target: string;
         error?: string;
       };
+      opencodeGate?: {
+        targetDir: string;
+        file: string;
+        installed: boolean;
+        action: 'skipped' | 'installed' | 'updated' | 'failed' | 'none';
+        target: string;
+        error?: string;
+      };
     }>;
     chats: () => Promise<{ ok: boolean; error?: string; chats: { chatId: string; name: string }[] }>;
     apply: () => Promise<{ ok: boolean; error?: string }>;
     pending: () => Promise<ApprovalRequest[]>;
     history: (limit?: number) => Promise<ApprovalRequest[]>;
     decide: (id: string, decision: 'allow_once' | 'allow_session' | 'deny') => Promise<{ ok: boolean; error?: string }>;
-    deployGate: () => Promise<{ ok: boolean; error?: string; piGate: { installed: boolean; action: string; target: string; error?: string } }>;
+    deployGate: () => Promise<{
+      ok: boolean;
+      error?: string;
+      piGate: { installed: boolean; action: string; target: string; error?: string };
+      opencodeGate?: { installed: boolean; action: string; target: string; error?: string };
+    }>;
   };
   frpc: {
     status: () => Promise<{
