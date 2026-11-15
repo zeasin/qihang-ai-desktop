@@ -7,8 +7,7 @@ import logger from '../services/logger';
  * 对外端点（127.0.0.1）：
  *   POST /api/hooks/permission-request  Claude Code PermissionRequest hook（外部会话审批）
  *   POST /api/hooks/dsh-approval        DSH dsh-approver 插件审批转发（外部会话审批）
- *   POST /api/hooks/pi-approval         pi pi-approver-gate 扩展审批转发（外部会话审批）
- *   POST /api/hooks/task-done           外部 agent 回合结束上报（Claude Stop / DSH turn/end）
+ *   POST /api/hooks/task-done           外部 agent 回合结束上报（Claude Stop / DSH turn/end / pi agent_settled）
  *   POST /api/hooks/claude-stop         Claude Code Stop 快速通道：task-done 上报 + 挂起长轮询「继续」追问，
  *                                       取到返回 {"decision":"block","reason":...} 让终端原会话继续跑
  *   GET  /api/hooks/dsh-followup        DSH 插件长轮询「接着问」追问
@@ -34,7 +33,6 @@ export interface ApproverServerDeps {
   localTranscript(id: string): Promise<any[]>;
   hookPermissionRequest(body: any): Promise<any>;
   dshApprovalRequest(body: any): Promise<any>;
-  piApprovalRequest(body: any): Promise<any>;
   /** 外部 agent 回合结束上报：内部发完通知即返回，不等飞书 */
   taskDone(body: any): Promise<void>;
   /** Claude Code Stop 快速通道：task-done 上报后挂起等追问，返回 Stop hook 决策（block=继续跑 / 空=正常收尾） */
@@ -181,12 +179,6 @@ export function startApproverServer(deps: ApproverServerDeps): Promise<http.Serv
           return sendJson(res, 200, {});
         }
         return sendJsonLongPoll(res, deps.dshApprovalRequest(body));
-      }
-
-      // pi 审批转发入口：pi-approver-gate 扩展阻塞等决策，返回 { decision }
-      if (pathname === '/api/hooks/pi-approval' && req.method === 'POST') {
-        const body = await readBody(req);
-        return sendJsonLongPoll(res, deps.piApprovalRequest(body));
       }
 
       // 任务回合结束通知入口：立即 200，通知异步发（钩子侧不能等）

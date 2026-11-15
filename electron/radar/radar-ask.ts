@@ -184,13 +184,16 @@ export async function askRadar(question: string, modelPattern?: string): Promise
     q,
     '',
     '## 要求',
-    '1. 只依据片段内容回答，不要编造；片段不足以回答时明确说明哪些方面缺少信息。',
-    '2. 引用片段信息时标注来源编号，如 [S1]。',
+    '1. 只依据材料内容回答，不要编造；材料不足以回答时明确说明哪些方面缺少信息。',
+    '2. 引用材料信息时标注来源编号，如 [S1]；只能引用来源列表中实际存在的编号，不得编造编号。',
     '3. 用简洁的中文 markdown 回答，重点是结论和事实，不要复述检索过程。',
   ].join('\n');
 
   // 一次性问答：独立会话（不复用上下文，避免历史大 prompt 反复计费）；
   // 2 分钟硬超时快速失败——服务商限流（429）时 pi SDK 会无限退避重试，不设超时会一直挂在「思考中」
-  const answer = await generateWithPi({ prompt, sessionId: 'radar_' + Date.now(), modelPattern, timeoutMs: 120_000 });
+  const raw = await generateWithPi({ prompt, sessionId: 'radar_' + Date.now(), modelPattern, timeoutMs: 120_000 });
+  // 引用校验：模型偶尔编造 [S99] 这类越界编号（来源列表只有 refs.length 条），剔除防误导跳转
+  const valid = new Set(refs.map((_, i) => i + 1));
+  const answer = raw.replace(/\[S(\d+)\]/g, (m, n) => (valid.has(Number(n)) ? m : ''));
   return { answer, refs, hits: rows.length + sumHits.length };
 }

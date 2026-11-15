@@ -4,7 +4,8 @@
  * 分工：
  *   - 雷达（electron/radar/）保持只读观测，一个字不改；
  *   - 本模块是独立的「拦截通道」：托管 Claude Code（SDK canUseTool）与 DSH（ACP 反向请求）会话，
- *     同时接收外部会话的 hook 审批（Claude Code PermissionRequest hook / DSH dsh-approver 插件 / pi pi-approver-gate 扩展）；
+ *     同时接收外部会话的 hook 审批（Claude Code PermissionRequest hook / DSH dsh-approver 插件；
+ *     pi 已于 2026-11-15 拍板删除审批拦截，外部 pi 终端只走回合上报/接着问，不经本通道审批）；
  *   - 决策面走飞书（审批卡 + 原位更新 + 接着问表单），飞书不可用时 REST 兜底。
  * 按拍板：不设审批超时——挂起一直等，直到有人决策或会话死亡按拒绝收口。
  */
@@ -62,28 +63,6 @@ function hookDetail(toolName: string, input: any): string {
   let json = '';
   try { json = JSON.stringify(input) ?? ''; } catch { json = String(input); }
   return json.slice(0, 2000);
-}
-
-/**
- * pi 工具输入摘要/正文（pi 字段名与 Claude Code 不同：path 而非 file_path、oldText/newText 而非 old_string/new_string）。
- * 扩展侧通常已构建 detail 传入；本函数供 REST 直发 input 时兜底构建。
- */
-function summarizePiInput(toolName: string, input: any): { summary: string; detail: string } {
-  let json = '';
-  try { json = JSON.stringify(input) ?? ''; } catch { json = String(input); }
-  let detail = json;
-  if (toolName === 'bash' && typeof input?.command === 'string') {
-    detail = input.command;
-  } else if (toolName === 'write' && typeof input?.path === 'string') {
-    detail = `${input.path}\n${String(input.content ?? '').slice(0, 1500)}`;
-  } else if (toolName === 'edit' && typeof input?.path === 'string') {
-    const edits = Array.isArray(input.edits) ? input.edits : [];
-    const diff = edits
-      .map((e: any) => `- ${String(e?.oldText ?? '').slice(0, 500)}\n+ ${String(e?.newText ?? '').slice(0, 1000)}`)
-      .join('\n---\n');
-    detail = `${input.path}\n${diff}`;
-  }
-  return { summary: json.slice(0, 200), detail: detail.slice(0, 2000) };
 }
 
 class ApproverService {
@@ -291,8 +270,8 @@ class ApproverService {
     this.manager = manager;
 
     const port = Number(appConfig.getConfig('approverPort')) || 8790;
-    // 自动部署 pi-approver-gate 扩展到 ~/.pi/agent/extensions/：外部 pi CLI 终端审批依赖它，
-    // 漏装时拦截空转。失败不阻断启动，下次启动重试。
+    // 自动部署 pi-approver-gate 扩展到 ~/.pi/agent/extensions/：外部 pi 终端的回合上报/接着问依赖它。
+    // 失败不阻断启动，下次启动重试。
     this.lastPiGateDeploy = deployPiGate(port);
     this.server = await startApproverServer({
       port,
@@ -366,46 +345,6 @@ class ApproverService {
           inputSummary: String(body.reason || '').slice(0, 200) || toolName,
           detail,
         });
-        return { decision };
-      },
-      piApprovalRequest: async (body) => {
-        // 非法/不完整输入：返回空对象（2xx 无决策），pi-approver-gate 扩展按无决策放行
-        const toolName = body?.toolName;
-        if (!body || typeof toolName !== 'string' || !toolName) return {};
-        // 扩展侧通常已构建 inputSummary/detail；REST 直发 input 时兜底构建（pi 字段名）
-        let inputSummary = body.inputSummary;
-        let detail = body.detail;
-        if (body.input && !detail) {
-          const built = summarizePiInput(toolName, body.input);
-          inputSummary = inputSummary || built.summary;
-          detail = built.detail;
-        }
-        // 超时自动放行（拍板 2026-11-14）：外部 pi 终端要无人值守自动跑，不能死等人审批。
-        // piApprovalWaitSec（默认 60s，config.json 配置，0 除外）内无人决策 → 服务端按 allow_once
-        // 自动收口：卡片原位更新留痕（by auto-timeout），客户端拿到决策继续跑，不留僵尸挂起。
-        // 显式「拒绝」仍是硬拦截；恰好在超时瞬间有人拍板时以人的决策为准。
-        const rawWait = String(appConfig.getConfig('piApprovalWaitSec') || '').trim();
-        const waitSec = Number(rawWait);
-        const waitMs = rawWait !== '' && Number.isFinite(waitSec) && waitSec > 0 ? waitSec * 1000 : 60_000;
-        let approvalId = '';
-        const decisionPromise = center.request({
-          agent: 'pi',
-          sessionId: `pi-ext-${String(body.sessionId || body.cwd || 'unknown').slice(0, 40)}`,
-          cwd: String(body.cwd || ''),
-          tool: toolName,
-          inputSummary: String(inputSummary || '').slice(0, 200),
-          detail: String(detail || '').slice(0, 2000),
-        }, (id) => { approvalId = id; });
-        const decision = await Promise.race([
-          decisionPromise,
-          new Promise<null>((r) => setTimeout(() => r(null), waitMs).unref?.()),
-        ]);
-        if (decision === null) {
-          const resolved = center.resolve(approvalId, 'allow_once', 'auto-timeout');
-          if (resolved !== 'ok') return { decision: await decisionPromise }; // 超时瞬间已被人工决策
-          logger.info('[Approver] pi 审批超时自动放行 %s（等待 %ss 无人拍板）', approvalId.slice(0, 8), waitMs / 1000);
-          return { decision: 'allow_once' };
-        }
         return { decision };
       },
       taskDone: async (body) => {

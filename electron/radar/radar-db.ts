@@ -401,6 +401,12 @@ export class RadarDb {
     `).run(summary || '', msgCount || 0, Date.now(), tool, sessionId);
   }
 
+  /** 会话标题写回（worker 写入端专用；摘要驱动的低质标题升级，标题也参与会话级检索） */
+  updateTitle(tool: string, sessionId: string, title: string): void {
+    this.db.prepare(`UPDATE radar_session SET title = ? WHERE tool = ? AND session_id = ?`)
+      .run(String(title || ''), tool, sessionId);
+  }
+
   /**
    * 需要补/重摘的高价值会话（存量补摘要用，最新优先）：没摘要的、
    * 摘要后新内容 ≥4 条的、或源被重采缩水的（摘要比消息还多，摘要是旧素材留底）。

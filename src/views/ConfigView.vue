@@ -415,11 +415,11 @@
           <template v-if="approverStatus.lastError"> ｜ 错误：{{ approverStatus.lastError }}</template>
         </div>
 
-        <!-- pi CLI 终端审批扩展自动部署 -->
+        <!-- pi CLI 终端上报扩展自动部署 -->
         <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg);">
-          <div style="font-size:13px;font-weight:600;margin-bottom:4px;">pi CLI 终端审批扩展</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px;">pi CLI 终端上报扩展</div>
           <div class="text-muted" style="font-size:12px;margin-bottom:8px;">
-            拦截 pi CLI 终端的 bash/edit/write，推送飞书审批卡。扩展随审批通道启动自动部署到
+            外部 pi CLI 终端的回合完成/失败通知与「接着问」依赖此扩展（不做工具审批拦截）。扩展随审批通道启动自动部署到
             <code>~/.pi/agent/extensions/pi-approver-gate.ts</code>，无需手动复制。
           </div>
           <div v-if="piGateStatus" class="text-muted" style="font-size:12px;margin-bottom:8px;">

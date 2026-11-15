@@ -24,7 +24,8 @@ interface StartPayload {
 
 type WorkerInMessage = StartPayload | { type: 'scan-now' } | { type: 'stop' }
   | { type: 'unfreeze'; tool: string; sessionId: string }
-  | { type: 'save-summary'; tool: string; sessionId: string; summary: string; msgCount: number };
+  | { type: 'save-summary'; tool: string; sessionId: string; summary: string; msgCount: number }
+  | { type: 'save-title'; tool: string; sessionId: string; title: string };
 
 const post = (msg: any): void => {
   try { parentPort?.postMessage(msg); } catch { /* 主进程已退出等场景 */ }
@@ -112,6 +113,10 @@ if (parentPort) {
         const tool = String(msg.tool || '');
         const sessionId = String(msg.sessionId || '');
         if (db && tool && sessionId) db.saveSummary(tool, sessionId, String(msg.summary || ''), Number(msg.msgCount) || 0);
+      } else if (msg.type === 'save-title') {
+        const tool = String(msg.tool || '');
+        const sessionId = String(msg.sessionId || '');
+        if (db && tool && sessionId) db.updateTitle(tool, sessionId, String(msg.title || ''));
       } else if (msg.type === 'stop') {
         void stop().then(() => process.exit(0));
       }

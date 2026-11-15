@@ -193,5 +193,27 @@ async function digestOne(tool: string, sessionId: string): Promise<void> {
   const summary = (await generateWithPi({ prompt, sessionId: 'radar_digest_' + Date.now(), timeoutMs: 120_000 })).trim();
   if (!summary) return;
   agentRadar.saveSummary(tool, sessionId, summary.slice(0, 2000), info.messageCount || 0);
+  upgradeTitle(tool, sessionId, summary, info.title || '');
   logger.info('[RadarDigest] 摘要完成: %s/%s %s字', tool, sessionId.slice(0, 24), summary.length);
+}
+
+const MIN_TITLE_CHARS = 6;  // 标题少于该字数视为低质（「你好」「继续任务」），摘要完成后升级
+const TITLE_CHARS = 30;     // 生成标题的截断长度
+
+/** 从摘要「做了什么」段生成短标题；提取不到就退回摘要首行 */
+export function buildTitleFromSummary(summary: string): string {
+  const s = String(summary || '');
+  const m = s.match(/\*\*做了什么\*\*[：:]?\s*(.+)/);
+  const raw = (m ? m[1] : s.split('\n')[0] || '').replace(/\*\*/g, '').replace(/^[：:\s]+/, '').trim();
+  return raw.slice(0, TITLE_CHARS);
+}
+
+/** 低质标题升级：空/占位/过短的标题用摘要生成的新标题写回（标题同时参与会话级检索，升级即检索面变好） */
+function upgradeTitle(tool: string, sessionId: string, summary: string, oldTitle: string): void {
+  const t = String(oldTitle || '').trim();
+  if (t.length >= MIN_TITLE_CHARS && !/^(?:（无标题）|\(无标题\))$/.test(t)) return;
+  const next = buildTitleFromSummary(summary);
+  if (next.length < 4) return;
+  agentRadar.updateTitle(tool, sessionId, next);
+  logger.info('[RadarDigest] 标题升级: %s/%s 「%s」→「%s」', tool, sessionId.slice(0, 16), t, next);
 }

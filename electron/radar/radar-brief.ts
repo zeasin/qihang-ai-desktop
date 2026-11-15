@@ -1,6 +1,7 @@
 /**
  * 昨日简报：雷达 AI 简报（替代今天页原规则「引擎简报」）。
  * 内容三块：昨日 AI 工具动态（昨日采集会话聚合）+ 昨日笔记库动态（昨天更新的文档）+ 今日待办（实时）。
+ * 笔记库内容由笔记库子助手读原文摘录提炼，不进会话分片；子助手失败时原文摘录直接降级给主汇总。
  * 策略：按「昨日日期」缓存（内存 + 重启后从落盘文件恢复）；当天首次生成后落盘笔记库「日报/AI活动/<昨日日期>.md」并推送飞书一次；
  * 手动刷新重新生成并覆盖落盘文件（不重推，防刷屏）。昨日无任何 AI 会话与文档更新时不调 AI。
  * 所有时间取本机本地时间（禁止 UTC 转换）。
@@ -16,9 +17,12 @@ import { extractDigest } from '../services/note-digest';
 import { generateWithPi } from '../services/ai-tools';
 import logger from '../services/logger';
 
-const SHARD_THRESHOLD = 20;    // 会话与文档合计超过该数量后分片
+const SHARD_THRESHOLD = 20;    // 昨日会话超过该数量后分片（文档走笔记库子助手，不计入分片）
 const SHARD_SIZE = 10;
 const MAX_PARALLEL = 3;
+const NOTE_PER_FILE_CHARS = 1500;   // 笔记摘录单篇上限
+const NOTE_TOTAL_CHARS = 16_000;    // 笔记摘录总预算（篇数极多时按篇均摊，下限 200）
+const NOTE_SUMMARY_CHARS = 4000;    // 笔记库子助手输出并入主汇总的上限
 const PER_MSG_CHARS = 200;     // 会话首条用户消息截断
 const BRIEF_TIMEOUT_MS = 120_000;
 const SAVE_DIR = '日报/AI活动';
@@ -58,11 +62,10 @@ function fmtTs(ts: number): string {
 }
 
 /** 昨日 AI 会话聚合：标题 + 摘要 + 首条用户消息（廉价探针，每会话只取头部几条） */
-function collectAiSide(range: { start: number; end: number }): { lines: string[]; count: number; included: number } {
-  const result = agentRadar.sessionsByRange(range.start, range.end, MAX_SESSIONS);
-  const sessions = result.rows;
+function collectAiSide(range: { start: number; end: number }): { lines: string[]; count: number } {
+  const result = agentRadar.sessionsByRange(range.start, range.end, null);
   const lines: string[] = [];
-  for (const s of sessions) {
+  for (const s of result.rows) {
     let firstAsk = '';
     try {
       const msgs = agentRadar.sessionMessages(String(s.tool), String(s.sessionId)) || [];
@@ -74,11 +77,14 @@ function collectAiSide(range: { start: number; end: number }): { lines: string[]
     if (firstAsk) seg.push(`  首条请求：${firstAsk}`);
     lines.push(seg.join('\n'));
   }
-  return { lines, count: result.total, included: sessions.length };
+  return { lines, count: result.total };
 }
 
 /** 昨日笔记库动态：当天更新的文档；待办/跟进为实时状态（归「今日待办」节） */
-function collectNoteSide(range: { start: number; end: number }): { lines: string[]; pendingTodos: number; followups: number; dayFiles: string[] } {
+function collectNoteSide(range: { start: number; end: number }): {
+  lines: string[]; pendingTodos: number; followups: number; dayFiles: string[];
+  excerpts: Array<{ label: string; content: string }>;
+} {
   const lines: string[] = [];
   let pendingTodos = 0;
   let followups = 0;
@@ -88,10 +94,25 @@ function collectNoteSide(range: { start: number; end: number }): { lines: string
     followups = (d?.followups || []).filter((f: any) => !f.done).length;
     if (followups) lines.push(`- 跟进事项 ${followups} 条`);
   } catch { /* 笔记库未配置时跳过 */ }
-  const dayFiles = (projectScan.collectRecentFiles(null, range) || [])
-    .map((f: any) => `${f.rel}（${f.projectName}，${fmtTs(f.mtime)}）`);
-  if (dayFiles.length) lines.push(`- 昨天更新的文档 ${dayFiles.length} 篇：` + dayFiles.slice(0, 8).join('；'));
-  return { lines, pendingTodos, followups, dayFiles };
+  const files = projectScan.collectRecentFiles(null, range) || [];
+  const dayFiles = files.map((f: any) => `${f.rel}（${f.projectName}，${fmtTs(f.mtime)}）`);
+  const allotment = Math.min(NOTE_PER_FILE_CHARS, Math.max(200, Math.floor(NOTE_TOTAL_CHARS / Math.max(files.length, 1))));
+  const excerpts = files
+    .map((f: any) => ({ label: `${f.rel}（${f.projectName}）`, content: readDocExcerpt(f.full, allotment) }))
+    .filter((x: any) => x.content);
+  return { lines, pendingTodos, followups, dayFiles, excerpts };
+}
+
+/** 单篇文档摘录：剥 frontmatter 后按 allotment 截断；读取失败返回空（该篇不进子助手） */
+function readDocExcerpt(full: string, allotment: number): string {
+  try {
+    return fs.readFileSync(full, 'utf-8')
+      .replace(/^---\r?\n[\s\S]*?\r?\n---/, '')
+      .trim()
+      .slice(0, allotment);
+  } catch {
+    return '';
+  }
 }
 
 /** 今日待办（实时状态）：本地待办 + 笔记库提炼待办 */
@@ -177,6 +198,126 @@ function loadBriefFromFile(dk: string): { brief: string; generatedAt: string } |
   }
 }
 
+/** 有界并发任务池：结果按提交顺序返回；任务自身负责兜底，不得 reject */
+async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= tasks.length) return;
+      results[i] = await tasks[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+  return results;
+}
+
+/**
+ * 笔记库子助手：把昨天更新的文档内容摘录提炼成清单，供主汇总合并。
+ * 摘录由代码确定性读取（完整性由枚举保证，子助手只负责提炼）；失败时原文摘录降级给主汇总，内容不丢。
+ */
+async function runNoteSubAgent(dk: string, excerpts: Array<{ label: string; content: string }>, runId: number): Promise<string> {
+  const source = excerpts.map((x) => `### ${x.label}\n${x.content}`).join('\n\n');
+  try {
+    const text = await generateWithPi({
+      prompt: [
+        '你是「昨日简报」笔记库子助手。昨天是 ' + dk + '，以下是笔记库中昨天更新的 ' + excerpts.length + ' 篇文档的内容摘录（超出预算的部分被截断）。',
+        '逐篇提炼：更新了什么主题与内容，给出关键结论、决定或新增待办。保留每篇文档名；不同文档不得合并或漏掉；截断处不要推测补全；不要编造。只输出精炼清单。',
+        '',
+        source,
+      ].join('\n'),
+      sessionId: `brief_${dk}_${runId}_note`,
+      timeoutMs: BRIEF_TIMEOUT_MS,
+    });
+    return text.trim().slice(0, NOTE_SUMMARY_CHARS);
+  } catch (e: any) {
+    logger.warn('[RadarBrief] 笔记库子助手提炼失败，原始摘录直接并入主汇总: %s', e?.message || e);
+    return '【笔记库子助手提炼失败，以下为原始摘录，主汇总必须覆盖】\n' + source;
+  }
+}
+
+async function generateBrief(
+  dk: string,
+  ai: { lines: string[]; count: number },
+  note: { lines: string[]; pendingTodos: number; followups: number; dayFiles: string[]; excerpts: Array<{ label: string; content: string }> },
+  todos: string[],
+): Promise<string> {
+  const runId = Date.now();
+  const noteList = [...note.lines, ...note.dayFiles.map((file) => `- ${file}`)];
+  const noteHeading = '## 昨日笔记库动态（当前未勾待办 ' + note.pendingTodos + ' 项，跟进 ' + note.followups + ' 条，昨天更新文档 ' + note.dayFiles.length + ' 篇）';
+  const requirements = [
+    '## 要求',
+    '1. 只依据提供的内容，不要编造；某方面没有信息就不要写；所有会话与文档时间均为昨天（' + dk + '），标题和正文不得出现其他日期。',
+    '2. 结构：先一段 2-3 句的总体概述，再用「### 昨日动态」与「### 今日待办」两个小节分点陈述；待办清单原样列出（可精简文字），不要总结成一句话。',
+    '3. 语言精炼（全文 400 字以内），突出做了什么、有什么值得注意的，不复述原始细节。',
+  ].join('\n');
+
+  if (ai.lines.length <= SHARD_THRESHOLD) {
+    const noteSummary = note.excerpts.length ? await runNoteSubAgent(dk, note.excerpts, runId) : '';
+    const ctx = [
+      '## 昨日 AI 工具动态（共 ' + ai.count + ' 个会话）',
+      ai.lines.join('\n') || '（无）',
+      '',
+      noteHeading,
+      noteSummary || noteList.join('\n') || '（无）',
+      '',
+      '## 今日待办（实时）',
+      todos.join('\n') || '（无）',
+    ].join('\n');
+    const prompt = [
+      '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话与笔记库提炼的昨日动态，以及今日待办清单，请汇总成一份简洁的中文 markdown 简报。',
+      '', ctx, '', requirements,
+    ].join('\n');
+    return generateWithPi({ prompt, sessionId: 'brief_' + dk, timeoutMs: BRIEF_TIMEOUT_MS });
+  }
+
+  // 会话分片 + 笔记库子助手同池竞争，并发上限 MAX_PARALLEL
+  const shards: string[][] = [];
+  for (let i = 0; i < ai.lines.length; i += SHARD_SIZE) shards.push(ai.lines.slice(i, i + SHARD_SIZE));
+  const tasks: Array<() => Promise<string>> = shards.map((lines, index) => async () => {
+    const source = lines.join('\n');
+    try {
+      return await generateWithPi({
+        prompt: [
+          '你是「昨日简报」分片提炼助手。昨天是 ' + dk + '，这是第 ' + (index + 1) + '/' + shards.length + ' 个分片。',
+          '逐条提炼每项的核心动作、结果、关键决策和待办，保留工具、项目或文档名称；不同事项不得合并或漏掉，不要编造。只输出本分片的精炼清单。',
+          '', source,
+        ].join('\n'),
+        sessionId: `brief_${dk}_${runId}_shard_${index + 1}`,
+        timeoutMs: BRIEF_TIMEOUT_MS,
+      });
+    } catch (e: any) {
+      logger.warn('[RadarBrief] 分片 %s 提炼失败，保留原文参与主汇总: %s', index + 1, e?.message || e);
+      return '【本分片提炼失败，以下为原始内容，主汇总必须覆盖】\n' + source;
+    }
+  });
+  if (note.excerpts.length) tasks.push(() => runNoteSubAgent(dk, note.excerpts, runId));
+
+  const results = await runPool(tasks, MAX_PARALLEL);
+  const shardResults = results.slice(0, shards.length);
+  const noteSummary = note.excerpts.length ? results[shards.length] : '';
+  const degraded = shardResults.filter((r) => r.startsWith('【本分片提炼失败')).length;
+
+  const prompt = [
+    '你是「昨日简报」主汇总助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。下面是覆盖昨日全部 ' + ai.count + ' 个会话的 ' + shards.length + ' 份分片结果，以及笔记库子助手对昨天更新文档的提炼。',
+    '综合全部分片：重复事项去重，不同项目、工具或文档的独立事项不得错误合并；失败分片附带的原文也必须纳入。不要只关注前几个分片。',
+    '输出中不要提及分片、并行、数据来源或统计口径等过程性说明。',
+    '',
+    '## 分片结果',
+    ...shardResults.map((text, index) => `### 分片 ${index + 1}/${shards.length}\n${text}`),
+    '',
+    noteHeading,
+    noteSummary || noteList.join('\n') || '（无）',
+    '',
+    '## 今日待办（实时）',
+    todos.join('\n') || '（无）',
+    '', requirements,
+  ].join('\n');
+  logger.info('[RadarBrief] 自适应分片: %s 个会话 → %s 片 + 笔记库子助手 %s 篇摘录，最多 %s 路并行，失败降级 %s 片', ai.lines.length, shards.length, note.excerpts.length, MAX_PARALLEL, degraded);
+  return generateWithPi({ prompt, sessionId: `brief_${dk}_${runId}`, timeoutMs: BRIEF_TIMEOUT_MS });
+}
+
 /**
  * 昨日简报主入口。force=true 手动刷新（重新生成并覆盖落盘，不重推）。
  * 回顾昨日 AI/笔记动态，附今日待办（实时）。
@@ -211,29 +352,7 @@ export async function getBrief(force = false): Promise<any> {
         return { ok: true, empty: true, brief: '' };
       }
 
-      const ctx = [
-        '## 昨日 AI 工具动态（共 ' + ai.count + ' 个会话' + (ai.included < ai.count ? '，以下最近 ' + ai.included + ' 个' : '') + '）',
-        ai.lines.join('\n') || '（无）',
-        '',
-        '## 昨日笔记库动态（当前未勾待办 ' + note.pendingTodos + ' 项，跟进 ' + note.followups + ' 条）',
-        note.lines.join('\n') || '（无）',
-        '',
-        '## 今日待办（实时）',
-        todos.join('\n') || '（无）',
-      ].join('\n');
-
-      const prompt = [
-        '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话与笔记库提炼的昨日动态，以及今日待办清单，请汇总成一份简洁的中文 markdown 简报。',
-        '',
-        ctx,
-        '',
-        '## 要求',
-        '1. 只依据提供的内容，不要编造；某方面没有信息就不要写；所有会话与文档时间均为昨天（' + dk + '），标题和正文不得出现其他日期。',
-        '2. 结构：先一段 2-3 句的总体概述，再用「### 昨日动态」与「### 今日待办」两个小节分点陈述；待办清单原样列出（可精简文字），不要总结成一句话。',
-        '3. 语言精炼（全文 400 字以内），突出做了什么、有什么值得注意的，不复述原始细节。',
-      ].join('\n');
-
-      const brief = await generateWithPi({ prompt, sessionId: 'brief_' + dk, timeoutMs: BRIEF_TIMEOUT_MS });
+      const brief = await generateBrief(dk, ai, note, todos);
       const generatedAt = dateKey() + ' ' + timeLabel();
       cacheDate = dk;
       cacheBrief = brief;

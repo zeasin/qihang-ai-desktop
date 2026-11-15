@@ -231,12 +231,12 @@
 
       <div class="card" id="sec-approval">
         <h2>🛡️ 飞书审批通道</h2>
-        <p class="text-muted mb-2">针对外部 AI 工具会话的「拦截通道」：当 Claude Code / pi / DSH 要执行敏感操作（如写文件、跑命令）时，推送飞书审批卡，你在手机上就能放行或拒绝；任务回合完成、失败也会实时通知到飞书。</p>
+        <p class="text-muted mb-2">针对外部 AI 工具会话的「拦截通道」：当 Claude Code / DSH 要执行敏感操作（如写文件、跑命令）时，推送飞书审批卡，你在手机上就能放行或拒绝；外部 pi 会话不拦截工具调用，只在任务回合完成、失败时实时通知到飞书。</p>
         <table class="help-table">
           <thead><tr><th>通道</th><th>说明</th></tr></thead>
           <tbody>
           <tr><td>Claude Code</td><td>通过本地 HTTP hook（127.0.0.1:8790）拦截工具调用，仅 CLI 会话生效（App 内会话走原生弹框）；hook 覆盖全部工具</td></tr>
-          <tr><td>pi</td><td>通过 pi 扩展（pi-approver-gate）实现，随审批通道启动自动部署；<b>默认完全关闭拦截</b>（工具调用零拦截，与工作台是否启动完全无关），仅保留回合完成/失败通知与追问能力，显式开启后才拦截</td></tr>
+          <tr><td>pi</td><td>通过 pi 扩展（pi-approver-gate）实现，随审批通道启动自动部署；<b>不做工具审批拦截</b>（拍板 2026-11-15 删除，pi 终端全自动原生速度运行），仅保留回合完成/失败通知与「接着问」追问能力</td></tr>
           <tr><td>DSH</td><td>通过 ACP 反向请求拦截，DSH 桌面端默认安装路径已内置</td></tr>
           </tbody>
         </table>

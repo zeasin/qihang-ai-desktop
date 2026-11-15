@@ -200,6 +200,17 @@ class AgentRadarService {
     }
   }
 
+  /** 会话标题写回（转交 worker 写入端；worker 未运行时静默丢弃） */
+  updateTitle(tool: string, sessionId: string, title: string): boolean {
+    if (!this.worker) return false;
+    try {
+      this.worker.postMessage({ type: 'save-title', tool, sessionId, title });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   status(): any {
     const enabled = this.isEnabled();
     const db = this.queryDb();

@@ -12,9 +12,9 @@
  *     托管的文件，用户手改属例外，以工作台内置版为准——与 Claude hook 同策略）。
  *   - 端口注入：扩展默认写死 8790，部署时按当前 approverPort 生成 PI_APPROVER_URL
  *     覆盖行，端口变化也触发重新部署。
- *   - 拦截开关注入：拍板 2026-11-14 起，部署时注入 PI_APPROVER_TOOLS=__disabled__
- *     彻底关闭工具拦截（pi 外部终端全自动原生速度运行，回合上报/接着问照常）；
- *     恢复审批拦截需改本文件去掉该注入行。
+ *   - 拦截已删除：拍板 2026-11-15 起，pi-approver-gate 扩展不再拦截工具调用（此前先注入
+ *     PI_APPROVER_TOOLS=__disabled__ 关闭、2026-11-15 连拦截代码一并删除），现只做回合
+ *     上报/接着问；部署只注入 PI_APPROVER_URL。
  *   - 失败不阻断启动：写不进去（权限/磁盘）只记日志，下次启动再试。
  */
 import * as fs from 'node:fs';
@@ -57,11 +57,11 @@ function readBuiltinSource(): string | null {
   }
 }
 
-/** 源码尾部追加部署覆盖行：审批端点端口 + 工具拦截开关（配置变化时重新注入） */
+/** 源码尾部追加部署覆盖行：审批端点端口（配置变化时重新注入） */
 function injectEnvOverrides(source: string, port: number): string {
-  // 已含注入块：先剥掉旧块再追加新块（配置变化重新注入；兼容旧块名 port override）
+  // 已含注入块：先剥掉旧块再追加新块（配置变化重新注入；兼容旧块名 port override / env overrides）
   const base = source.replace(/\n\/\/ ---- auto-deploy (?:port override|env overrides).*\n/s, '');
-  return `${base}\n// ---- auto-deploy env overrides (by qihang-ai-desktop, do not edit) ----\nprocess.env.PI_APPROVER_URL = 'http://127.0.0.1:${port}/api/hooks/pi-approval';\n// 拍板 2026-11-14：pi 外部终端彻底关闭工具拦截，全自动按原生速度运行。\n// 回合完成/失败上报与「接着问」不受此开关影响，照常生效。\n// 如需恢复审批拦截，删除下面这一行即可。\nprocess.env.PI_APPROVER_TOOLS = '__disabled__';\n`;
+  return `${base}\n// ---- auto-deploy env overrides (by qihang-ai-desktop, do not edit) ----\nprocess.env.PI_APPROVER_URL = 'http://127.0.0.1:${port}/api/hooks/pi-approval';\n`;
 }
 
 export interface PiGateDeployResult {

@@ -1,83 +1,37 @@
-// pi-approver-gate —— 启航 AI 工作台飞书审批网关（pi CLI 终端用）
+// pi-approver-gate —— 启航 AI 工作台外部 pi 终端上报桥（回合通知 + 接着问）
 //
-// 安装：复制到 ~/.pi/agent/extensions/pi-approver-gate.ts（全局）或 .pi/extensions/（项目）。
-// 作用：拦截 bash/edit/write 的 tool_call，挂起 POST 到工作台审批通道
-//   http://127.0.0.1:<approverPort>/api/hooks/pi-approval，等飞书决策后放行/阻止。
-//   决策经飞书卡片（允许一次 / 本会话放行 / 拒绝），与 Claude Code hook、DSH 插件同源。
+// 安装：由启航工作台自动部署到 ~/.pi/agent/extensions/pi-approver-gate.ts，无需手动复制
+// （文件名固定不改：改名会在用户扩展目录残留旧文件）。
+// 作用（拍板 2026-11-15：审批拦截彻底删除，本扩展不再拦截任何工具调用，pi 终端全自动原生速度运行）：
+//   - 回合上报：agent_settled 时 POST http://127.0.0.1:<approverPort>/api/hooks/task-done，
+//     工作台/飞书收到任务完成、失败通知（雷达页/桌面系统通知同源）。
+//   - 「接着问」：回合收口后长轮询 GET /api/hooks/pi-followup，取走工作台/飞书提交的追问，
+//     pi.sendUserMessage() 注入终端原会话继续执行（与 DSH 插件同模式，不接管不 fork）。
 //
-// 契约：
-//   - 请求体：{ sessionId, cwd, toolName, toolCallId, inputSummary, detail }
-//   - 响应体：{ decision: 'allow_once' | 'allow_session' | 'deny' } 或 {}（无决策）
-//   - allow_once  → 放行这一次（返回 undefined，工具照常执行）
-//   - allow_session → 本会话放行该工具（写 allowlist，后续同工具不再问），本次放行
-//   - deny        → { block: true, reason }（工具不执行，reason 回喂 agent）
-//   - 空响应/服务不可达/请求中止 → 放行（拍板 2026-11-14：pi 要无人值守自动跑，
-//     不因工作台缺位卡死；服务端等 piApprovalWaitSec(60s) 无人拍板也会自动放行收口）
+// task-done 请求体：{ source:'pi', sessionId, cwd, task, result, ok, durationMs, [reason/errorMessage] }
 //
 // 与托管会话隔离：
 //   启航工作台 in-process SDK 会话（桌面对话/飞书/日报/定时任务）由 pi-agent.ts 设
 //   PI_APPROVER_GATE=off（及 AGENTHUB_PI_TOOLS=__qihang_disabled__ 向后兼容），
-//   本扩展据此跳过拦截、自由执行——无人值守场景没人点批准。用户单独开的 pi CLI 终端
-//   不设此变量，按原策略走飞书审批。
+//   本扩展据此跳过——托管会话的回合通知走工作台内部通道，不需要终端上报。
+//   用户单独开的 pi CLI 终端不设此变量，回合上报/接着问生效。
 //
 // 环境变量：
-//   PI_APPROVER_URL     端点，默认 http://127.0.0.1:8790/api/hooks/pi-approval
-//   PI_APPROVER_TOOLS   拦截工具集（逗号分隔），默认 bash,edit,write；__disabled__=全关
-//                       （工作台 auto-deploy 部署时注入 __disabled__：外部 pi 终端全自动不拦截）
+//   PI_APPROVER_URL     工作台端点，默认 http://127.0.0.1:8790/api/hooks/pi-approval；
+//                       task-done / pi-followup 由它派生同端口路径（路径名保留为部署兼容，见 pi-gate-deploy.ts）
 //   PI_APPROVER_GATE    off=关闭本扩展（托管会话自动设）
 //   AGENTHUB_PI_TOOLS   === __qihang_disabled__ 时也关闭（pi-agent.ts 既有哨兵，向后兼容）
-//   PI_APPROVER_FETCH_MS 单次请求超时，默认 3660000（61 分钟兜底硬顶；服务端 pi 等待 60s 即自动放行）
 
-import type { ExtensionAPI, ToolCallEvent, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_URL = "http://127.0.0.1:8790/api/hooks/pi-approval";
-const DEFAULT_TOOLS = ["bash", "edit", "write"];
-const DEFAULT_FETCH_MS = 3_660_000; // 61 分钟兜底硬顶；正常情况下服务端 60s 无拍板即自动放行返回
 
-/** 本扩展是否启用：托管会话里 pi-agent.ts 设了 off 哨兵 → 跳过拦截 */
+/** 本扩展是否启用：托管会话里 pi-agent.ts 设了 off 哨兵 → 跳过上报/追问 */
 function gateEnabled(): boolean {
   if (process.env.PI_APPROVER_GATE === "off") return false;
   // 向后兼容 pi-agent.ts 既有的 AGENTHUB_PI_TOOLS 哨兵（同一进程内已设）
   if (process.env.AGENTHUB_PI_TOOLS === "__qihang_disabled__") return false;
   return true;
-}
-
-/** 拦截的工具集 */
-function gatedTools(): Set<string> {
-  const raw = (process.env.PI_APPROVER_TOOLS || "").trim();
-  if (!raw) return new Set(DEFAULT_TOOLS);
-  if (raw === "__disabled__") return new Set();
-  return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
-}
-
-/** pi 工具输入摘要（≤200 字符） */
-function buildSummary(toolName: string, input: any): string {
-  if (toolName === "bash" && typeof input?.command === "string") return input.command.slice(0, 200);
-  try {
-    return (JSON.stringify(input) ?? "").slice(0, 200);
-  } catch {
-    return String(input).slice(0, 200);
-  }
-}
-
-/** pi 工具输入正文（pi 字段名：path 而非 file_path、oldText/newText 而非 old_string/new_string） */
-function buildDetail(toolName: string, input: any): string {
-  if (toolName === "bash" && typeof input?.command === "string") return input.command;
-  if (toolName === "write" && typeof input?.path === "string") {
-    return `${input.path}\n${String(input.content ?? "").slice(0, 1500)}`;
-  }
-  if (toolName === "edit" && typeof input?.path === "string") {
-    const edits = Array.isArray(input.edits) ? input.edits : [];
-    const diff = edits
-      .map((e: any) => `- ${String(e?.oldText ?? "").slice(0, 500)}\n+ ${String(e?.newText ?? "").slice(0, 1000)}`)
-      .join("\n---\n");
-    return `${input.path}\n${diff}`;
-  }
-  try {
-    return JSON.stringify(input) ?? "";
-  } catch {
-    return String(input);
-  }
 }
 
 /** 会话 id：优先 sessionManager.getSessionId()，退回 cwd */
@@ -114,110 +68,21 @@ function log(msg: string): void {
 
 export default function (pi: ExtensionAPI): void {
   const url = (process.env.PI_APPROVER_URL || DEFAULT_URL).trim();
-  const gated = gatedTools();
-  const fetchMs = Number(process.env.PI_APPROVER_FETCH_MS) > 0
-    ? Number(process.env.PI_APPROVER_FETCH_MS)
-    : DEFAULT_FETCH_MS;
-  /** sessionId -> 已放行的工具名集合（allow_session 落账，仅 allow_session 写，allow_once 不写） */
-  const allowCache = new Map<string, Set<string>>();
-
-  if (gated.size === 0) {
-    log("拦截工具集为空（PI_APPROVER_TOOLS=__disabled__），扩展不生效");
-  }
-
-  pi.on("tool_call", async (event: ToolCallEvent, ctx): Promise<ToolCallEventResult | undefined> => {
-    if (!gateEnabled()) return; // 托管会话：自由执行
-    if (ctx?.signal?.aborted) return; // agent 已中止：不拦
-
-    const toolName = String((event as any).toolName || "");
-    if (!toolName || !gated.has(toolName)) return; // 非拦截工具：放行
-
-    const sid = sessionKey(ctx);
-    // 本会话已放行该工具：直接放行（不重复问）
-    if (sid && allowCache.get(sid)?.has(toolName)) return;
-
-    const input = (event as any).input ?? {};
-    const summary = buildSummary(toolName, input);
-    const detail = buildDetail(toolName, input);
-
-    log(`拦截 ${toolName} session=${sid ? sid.slice(0, 24) : "?"} ${summary.slice(0, 80)}`);
-
-    // 把 agent 中止信号链到 fetch：用户 Ctrl+C 时尽快退出等待
-    const ac = new AbortController();
-    const onAbort = (): void => ac.abort();
-    try {
-      ctx?.signal?.addEventListener?.("abort", onAbort, { once: true });
-    } catch { /* ignore */ }
-    const timer = setTimeout(() => ac.abort(), fetchMs);
-
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: ac.signal,
-        body: JSON.stringify({
-          sessionId: sid,
-          cwd: ctx?.cwd || "",
-          toolName,
-          toolCallId: (event as any).toolCallId || "",
-          inputSummary: summary,
-          detail,
-        }),
-      });
-      const body = res.ok ? await res.json() : null;
-      const decision = body?.decision;
-
-      if (decision === "allow_once") {
-        log(`放行(允许一次) ${toolName}`);
-        return; // 执行这一次
-      }
-      if (decision === "allow_session") {
-        if (sid) {
-          if (!allowCache.has(sid)) allowCache.set(sid, new Set());
-          allowCache.get(sid)!.add(toolName);
-        }
-        log(`放行(本会话放行) ${toolName}`);
-        return; // 执行，后续同工具自动放行
-      }
-      if (decision === "deny") {
-        log(`拒绝 ${toolName}`);
-        return { block: true, reason: "已在启航AI工作台（飞书）拒绝" };
-      }
-      // 服务端超时返回空决策：放行（服务端已改为超时自动放行收口，空响应仅是兜底）
-      log(`服务端未返回决策，放行 ${toolName}`);
-      return;
-    } catch (e: any) {
-      // daemon 未起 / 网络错误 / 请求中止：放行（外部 pi 终端要自动正常运行，不因工作台缺位卡死）
-      const reason = String(e?.message || e).slice(0, 120);
-      log(`审批服务不可用，放行 ${toolName}：${reason}`);
-      return;
-    } finally {
-      clearTimeout(timer);
-      try {
-        ctx?.signal?.removeEventListener?.("abort", onAbort);
-      } catch { /* ignore */ }
-    }
-  });
-
-  // ---- 任务回合上报：agent_settled 时 POST /api/hooks/task-done（fire-and-forget，不阻塞）----
-  // 只在外部 pi CLI 终端生效（gateEnabled()=true）；in-process 托管会话设了 PI_APPROVER_GATE=off 不上报。
-  // 时机必须用 agent_settled 而非 agent_end：agent_end 是「一次低层 run 结束」，
-  // 出错自动重试/压缩恢复/排队追问都会再触发新的 run，在 agent_end 上报会收到多条中间假通知；
-  // agent_settled 表示 pi 已无任何自动续跑，才是整个回合的真正收口（官方 notify.ts 示例同此用法）。
+  // task-done / pi-followup 端点：从上报端点派生（同端口）
+  const taskDoneUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/task-done");
+  const followupUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/pi-followup");
+  const POLL_WAIT_MS = 25_000; // 服务端长轮询挂起时长（与 DSH 插件一致）
+  const POLL_TTL_MS = 10 * 60_000; // 与服务端暂存 TTL 对齐，超时停止轮询
+  /** 回合进行中标记（agent_start 置位，agent_settled 收口复位） */
+  let roundActive = false;
   let agentStartTs = 0;
   // 最后一次 agent_end 的消息快照（agent_settled 事件本身不带 messages，取这里判定成败）
   let lastMessages: any[] = [];
   // 「接着问」轮询：扩展生命周期内最多一个循环，deadline 每次回合收口续期，10 分钟无追问自动停。
   // 旧实现用 gen/pollActive 门控有致命 bug：第二次收口先 ++pollGen 再 return，旧循环退出后
   // pollActive 永久卡 true，之后所有收口都不再轮询——追问暂存后没人取走（2026-11-13 修复）。
-  let roundActive = false;
   let pollDeadline = 0;
   let pollRunning = false;
-  // task-done 端点：从审批端点派生（同端口）
-  const taskDoneUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/task-done");
-  const followupUrl = url.replace(/\/api\/hooks\/pi-approval\/?$/, "/api/hooks/pi-followup");
-  const POLL_WAIT_MS = 25_000; // 服务端长轮询挂起时长（与 DSH 插件一致）
-  const POLL_TTL_MS = 10 * 60_000; // 与服务端暂存 TTL 对齐，超时停止轮询
 
   pi.on("agent_start", async (_event, _ctx) => {
     if (!gateEnabled()) return;
