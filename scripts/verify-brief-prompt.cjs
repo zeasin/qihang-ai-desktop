@@ -66,4 +66,6 @@ Module._load = function (request, parent, isMain) {
     Module._load = originalLoad;
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+  // pi 运行时自己会留句柄（工作区监听、连接池），脚本不主动退出会一直挂着
+  process.exit(process.exitCode || 0);
 })().catch((e) => { console.error(e); process.exitCode = 1; });

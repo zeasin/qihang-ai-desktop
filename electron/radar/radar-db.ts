@@ -411,12 +411,13 @@ export class RadarDb {
    * 需要补/重摘的高价值会话（存量补摘要用，最新优先）：没摘要的、
    * 摘要后新内容 ≥4 条的、或源被重采缩水的（摘要比消息还多，摘要是旧素材留底）。
    * 阈值 4 与 radar-digest 的 MIN_NEW_MSGS 对齐；精确过滤在 digestOne 再兜一道。
+   * 含冻结会话：冻结只停采集，已采数据摘要照常（否则冻结会话永远补不上摘要）。
    */
   sessionsNeedingSummary(minScore: number, limit = 200): SessionRow[] {
     const rows = this.db.prepare(`
       SELECT *, ${this.stateExpr()} AS effective_state
       FROM radar_session
-      WHERE value_score >= ? AND frozen = 0
+      WHERE value_score >= ?
         AND (summary = ''
              OR message_count - summary_msg_count >= 4
              OR summary_msg_count > message_count)
@@ -504,9 +505,36 @@ export class RadarDb {
     return rows as any[];
   }
 
+  /**
+   * 摘要分页列表（会话档案「摘要」视图）：summary 非空，按提炼时间倒序；
+   * 支持工具筛选与「摘要/标题」关键词搜索（LIKE，含 likeEscape 防通配符注入）。
+   */
+  summariesPage(opts: { tool?: string; q?: string; page?: number; pageSize?: number }): { total: number; rows: SessionRow[] } {
+    const page = Math.max(1, Number(opts.page) || 1);
+    const pageSize = Math.min(Math.max(Number(opts.pageSize) || 50, 1), 200);
+    const conds: string[] = ["summary <> ''"];
+    const params: any[] = [];
+    if (opts.tool) { conds.push('tool = ?'); params.push(String(opts.tool)); }
+    const q = String(opts.q || '').trim();
+    if (q) {
+      conds.push('(summary LIKE ? OR title LIKE ?)');
+      const p = `%${this.likeEscape(q)}%`;
+      params.push(p, p);
+    }
+    const where = `WHERE ${conds.join(' AND ')}`;
+    const total = (this.db.prepare(`SELECT count(*) c FROM radar_session ${where}`).get(...params) as any).c;
+    const rows = this.db.prepare(`
+      SELECT *, ${this.stateExpr()} AS effective_state
+      FROM radar_session ${where}
+      ORDER BY summary_at DESC, source_updated_at DESC LIMIT ? OFFSET ?
+    `).all(...params, pageSize, (page - 1) * pageSize) as any[];
+    return { total: Number(total) || 0, rows: rows.map(rowToSession) };
+  }
+
   /** 会话级检索（摘要注入）：关键词 LIKE 匹配标题/摘要，按命中词数+更新时间排序。
    *  消息级检索的兜底：高频主题词的消息命中被少数会话刷满时，标题/摘要整串命中能直接点名会话。
-   *  会话表行数小（千级），LIKE 全表扫描毫秒级，无需 FTS。 */
+   *  会话表行数小（千级），LIKE 全表扫描毫秒级，无需 FTS。
+   *  含冻结会话：冻结只停采集，已沉淀的标题/摘要照常参与检索。 */
   searchSessionsByText(keywords: string[], limit = 8): any[] {
     const kws = (keywords || []).filter((k) => k && k.length >= 2);
     if (!kws.length) return [];
@@ -518,7 +546,7 @@ export class RadarDb {
         rows = this.db.prepare(`
           SELECT tool, session_id AS sessionId, title, project_dir AS projectDir, summary,
                  message_count AS messageCount, source_updated_at AS sourceUpdatedAt
-          FROM radar_session WHERE frozen = 0 AND (title LIKE ? ESCAPE '!' OR summary LIKE ? ESCAPE '!')
+          FROM radar_session WHERE title LIKE ? ESCAPE '!' OR summary LIKE ? ESCAPE '!'
           LIMIT 500
         `).all(p, p) as any[];
       } catch { continue; }

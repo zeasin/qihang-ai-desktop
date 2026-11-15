@@ -133,6 +133,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     messages: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:messages', { tool, sessionId }),
     stateEvents: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:state-events', { tool, sessionId }),
     sessionInfo: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:session-info', { tool, sessionId }),
+    summaries: (opts?: { tool?: string; q?: string; page?: number; pageSize?: number }) =>
+      ipcRenderer.invoke('radar:summaries', opts || {}),
     unfreeze: (tool: string, sessionId: string) => ipcRenderer.invoke('radar:unfreeze', { tool, sessionId }),
     search: (q: string, limit?: number) => ipcRenderer.invoke('radar:search', { q, limit }),
     ask: (question: string, model?: string) => ipcRenderer.invoke('radar:ask', { question, model }),

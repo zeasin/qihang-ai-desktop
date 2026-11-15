@@ -83,6 +83,12 @@ const routes = [
     component: () => import('@/views/RadarSessionView.vue')
   },
   {
+    // 摘要详情页：从会话档案「摘要」视图卡片进入，整页专注阅读单条摘要
+    path: '/radar/summary/:tool/:sessionId',
+    name: 'RadarSummary',
+    component: () => import('@/views/RadarSummaryView.vue')
+  },
+  {
     path: '/config',
     name: 'Config',
     component: () => import('@/views/ConfigView.vue')

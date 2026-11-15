@@ -132,6 +132,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
 import AppIcon from '../components/AppIcon.vue';
+import { cleanSummaryText } from '../utils/summary-text';
 
 // 与 ChatView 同款 markdown 渲染（GFM + 换行）
 marked.setOptions({ breaks: true, gfm: true });
@@ -160,7 +161,7 @@ const projectDir = computed(() => info.value?.projectDir || '');
 const state = computed(() => info.value?.state || 'idle');
 
 const summaryHtml = computed(() => {
-  const s = info.value?.summary || '';
+  const s = cleanSummaryText(info.value?.summary || '');
   try { return marked(s, { async: false }) as string; } catch { return s; }
 });
 

@@ -1324,6 +1324,18 @@ ipcMain.handle('radar:session-info', (_, { tool, sessionId }) => {
     return { ok: false, error: e && e.message ? e.message : String(e), info: null };
   }
 });
+ipcMain.handle('radar:summaries', (_, opts) => {
+  try {
+    return { ok: true, ...agentRadar.summaries({
+      tool: opts?.tool ? String(opts.tool) : undefined,
+      q: opts?.q ? String(opts.q) : undefined,
+      page: Number(opts?.page) || 1,
+      pageSize: Number(opts?.pageSize) || 50,
+    }) };
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e), rows: [], total: 0 };
+  }
+});
 ipcMain.handle('radar:unfreeze', (_, { tool, sessionId }) => {
   try {
     return { ok: agentRadar.unfreeze(String(tool || ''), String(sessionId || '')) };

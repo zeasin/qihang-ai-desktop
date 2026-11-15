@@ -10,6 +10,7 @@
  */
 import { agentRadar } from '../services/agent-radar';
 import { generateWithPi } from '../services/ai-tools';
+import { reportSummaryNote } from './radar-note-save';
 import logger from '../services/logger';
 
 const MIN_SCORE = 3;          // 价值分门槛（computeValueScore 0-5）
@@ -157,9 +158,11 @@ export function buildTranscript(msgs: any[]): string[] {
   return out;
 }
 
-async function digestOne(tool: string, sessionId: string): Promise<void> {
+/** 单会话摘要提炼（供存量补摘队列与调试点射用；幂等门槛在函数内自行判断） */
+export async function digestOne(tool: string, sessionId: string): Promise<void> {
   const info: any = agentRadar.sessionInfo(tool, sessionId);
-  if (!info || info.frozen) return;
+  // 冻结只停采集（源长期无动静），会话数据已采全在本地，摘要照常提炼——否则冻结会话永远没有摘要
+  if (!info) return;
   if ((info.valueScore ?? 0) < MIN_SCORE) return;
   // 已摘要过：新内容够多（≥ MIN_NEW_MSGS）才重新提炼；摘要比消息还多（delta<0）
   // 说明源被重采缩水、摘要是旧素材留底，也必须重摘
@@ -193,7 +196,12 @@ async function digestOne(tool: string, sessionId: string): Promise<void> {
   const summary = (await generateWithPi({ prompt, sessionId: 'radar_digest_' + Date.now(), timeoutMs: 120_000 })).trim();
   if (!summary) return;
   agentRadar.saveSummary(tool, sessionId, summary.slice(0, 2000), info.messageCount || 0);
-  upgradeTitle(tool, sessionId, summary, info.title || '');
+  const title = upgradeTitle(tool, sessionId, summary, info.title || '');
+  // 落盘导出副本（默认笔记库 AI活动/会话/）：让摘要回到数据主体，AI 对话/笔记搜索/今天页提炼可见
+  reportSummaryNote(
+    { tool, sessionId, title, projectDir: info.projectDir || '', sourceUpdatedAt: info.sourceUpdatedAt || 0 },
+    summary,
+  );
   logger.info('[RadarDigest] 摘要完成: %s/%s %s字', tool, sessionId.slice(0, 24), summary.length);
 }
 
@@ -208,12 +216,14 @@ export function buildTitleFromSummary(summary: string): string {
   return raw.slice(0, TITLE_CHARS);
 }
 
-/** 低质标题升级：空/占位/过短的标题用摘要生成的新标题写回（标题同时参与会话级检索，升级即检索面变好） */
-function upgradeTitle(tool: string, sessionId: string, summary: string, oldTitle: string): void {
+/** 低质标题升级：空/占位/过短的标题用摘要生成的新标题写回（标题同时参与会话级检索，升级即检索面变好）。
+ *  返回生效标题（升级成功为新标题，否则原标题），供落盘文件使用统一口径。 */
+function upgradeTitle(tool: string, sessionId: string, summary: string, oldTitle: string): string {
   const t = String(oldTitle || '').trim();
-  if (t.length >= MIN_TITLE_CHARS && !/^(?:（无标题）|\(无标题\))$/.test(t)) return;
+  if (t.length >= MIN_TITLE_CHARS && !/^(?:（无标题）|\(无标题\))$/.test(t)) return t;
   const next = buildTitleFromSummary(summary);
-  if (next.length < 4) return;
+  if (next.length < 4) return t;
   agentRadar.updateTitle(tool, sessionId, next);
   logger.info('[RadarDigest] 标题升级: %s/%s 「%s」→「%s」', tool, sessionId.slice(0, 16), t, next);
+  return next;
 }

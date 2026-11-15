@@ -286,6 +286,12 @@ class AgentRadarService {
     return db ? db.getSession(tool, sessionId) : null;
   }
 
+  /** 摘要分页列表（会话档案「摘要」视图；只读查询） */
+  summaries(opts: { tool?: string; q?: string; page?: number; pageSize?: number }): any {
+    const db = this.queryDb();
+    return db ? db.summariesPage(opts) : { total: 0, rows: [] };
+  }
+
   /** 高价值但还没摘要的会话（存量补摘要用） */
   sessionsNeedingSummary(minScore = 3, limit = 200): any[] {
     const db = this.queryDb();

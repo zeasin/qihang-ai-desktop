@@ -1,7 +1,8 @@
 <!--
   RadarAllView —— 会话档案页（全部对话记录）
   浏览雷达沉淀的所有会话：工具筛选 + 全文搜索 + 分页；点击行进入会话详情。
-  数据全部来自本地 radar 库（API.radar.sessions 空关键词 = 全量分页列表）。
+  「摘要」视图：所有已提炼摘要按提炼时间倒序卡片展示，支持摘要/标题关键词搜索。
+  数据全部来自本地 radar 库（API.radar.sessions / API.radar.summaries）。
 -->
 <template>
   <div class="rall-view">
@@ -12,19 +13,21 @@
         </button>
         <div>
           <h1>会话档案</h1>
-          <div class="text-muted header-sub">雷达沉淀的全部 AI 工具对话 · 共 {{ total }} 个会话</div>
+          <div class="text-muted header-sub">
+            {{ viewMode === 'sessions' ? `雷达沉淀的全部 AI 工具对话 · 共 ${total} 个会话` : `已提炼 AI 会话摘要 · 共 ${total} 条` }}
+          </div>
         </div>
       </div>
       <input
         v-model="keyword"
         type="text"
         class="form-control search-input"
-        placeholder="全文搜索所有对话…"
+        :placeholder="viewMode === 'sessions' ? '全文搜索所有对话…' : '搜索摘要与标题…'"
         @input="onSearchInput"
       >
     </div>
 
-    <!-- 工具筛选 -->
+    <!-- 工具筛选 + 视图切换 -->
     <div class="filter-row">
       <button
         v-for="t in toolOptions"
@@ -33,9 +36,13 @@
         :class="{ on: toolFilter === t.key }"
         @click="setToolFilter(t.key)"
       >{{ t.label }}</button>
+      <span class="view-sep"></span>
+      <button class="filter-chip" :class="{ on: viewMode === 'sessions' }" @click="setViewMode('sessions')">会话</button>
+      <button class="filter-chip" :class="{ on: viewMode === 'summaries' }" @click="setViewMode('summaries')">摘要</button>
     </div>
 
-    <div ref="tableEl" class="session-table">
+    <!-- 会话列表视图 -->
+    <div v-if="viewMode === 'sessions'" ref="tableEl" class="session-table">
       <div v-for="s in rows" :key="s.tool + '/' + s.sessionId" class="session-row" @click="openSession(s)">
         <span class="sm-time">{{ fmtClock(s.sourceUpdatedAt) }}</span>
         <span class="sm-tool">
@@ -58,8 +65,28 @@
       <div v-if="loading" class="row-empty text-muted">加载中…</div>
     </div>
 
-    <!-- 分页（搜索模式下为全量结果，无分页） -->
-    <div v-if="!keyword.trim() && total > 0" class="pager">
+    <!-- 摘要卡片视图 -->
+    <div v-else ref="tableEl" class="summary-list">
+      <div v-for="s in rows" :key="s.tool + '/' + s.sessionId" class="summary-card" @click="openSummary(s)">
+        <div class="sc-head">
+          <span class="sm-tool">{{ toolLabel(s.tool) }}</span>
+          <span class="sc-title">
+            <template v-for="(seg, i) in hlSegments(s.title || '（无标题）')" :key="i"><mark v-if="seg.hit" class="hl">{{ seg.t }}</mark><template v-else>{{ seg.t }}</template></template>
+          </span>
+          <span class="sc-ts text-muted" title="摘要提炼时间">{{ fmtClock(s.summaryAt) }}</span>
+        </div>
+        <div class="sc-body text-muted">
+          <div v-for="(line, i) in summaryLines(s.summary)" :key="i" class="sc-line">
+            <template v-for="(seg, j) in hlSegments(line)" :key="j"><mark v-if="seg.hit" class="hl">{{ seg.t }}</mark><template v-else>{{ seg.t }}</template></template>
+          </div>
+        </div>
+      </div>
+      <div v-if="!rows.length && !loading" class="row-empty text-muted">{{ keyword.trim() ? '无匹配摘要' : '还没有任何摘要（高价值会话收口后自动提炼）' }}</div>
+      <div v-if="loading" class="row-empty text-muted">加载中…</div>
+    </div>
+
+    <!-- 分页（会话搜索模式下为全量结果，无分页；摘要模式搜索也走后端分页） -->
+    <div v-if="total > 0 && (viewMode === 'summaries' || !keyword.trim())" class="pager">
       <button class="btn btn-secondary btn-sm" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
       <span class="text-muted pager-info">第 {{ page }} / {{ totalPages }} 页</span>
       <button class="btn btn-secondary btn-sm" :disabled="page >= totalPages" @click="goPage(page + 1)">下一页</button>
@@ -71,6 +98,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import AppIcon from '../components/AppIcon.vue';
+import { cleanSummaryText } from '../utils/summary-text';
 
 const API: any = (window as any).electronAPI;
 const router = useRouter();
@@ -94,6 +122,7 @@ const toolFilter = ref('');
 const keyword = ref('');
 const loading = ref(false);
 const tableEl = ref<HTMLElement | null>(null);
+const viewMode = ref<'sessions' | 'summaries'>('sessions');
 let searchTimer: number | undefined;
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
@@ -101,9 +130,15 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
 async function load() {
   loading.value = true;
   try {
-    const res = await API.radar.sessions({ tool: toolFilter.value || undefined, q: keyword.value.trim() || undefined, page: page.value, pageSize });
-    rows.value = res.rows || [];
-    total.value = Number(res.total) || 0;
+    if (viewMode.value === 'summaries') {
+      const res = await API.radar.summaries({ tool: toolFilter.value || undefined, q: keyword.value.trim() || undefined, page: page.value, pageSize });
+      rows.value = res.rows || [];
+      total.value = Number(res.total) || 0;
+    } else {
+      const res = await API.radar.sessions({ tool: toolFilter.value || undefined, q: keyword.value.trim() || undefined, page: page.value, pageSize });
+      rows.value = res.rows || [];
+      total.value = Number(res.total) || 0;
+    }
   } catch { rows.value = []; total.value = 0; }
   finally { loading.value = false; }
   // 翻页/搜索后回到列表顶部
@@ -116,6 +151,16 @@ function setToolFilter(key: string) {
   page.value = 1;
   void load();
 }
+function setViewMode(mode: 'sessions' | 'summaries') {
+  if (viewMode.value === mode) return;
+  viewMode.value = mode;
+  page.value = 1;
+  void load();
+}
+/** 摘要四段卡片逐行渲染：先清洗模板噪音，再剥 ** 加粗标记，保留换行结构 */
+function summaryLines(summary: string): string[] {
+  return cleanSummaryText(summary).split('\n').map((l) => l.trim()).filter(Boolean).map((l) => l.replace(/\*\*/g, ''));
+}
 function goPage(p: number) {
   page.value = p;
   void load();
@@ -126,6 +171,10 @@ function onSearchInput() {
 }
 function openSession(s: any) {
   router.push({ path: `/radar/session/${encodeURIComponent(s.tool)}/${encodeURIComponent(s.sessionId)}` });
+}
+/** 摘要卡片 → 独立摘要详情页（整页专注阅读摘要，可再跳对话原文） */
+function openSummary(s: any) {
+  router.push({ path: `/radar/summary/${encodeURIComponent(s.tool)}/${encodeURIComponent(s.sessionId)}` });
 }
 
 // ========== 搜索词高亮（与 findSessions 同口径：整词 + 中文 2 字词兜底） ==========
@@ -237,6 +286,32 @@ onMounted(load);
 }
 .filter-chip:hover { color: var(--text-primary); border-color: var(--text-muted); }
 .filter-chip.on { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+.view-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+
+.summary-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px;
+}
+.summary-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.summary-card:hover { border-color: var(--primary); }
+.sc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.sc-title { flex: 1; min-width: 0; font-weight: 600; color: var(--text-primary); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-ts { font-family: var(--font-mono); font-size: 11px; flex-shrink: 0; }
+.sc-body { font-size: 12px; line-height: 1.7; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.sc-line { white-space: pre-wrap; word-break: break-word; }
 
 .session-table {
   flex: 1;

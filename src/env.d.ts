@@ -112,6 +112,8 @@ interface ElectronAPI {
     messages: (tool: string, sessionId: string) => Promise<{ ok: boolean; rows: any[] }>;
     stateEvents: (tool: string, sessionId: string) => Promise<{ ok: boolean; rows: any[] }>;
     sessionInfo: (tool: string, sessionId: string) => Promise<{ ok: boolean; info: any }>;
+    summaries: (opts?: { tool?: string; q?: string; page?: number; pageSize?: number }) =>
+      Promise<{ ok?: boolean; total: number; rows: any[]; error?: string }>;
     unfreeze: (tool: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>;
     search: (q: string, limit?: number) => Promise<{ ok: boolean; rows: any[] }>;
     ask: (question: string, model?: string) => Promise<{ ok: boolean; answer?: string; refs?: any[]; hits?: number; error?: string }>;
