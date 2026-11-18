@@ -287,6 +287,17 @@ export class RadarDb {
     return r ? rowToSession(r) : null;
   }
 
+  /** 按 sessionId 查会话（知识库 MCP 用：search 结果的 ref 只带 sid）。
+   *  同 id 在不同 tool 下可能有行，取源里最近更新的一条。 */
+  getSessionById(sessionId: string): SessionRow | null {
+    const r = this.db.prepare(`
+      SELECT *, ${this.stateExpr()} AS effective_state
+      FROM radar_session WHERE session_id = ?
+      ORDER BY source_updated_at DESC LIMIT 1
+    `).get(sessionId) as any;
+    return r ? rowToSession(r) : null;
+  }
+
   /** 生效状态 SQL 片段：running 且超过 ZOMBIE_MS 无同步心跳 → 读路径视为 idle（只读投影，不落库）。
    *  worker 存活时 ingest 每轮都会刷新在源里仍存在的会话的 synced_at（约 60s 一次），
    *  worker 挂掉/崩溃循环时 synced_at 冻结，靠它保证 UI 不会永远显示「运行中」。 */

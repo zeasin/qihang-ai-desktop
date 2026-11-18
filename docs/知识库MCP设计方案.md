@@ -1,7 +1,7 @@
 # 知识库 MCP（qihang-kb）设计方案
 
 > 版本：v1 草案（2026-11-18）
-> 状态：待评审，未开始实现
+> 状态：v1 已实现（2026-11-18），使用说明见 docs/知识库MCP.md
 > 目标读者：维护者本人，供逐项研究后定稿
 
 ---
@@ -408,14 +408,14 @@ curl -s http://127.0.0.1:8792/mcp \
   -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
 
-# 2) tools/list（stateless 模式无需 session id）
+# 2) tools/list（stateless 模式无需 session id；Accept 必须同时含 json 与 event-stream）
 curl -s http://127.0.0.1:8792/mcp \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 
 # 3) tools/call
 curl -s http://127.0.0.1:8792/mcp \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"query":"FTS5 索引","scope":"notes","limit":5}}}'
 ```
 

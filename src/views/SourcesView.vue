@@ -11,6 +11,40 @@
       </div>
     </header>
 
+    <!-- ========== 本机知识库服务（qihang-kb MCP） ========== -->
+    <section v-if="kb" class="panel kb-panel">
+      <div class="kb-head">
+        <div class="kb-title">
+          <span class="kb-name">📚 本机知识库服务<small>qihang-kb · MCP</small></span>
+          <span class="badge" :class="kb.running ? 'badge-success' : (kb.enabled ? 'badge-danger' : 'badge-gray')">
+            {{ kb.running ? `运行中 · ${kb.port}` : (kb.enabled ? (kb.lastError || '未运行') : '已停用') }}
+          </span>
+          <span class="kb-meta">已索引 {{ kb.notesIndexed }} 篇笔记 · {{ kb.tools.length }} 个工具</span>
+        </div>
+        <div class="kb-actions">
+          <label class="toggle" title="启用后外部 AI 工具可通过 MCP 检索本地知识库">
+            <input type="checkbox" :checked="kb.enabled" :disabled="kbBusy" @change="toggleKb">
+            <span class="slider"></span>
+          </label>
+          <button class="text-btn" :disabled="kbBusy || !kb.running" @click="reindexKb">{{ kbBusy ? '处理中…' : '重建索引' }}</button>
+          <button class="text-btn" @click="regenKbToken">重置 Token</button>
+        </div>
+      </div>
+      <div class="kb-body">
+        <div class="kb-row">
+          <span class="kb-label">MCP 地址</span>
+          <code class="kb-code">{{ kb.url || '服务未运行' }}</code>
+        </div>
+        <div class="kb-row">
+          <span class="kb-label">Token</span>
+          <code class="kb-code kb-token">{{ kbTokenVisible ? kb.token : '••••••••••••' }}</code>
+          <button class="text-btn" @click="kbTokenVisible = !kbTokenVisible">{{ kbTokenVisible ? '隐藏' : '显示' }}</button>
+          <button class="text-btn" :disabled="!kb.token" @click="copyKbToken">复制</button>
+        </div>
+        <p class="kb-hint">给 Claude Code / Codex / Trae / opencode 接入时填「地址 + Bearer Token」；应用内对话自动注入，无需配置。仅监听 127.0.0.1，不对外暴露。</p>
+      </div>
+    </section>
+
     <!-- ========== 加载中 ========== -->
     <section v-if="!loaded" class="panel"><div class="none-row">加载中…</div></section>
 
@@ -588,10 +622,80 @@ function removeFilter(dim: string) {
   filter.value = { ...filter.value };
 }
 
-onMounted(() => { void loadServers(); });
+// ========== 本机知识库服务（qihang-kb MCP） ==========
+const kb = ref<KbMcpStatus | null>(null);
+const kbBusy = ref(false);
+const kbTokenVisible = ref(false);
+
+async function loadKb() {
+  if (!API?.kbmcp) return;
+  try { kb.value = await API.kbmcp.status(); } catch { /* 旧版本无该接口 */ }
+}
+
+async function toggleKb() {
+  if (!API || !kb.value) return;
+  kbBusy.value = true;
+  try {
+    const r = await API.kbmcp.setEnabled(!kb.value.enabled);
+    kb.value = r.status;
+    if (!r.ok) alert('操作失败：' + (r.error || '未知错误'));
+  } catch (e: any) {
+    alert('操作失败：' + ((e && e.message) || e));
+  }
+  kbBusy.value = false;
+}
+
+async function regenKbToken() {
+  if (!API) return;
+  if (!confirm('重置后旧 Token 立即失效，已接入的客户端需要更新配置。继续？')) return;
+  try {
+    const r = await API.kbmcp.regenToken();
+    kb.value = r.status;
+  } catch (e: any) {
+    alert('重置失败：' + ((e && e.message) || e));
+  }
+}
+
+async function reindexKb() {
+  if (!API) return;
+  kbBusy.value = true;
+  try {
+    const r = await API.kbmcp.reindex();
+    if (r.status) kb.value = r.status;
+    alert(r.ok
+      ? `重建完成：更新 ${r.indexed ?? 0} 篇，清理 ${r.removed ?? 0} 篇，共 ${r.total ?? 0} 篇`
+      : '重建失败：' + (r.error || '未知错误'));
+  } catch (e: any) {
+    alert('重建失败：' + ((e && e.message) || e));
+  }
+  kbBusy.value = false;
+}
+
+async function copyKbToken() {
+  if (!kb.value?.token) return;
+  try { await navigator.clipboard.writeText(kb.value.token); } catch { alert('复制失败，请手动选择文本复制'); }
+}
+
+onMounted(() => { void loadServers(); void loadKb(); });
 </script>
 
 <style scoped>
+/* ========== 本机知识库服务 ========== */
+.kb-panel { padding: 14px 16px; }
+.kb-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.kb-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.kb-name { font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: baseline; gap: 6px; }
+.kb-name small { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.kb-meta { font-size: 11.5px; color: var(--text-muted); }
+.kb-actions { display: flex; align-items: center; gap: 8px; }
+.kb-actions .toggle { margin-right: 4px; }
+.kb-body { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.kb-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.kb-label { font-size: 12px; color: var(--text-muted); min-width: 64px; }
+.kb-code { font-size: 12px; background: var(--hover); padding: 3px 8px; border-radius: 4px; color: var(--text-secondary); word-break: break-all; }
+.kb-token { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.6; margin-top: 2px; }
+
 /* ========== 页头 ========== */
 .page-sub { display: flex; align-items: center; gap: 6px; }
 .empty-panel { padding: 48px 20px; text-align: center; }

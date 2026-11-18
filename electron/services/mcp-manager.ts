@@ -18,6 +18,7 @@ import * as crypto from 'crypto';
 import logger from './logger';
 import { loadConfig, saveConfig } from './app-config';
 import { q, qOne, run } from './database';
+import { kbServerStatus } from '../kb/kb-server';
 
 // ---------- 类型 ----------
 
@@ -253,6 +254,8 @@ export async function saveServers(
 /** 启用中源的连接指纹（url+token），变化即需要重建 pi 会话 */
 export function mcpFingerprint(): string {
   const enabled = readServers().filter(s => s.enabled).map(s => `${s.url}::${s.token}`);
+  const kb = kbServerStatus();
+  if (kb.running && kb.url) enabled.push(`${kb.url}::${kb.token}`);
   return crypto.createHash('sha1').update(JSON.stringify(enabled)).digest('hex');
 }
 
@@ -276,6 +279,23 @@ export function buildLoadedMcpConfig(): { servers: any[]; errors: string[]; auto
       source: 'app-config',
       scope: 'extension',
     }));
+
+  // 本机知识库 MCP：服务运行中才注入（应用内 agent 获得 mcp__qihang_kb__* 工具）
+  const kb = kbServerStatus();
+  if (kb.running && kb.url) {
+    servers.push({
+      name: 'qihang_kb',
+      config: {
+        type: 'http',
+        url: kb.url,
+        headers: kb.token ? { Authorization: `Bearer ${kb.token}` } : undefined,
+        exposure: 'direct',
+      },
+      source: 'app-config',
+      scope: 'extension',
+    });
+  }
+
   return { servers, errors: [], autoEnableCodemode: false };
 }
 

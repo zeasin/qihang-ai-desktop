@@ -300,6 +300,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     historyImage: (filePath: string) => ipcRenderer.invoke('aitool:history:image', { filePath }),
   },
 
+  // 本机知识库 MCP 服务（qihang-kb，对外提供笔记/会话检索）
+  kbmcp: {
+    status: () => ipcRenderer.invoke('kbmcp:status'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('kbmcp:set-enabled', { enabled }),
+    regenToken: () => ipcRenderer.invoke('kbmcp:regen-token'),
+    reindex: () => ipcRenderer.invoke('kbmcp:reindex'),
+  },
+
   // 移动端本机网关（手机浏览器访问）
   mobile: {
     status: () => ipcRenderer.invoke('mobile:status'),

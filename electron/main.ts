@@ -56,6 +56,7 @@ import { approver } from './approval/approver';
 import { stashFollowup } from './approval/task-notify';
 import { startMobileGateway, stopMobileGateway, mobileGatewayStatus, requestMobilePairCode, broadcastMobileEvent } from './mobile/gateway';
 import { startFrpc, stopFrpc, restartFrpc, frpcStatus, resolveFrpcPaths } from './mobile/frpc';
+import { startKbMcpServer, stopKbMcpServer, kbServerStatus, regenKbToken, manualReindex } from './kb/kb-server';
 import logger from './services/logger';
 import { extractDigest, syncCheckedDone, checkDigestTodo, checkDigestFollowup } from './services/note-digest';
 import { notify } from './services/notify';
@@ -252,6 +253,7 @@ function stopAllServices() {
   agentRadar.stop();
   void stopMobileGateway();
   void stopFrpc();
+  void stopKbMcpServer();
 }
 
 function getServicesStatus() {
@@ -1503,6 +1505,36 @@ ipcMain.handle('mcp:classifications', (_, { serverId, tool }) => {
   }
 });
 
+// ========== 知识库 MCP（electron/kb/：本机 MCP server，对外提供笔记库检索） ==========
+ipcMain.handle('kbmcp:status', () => kbServerStatus());
+ipcMain.handle('kbmcp:set-enabled', async (_, { enabled }) => {
+  try {
+    const on = enabled === true || String(enabled) === '1';
+    appConfig.saveConfig({ kbMcpEnabled: on ? '1' : '0' });
+    if (on) {
+      const r = await startKbMcpServer();
+      if (!r.ok) return { ok: false, error: r.error || '启动失败', status: kbServerStatus() };
+    } else {
+      await stopKbMcpServer();
+    }
+    return { ok: true, status: kbServerStatus() };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ? e.message : String(e), status: kbServerStatus() };
+  }
+});
+ipcMain.handle('kbmcp:regen-token', () => {
+  regenKbToken();
+  return { ok: true, status: kbServerStatus() };
+});
+ipcMain.handle('kbmcp:reindex', async () => {
+  try {
+    const r = await manualReindex();
+    return { ok: true, ...r, status: kbServerStatus() };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ? e.message : String(e), status: kbServerStatus() };
+  }
+});
+
 // 判断是否为「查询本地知识」类问题（如事务/笔记/待办/记录/知识检索）。
 // 这类问题依赖笔记库，若未配置笔记库则先引导用户去设置。
 function isKBQuery(text) {
@@ -2389,6 +2421,12 @@ app.whenReady().then(async () => {
   if (appConfig.getConfig('frpcEnabled') === '1') {
     void startFrpc(resolveFrpcPaths()).then((r) => {
       if (!r.ok) logger.error('[Frpc] 自动启动失败: %s', r.error);
+    });
+  }
+  // 知识库 MCP：默认开（仅 127.0.0.1 + token 鉴权），对外提供笔记库检索（后续阶段扩展数据源）
+  if (appConfig.getConfig('kbMcpEnabled') !== '0') {
+    void startKbMcpServer().then((r) => {
+      if (!r.ok) logger.error('[KbMcp] 自动启动失败: %s', r.error);
     });
   }
 

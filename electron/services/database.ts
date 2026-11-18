@@ -204,6 +204,48 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
+    -- 知识库 MCP（electron/kb/）：笔记全文索引。
+    -- 上次的向量索引路线已作废（kb_documents / kb_chunks 见下方 DROP），
+    -- 这次只要全文检索：FTS5 trigram 对中文免分词，radar_message_fts 已验证该口径。
+    -- 维护刻意极简：启动差量同步 + fs.watch 增量 + 手动重建（kb-index.ts），单文件更新=删+插。
+    CREATE TABLE IF NOT EXISTS kb_note_docs (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER,
+      rel_path   TEXT,
+      abs_path   TEXT UNIQUE,
+      size       INTEGER DEFAULT 0,
+      mtime_ms   INTEGER DEFAULT 0,
+      title      TEXT,
+      indexed_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_note_docs_project ON kb_note_docs(project_id);
+    CREATE VIRTUAL TABLE IF NOT EXISTS kb_note_fts USING fts5(
+      content, abs_path UNINDEXED, tokenize='trigram'
+    );
+    -- 索引状态标记（chat 回填标记等，后续阶段使用）
+    CREATE TABLE IF NOT EXISTS kb_index_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    -- 应用内对话全文索引：external content + 触发器自动同步（仿 radar_message_fts 模式）
+    CREATE VIRTUAL TABLE IF NOT EXISTS chat_message_fts USING fts5(
+      content, content='prj_messages', content_rowid='rowid', tokenize='trigram'
+    );
+    CREATE TRIGGER IF NOT EXISTS prj_messages_ai AFTER INSERT ON prj_messages WHEN new.content <> '' BEGIN
+      INSERT INTO chat_message_fts(rowid, content) VALUES (new.rowid, new.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS prj_messages_ad AFTER DELETE ON prj_messages BEGIN
+      INSERT INTO chat_message_fts(chat_message_fts, rowid, content)
+      VALUES ('delete', old.rowid, old.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS prj_messages_au AFTER UPDATE ON prj_messages BEGIN
+      INSERT INTO chat_message_fts(chat_message_fts, rowid, content)
+      VALUES ('delete', old.rowid, old.content);
+      INSERT INTO chat_message_fts(rowid, content)
+      SELECT new.rowid, new.content WHERE new.content <> '';
+    END;
+
   `);
   try { getDb().exec("ALTER TABLE ai_analysis ADD COLUMN module_id TEXT"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN task_type TEXT DEFAULT ''"); } catch (e) {}

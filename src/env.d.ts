@@ -31,6 +31,18 @@ declare module '*.vue' {
   export default component;
 }
 
+/** 本机知识库 MCP 服务状态（qihang-kb） */
+interface KbMcpStatus {
+  running: boolean;
+  port: number;
+  enabled: boolean;
+  token: string;
+  url: string;
+  lastError: string;
+  notesIndexed: number;
+  tools: string[];
+}
+
 interface ElectronAPI {
   platform: string;
   app: {
@@ -231,6 +243,12 @@ interface ElectronAPI {
   config: {
     get: () => Promise<any>;
     set: (config: any) => Promise<boolean>;
+  };
+  kbmcp: {
+    status: () => Promise<KbMcpStatus>;
+    setEnabled: (enabled: boolean) => Promise<{ ok: boolean; error?: string; status: KbMcpStatus }>;
+    regenToken: () => Promise<{ ok: boolean; status: KbMcpStatus }>;
+    reindex: () => Promise<{ ok: boolean; error?: string; projects?: number; indexed?: number; removed?: number; total?: number; status: KbMcpStatus }>;
   };
   mobile: {
     status: () => Promise<{

@@ -169,6 +169,119 @@
           <li><strong>让 AI 分析</strong> — 一键创建对话并自动发出分析请求，AI 自己拉最新数据、可追问、可存档</li>
           <li><strong>对话直查</strong> — 已接入源的工具进入对话工具面，回答注明数据来源；接入新源只是添加一条配置，无需开发</li>
         </ul>
+        <p class="text-muted" style="margin-top:8px;">工作台自己也会对外提供一个本机 MCP 服务（知识库检索），配置方法见 <a href="#" @click.prevent="scrollToSection('sec-kbmcp')">🔗 本机 MCP 服务与智能体接入</a>。</p>
+      </div>
+
+      <div class="card" id="sec-kbmcp">
+        <h2>🔗 本机 MCP 服务（qihang-kb）与智能体接入</h2>
+        <p class="text-muted mb-2">
+          工作台会把本机知识资产以标准 MCP 工具对外提供：<b>笔记库</b>、<b>已采集的外部 AI 会话（含摘要）</b>、<b>应用内对话</b>、<b>日报周报</b>。
+          Claude Code、Codex、opencode、Trae、ZCode 等外部智能体接上后，就能直接检索「我之前写过/做过什么」；工作台自带对话会自动注入，无需配置。
+        </p>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">一、服务状态与开关（数据源页顶部卡片）</p>
+        <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li><b>状态</b>：显示「运行中 · 端口」，默认 <code>127.0.0.1:8792</code>，随 App 自启（配置键 <code>kbMcpEnabled</code>，<code>"0"</code> 关闭）</li>
+          <li><b>MCP 地址</b>：<code>http://127.0.0.1:8792/mcp</code>（配置键 <code>kbMcpPort</code>，改端口后要重启服务）</li>
+          <li><b>Token</b>：首次启动自动生成，卡片上可「显示 / 复制」；「重置 Token」会让旧 Token 立即失效，已接入的客户端都要改</li>
+          <li><b>重建索引</b>：强制全量重建笔记索引；平时无需手动，启动差量同步 + 文件变更监听已自动维护</li>
+          <li><b>已索引 N 篇笔记</b>：只统计笔记项目下（<code>type='note'</code>）的 <code>.md</code> 文件</li>
+        </ul>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">二、提供的工具（全部只读）</p>
+        <table class="help-table">
+          <thead><tr><th>工具</th><th>用途</th><th>主要参数</th></tr></thead>
+          <tbody>
+            <tr><td><code>search</code></td><td>统一检索四类数据源，命中后可用 get_note / get_session 看详情</td><td><code>query</code>（必填）、<code>scope</code>=all/notes/sessions/chat/reports、<code>agent</code>、<code>days</code>、<code>limit</code></td></tr>
+            <tr><td><code>get_note</code></td><td>读一篇笔记的 Markdown 全文（超长截断并标注）</td><td><code>path</code>：绝对路径或「项目名/相对路径」</td></tr>
+            <tr><td><code>list_notes</code></td><td>列出笔记项目及篇数；传项目名列出该项目文件清单</td><td><code>project</code>、<code>limit</code></td></tr>
+            <tr><td><code>get_session</code></td><td>读外部 AI 会话的元信息、AI 摘要、最近消息</td><td><code>session_id</code>、<code>messages</code>（0-200）</td></tr>
+            <tr><td><code>recent_activity</code></td><td>最近 N 天活跃的外部 AI 会话 + 最近日报周报</td><td><code>days</code>（默认 7）、<code>limit</code></td></tr>
+          </tbody>
+        </table>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">三、鉴权方式</p>
+        <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>服务只监听 <code>127.0.0.1</code>，公网访问不到；<b>不要做端口映射</b></li>
+          <li>每个请求必须带请求头 <code>Authorization: Bearer &lt;kbMcpToken&gt;</code>，缺失或错误返回 <code>401</code></li>
+          <li>Token 存在本机 <code>config.json</code> 的 <code>kbMcpToken</code>，服务端用 <code>sha256 + timingSafeEqual</code> 恒时比较</li>
+          <li>客户端配置里的 Token 就是数据源页卡片上那串，直接复制粘贴，不要加引号空格</li>
+        </ul>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">四、各智能体接入配置</p>
+        <p class="text-muted" style="margin:0 0 4px;">地址统一为 <code>http://127.0.0.1:8792/mcp</code>（端口以卡片为准），Token 从卡片复制。</p>
+
+        <p style="font-weight:600;margin:10px 0 4px;font-size:13px;">1. Claude Code（项目根 <code>.mcp.json</code>）</p>
+        <pre class="help-pre">{
+  "mcpServers": {
+    "qihang-kb": {
+      "type": "http",
+      "url": "http://127.0.0.1:8792/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}</pre>
+        <p class="text-muted" style="margin:0 0 4px;">也可用 CLI：<code>claude mcp add --transport http qihang-kb http://127.0.0.1:8792/mcp</code>，再在 Claude Code 内补 Token。</p>
+
+        <p style="font-weight:600;margin:10px 0 4px;font-size:13px;">2. Codex（<code>~/.codex/config.toml</code>）</p>
+        <pre class="help-pre">[mcp_servers.qihang-kb]
+url = "http://127.0.0.1:8792/mcp"
+http_headers = { "Authorization" = "Bearer YOUR_TOKEN" }</pre>
+
+        <p style="font-weight:600;margin:10px 0 4px;font-size:13px;">3. opencode（项目根 <code>opencode.json</code>）</p>
+        <pre class="help-pre">{
+  "mcp": {
+    "qihang-kb": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8792/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" },
+      "enabled": true
+    }
+  }
+}</pre>
+
+        <p style="font-weight:600;margin:10px 0 4px;font-size:13px;">4. Trae（项目根 <code>.trae/mcp.json</code>）</p>
+        <pre class="help-pre">{
+  "mcpServers": {
+    "qihang-kb": {
+      "url": "http://127.0.0.1:8792/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}</pre>
+        <p class="text-muted" style="margin:0 0 4px;">若当前 Trae 版本不支持 headers，需在其 MCP 配置界面里单独填 Token；仍不行时可临时改为内网免鉴权（不建议）。</p>
+
+        <p style="font-weight:600;margin:10px 0 4px;font-size:13px;">5. ZCode / 其他 Streamable HTTP 客户端</p>
+        <pre class="help-pre">{
+  "mcpServers": {
+    "qihang-kb": {
+      "type": "http",
+      "url": "http://127.0.0.1:8792/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}</pre>
+
+        <p style="font-weight:600;margin:10px 0 4px;font-size:13px;">6. 工作台自带对话</p>
+        <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
+          <li>pi 引擎：服务运行时自动注入，工具以 <code>mcp__qihang_kb__search</code> 等形式出现在工具面，直接提问即可</li>
+          <li>opencode 引擎：不经过自动注入，按第 3 节给 opencode 单独配置</li>
+          <li>重置 Token 后会自动重建会话，新会话立即使用新 Token</li>
+        </ul>
+
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">五、验证与常见问题</p>
+        <table class="help-table">
+          <thead><tr><th>现象</th><th>原因</th><th>处理</th></tr></thead>
+          <tbody>
+            <tr><td>返回 401 unauthorized</td><td>Token 缺失或不一致</td><td>重新复制卡片上的 Token；重置过 Token 的客户端要同步更新</td></tr>
+            <tr><td>连接被拒绝</td><td>服务未启动 / App 已退出</td><td>看卡片是否「运行中」；服务随 App 启停，App 关闭即不可用</td></tr>
+            <tr><td>启动报「端口 8792 已被占用」</td><td>端口被其他进程占用</td><td>改 <code>kbMcpPort</code> 或停掉占用进程，重启应用</td></tr>
+            <tr><td>客户端提示 Not Acceptable</td><td>手工 curl 时 Accept 头不完整</td><td>同时带 <code>Accept: application/json, text/event-stream</code></td></tr>
+            <tr><td>搜不到刚写的笔记</td><td>文件不在笔记项目 / 非 .md / 防抖未完成</td><td>确认项目类型为笔记，等 1.5 秒或点「重建索引」</td></tr>
+            <tr><td>会话类结果为空</td><td>雷达尚未采集过外部会话</td><td>先确认今天页/雷达已有采集数据；笔记类工具不受影响</td></tr>
+          </tbody>
+        </table>
+        <p class="tip">安全提醒：知识库语料可能包含密钥、内网路径等敏感内容。保持仅本机监听，不要把 8792 映射到公网；不需要时直接在卡片上关闭服务。</p>
       </div>
 
       <div class="card" id="sec-todo">
@@ -423,6 +536,7 @@ const sections = [
   { id: 'sec-chat', icon: '💬', label: 'AI 对话' },
   { id: 'sec-tasks', icon: '📈', label: '任务中心' },
   { id: 'sec-data', icon: '🔌', label: '数据源' },
+  { id: 'sec-kbmcp', icon: '🔗', label: '本机 MCP 服务' },
   { id: 'sec-todo', icon: '✅', label: '待办与提醒' },
   { id: 'sec-notes', icon: '📚', label: '笔记库' },
   { id: 'sec-tools', icon: '🎨', label: '技能' },
