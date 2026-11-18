@@ -446,7 +446,7 @@ remotePort = 18791</pre>
           <li>状态区显示「运行中 + PID」即成功；关闭 App 会一并关闭 frpc</li>
           <li>点「生成配对码」，手机访问 <code>http://公网IP:18791/</code> 输入 6 位配对码（5 分钟有效、一次性）</li>
         </ol>
-        <p class="text-muted" style="margin-top:8px;">手机端是独立的移动界面：新建对话选项目/模型、会话列表带项目标签、SSE 实时流式回答；长期使用建议域名 + HTTPS（nginx 反代，SSE 需关闭 proxy_buffering）。</p>
+        <p class="text-muted" style="margin-top:8px;">手机端是独立的移动界面：新建对话选项目/模型、会话列表带项目标签、SSE 实时流式回答、进入会话自动定位最新消息；「待办」页默认折叠显示 5 条，点条目弹出详情后再标记完成，笔记来源可直接跳转阅读；「雷达」Tab 可对已采集会话提问并查看来源；回合完成/失败、待审批事件会以顶部横幅实时通知，对话 Tab 带未读角标；审批可在通知内就地允许或拒绝。长期使用建议域名 + HTTPS（nginx 反代，SSE 需关闭 proxy_buffering）。</p>
 
         <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">五、安全建议</p>
         <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">

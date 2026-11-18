@@ -36,6 +36,7 @@ npm run build:web       # 仅构建前端产物
 ## 新增依赖的注意点
 
 - Electron 主进程是 CommonJS。添加依赖前先确认该包是否为 ESM-only；若是，参考现有 `pi-agent.ts` 中 `new Function('spec','return import(spec)')` 的写法。
+- 本机 MCP server（`electron/kb/`）使用官方 `@modelcontextprotocol/sdk`：动态 import 的子路径**必须带 `.js`**（如 `@modelcontextprotocol/sdk/server/mcp.js`），SDK 的 `exports "./*"` 不做扩展名推断，漏写会报 `Cannot find module`。工具参数用 `zod`（已显式声明依赖）。
 - 原生模块（如 better-sqlite3）需要 electron-rebuild，安装后请验证 `npm run dev` 能正常启动。
 
 ## 分支与提交

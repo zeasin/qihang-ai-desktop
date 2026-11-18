@@ -73,7 +73,7 @@
 
 ## 4. 各客户端接入
 
-地址均为 `http://127.0.0.1:8792/mcp`，token 从设置页复制。
+地址均为 `http://127.0.0.1:8792/mcp`，token 从 MCP 页卡片复制。
 
 **Claude Code**（项目根 `.mcp.json`）
 
@@ -129,6 +129,7 @@ http_headers = { "Authorization" = "Bearer <kbMcpToken>" }
 ## 5. 手工验证（curl）
 
 ```bash
+# 开发模式在项目根 config.json；安装版在 ~/.qihang-ai-desktop/config.json
 TOKEN=$(node -e "console.log(require('./config.json').kbMcpToken)")
 
 # initialize
@@ -154,7 +155,7 @@ curl -s http://127.0.0.1:8792/mcp \
 
 ## 6. 索引维护
 
-- **笔记**：启动时差量同步（按文件 `size + mtime` 比对）；运行中 `fs.watch` 监听笔记项目目录，1.5s 防抖后只重索引变化的 `.md`；设置页「重建索引」可强制全量重建。watcher 失效不影响正确性，启动同步与手动重建兜底。
+- **笔记**：启动时差量同步（按文件 `size + mtime` 比对）；运行中 `fs.watch` 监听笔记项目目录，1.5s 防抖后只重索引变化的 `.md`；MCP 页「重建索引」可强制全量重建。watcher 失效不影响正确性，启动同步与手动重建兜底。
 - **应用内对话**：建表后首次启动后台 `rebuild` 一次；之后新消息由 `prj_messages` 触发器自动进索引，应用层零维护。
 - **外部会话**：直接只读复用雷达库，无需额外索引；雷达库不存在时会话类结果为空，其余工具正常。
 
