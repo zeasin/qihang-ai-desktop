@@ -1061,19 +1061,26 @@ ipcMain.handle('ds:pendingRecords', () => {
  * emit 决定这轮的增量事件播给谁（桌面窗口当场演出来）。
  */
 async function runChatTurn(
-  { question, sessionId, projectDir, images, agent, modelName }:
-    { question: string; sessionId?: string; projectDir?: string; images?: any[]; agent?: string; modelName?: string },
+  { question, sessionId, projectDir, images, agent, modelName, mcpServerId }:
+    { question: string; sessionId?: string; projectDir?: string; images?: any[]; agent?: string; modelName?: string; mcpServerId?: string },
   emit: (channel: string, data: any) => void,
 ) {
   const sid = sessionId || 'session_' + Date.now();
   const activeAgent = agent || 'general';
+  // MCP 专属对话：会话 id 约定 mcpchat_<serverId>，前端也可显式传 mcpServerId
+  const scopedServerId = String(mcpServerId || (sid.startsWith('mcpchat_') ? sid.slice('mcpchat_'.length) : '')).trim();
+  const scopedServer = scopedServerId ? mcpManager.listServers().find(s => s.id === scopedServerId) : undefined;
   try {
-    db.chat.createSession(sid, null, null, 'general', activeAgent, 'ui');
+    db.chat.createSession(
+      sid, null,
+      scopedServer ? `${scopedServer.name || scopedServer.url} · MCP 对话` : null,
+      'general', activeAgent, scopedServer ? 'mcp' : 'ui',
+    );
     // 已存在会话幂等返回，这里补读一次拿到真实 mode / project（飞书会话为 kb）
     const sessionRow = db.chat.getSession(sid);
 
     const existing = db.chat.messages(sid);
-    if (existing.length === 0) {
+    if (existing.length === 0 && !scopedServer) {
       const title = question.length > 30 ? question.slice(0, 30) + '...' : question;
       db.chat.updateSessionTitle(sid, title);
     }
@@ -1082,7 +1089,7 @@ async function runChatTurn(
 
     // ===== 项目前置检查 =====
     // 查询事务/笔记/记录等本地知识类问题，若未添加项目则先引导用户配置，不再调用 AI
-    if (isKBQuery(question) && !db.project.list().length) {
+    if (!scopedServer && isKBQuery(question) && !db.project.list().length) {
       emit('chat:status', { sessionId: sid, text: '需要项目支持...' });
       const guide = [
         '🤖 我需要先添加一个本地项目目录，才能查询这类本地知识/事务类内容。',
@@ -1133,6 +1140,16 @@ async function runChatTurn(
       const proj = Number.isFinite(Number(sessionRow.project_id)) ? db.project.get(Number(sessionRow.project_id)) : null;
       turnPrompt = buildKbPrompt((proj && proj.name) || '', projectDir, question);
     }
+    // MCP 页面专属对话：只允许调用所选 MCP 服务的工具，其它工具一律不用
+    if (scopedServer) {
+      turnPrompt = [
+        `你正在「MCP 服务对话」中，本会话只允许调用 MCP 服务「${scopedServer.name || scopedServer.url}」暴露的工具。`,
+        '不要调用其它 MCP 服务、本机知识库、文件读写、命令执行等任何工具，也不要读取或修改本地文件。',
+        '如果用户问题与该服务的数据查询无关，直接说明本对话仅用于该服务的数据查询，并给出一个可查询的示例。',
+        '',
+        `用户问题：${question}`,
+      ].join('\n');
+    }
 
     const modelPattern = piModelPattern(modelName);
     await runPi({
@@ -1142,6 +1159,7 @@ async function runChatTurn(
       modelPattern,
       images,
       customTools: toolDefs,
+      mcpServerIds: scopedServer ? [scopedServer.id] : undefined,
       onDelta: (delta) => {
         reply += delta;
         emit('chat:delta', { sessionId: sid, text: delta });
@@ -1465,6 +1483,14 @@ ipcMain.handle('mcp:save', async (_, { servers }) => {
 ipcMain.handle('mcp:test', async (_, { url, token }) => {
   try {
     return await mcpManager.probeServer(String(url || ''), String(token || ''));
+  } catch (e: any) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+// 轻量工具清单（只握手 listTools，不拉业务数据）；页面按需调用
+ipcMain.handle('mcp:tools', async (_, { serverId, refresh }) => {
+  try {
+    return await mcpManager.listServerTools(String(serverId || ''), refresh === true);
   } catch (e: any) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }

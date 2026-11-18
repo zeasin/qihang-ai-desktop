@@ -118,9 +118,11 @@ async function getSession(opts: {
   modelPattern?: string;
   customTools?: any[];
   excludeTools?: string[];
+  /** 受限 MCP 作用域：只注入这些 MCP 服务（MCP 页面专属对话用） */
+  mcpServerIds?: string[];
 }): Promise<SessionHandle> {
   const sdk = await loadSdk();
-  const { sessionId, cwd, modelPattern, customTools = [], excludeTools = [] } = opts;
+  const { sessionId, cwd, modelPattern, customTools = [], excludeTools = [], mcpServerIds } = opts;
   let handle = sessions.get(sessionId);
   if (handle) {
     // 会话已缓存：工具集在创建时固定，后续调用若请求不同工具集，沿用已注册的并告警
@@ -170,7 +172,7 @@ async function getSession(opts: {
           extensionFactories: [{
             name: 'mcp',
             factory: sdk.createMcpExtension({
-              loadConfig: () => buildLoadedMcpConfig() as any,
+              loadConfig: () => buildLoadedMcpConfig(mcpServerIds) as any,
               startupWaitMs: 8000,
             }),
           }],
@@ -341,6 +343,8 @@ export interface RunPiOptions extends RunPiCallbacks {
   customTools?: any[];
   /** 排除内置工具（精确匹配工具名，不影响自定义工具） */
   excludeTools?: string[];
+  /** 受限 MCP 作用域：只允许这些 MCP 服务的工具（MCP 页面专属对话用） */
+  mcpServerIds?: string[];
 }
 
 /**
@@ -375,11 +379,12 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
     onError = () => {},
     customTools,
     excludeTools,
+    mcpServerIds,
   } = opts;
 
   let handle: SessionHandle;
   try {
-    handle = await getSession({ sessionId, cwd, modelPattern, customTools, excludeTools });
+    handle = await getSession({ sessionId, cwd, modelPattern, customTools, excludeTools, mcpServerIds });
   } catch (e: any) {
     onError(`会话初始化失败：${friendlyPiError(e.message)}`);
     return;

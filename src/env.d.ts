@@ -102,7 +102,7 @@ interface ElectronAPI {
     remove: (datasetId: string) => Promise<void>;
   };
   chat: {
-    send: (question: string, sessionId?: string, projectDir?: string, images?: any[], agent?: string, modelName?: string) => Promise<void>;
+    send: (question: string, sessionId?: string, projectDir?: string, images?: any[], agent?: string, modelName?: string, mcpServerId?: string) => Promise<void>;
     createSession: (sessionId?: string, projectId?: number, title?: string, mode?: string, agent?: string, source?: string) => Promise<any>;
     getSessions: (projectId?: number) => Promise<any[]>;
     getSessionsBySource: (source: string, projectId?: number) => Promise<any[]>;
@@ -137,6 +137,8 @@ interface ElectronAPI {
     save: (servers: unknown[]) => Promise<{ ok: boolean; servers: any[]; fingerprintChanged?: boolean; error?: string }>;
     test: (url: string, token: string) =>
       Promise<{ ok: boolean; serverName?: string; version?: string; instructions?: string; tools?: any[]; error?: string }>;
+    tools: (serverId: string, refresh?: boolean) =>
+      Promise<{ ok: boolean; instructions?: string; tools?: any[]; error?: string }>;
     overview: (serverId: string, refresh?: boolean) =>
       Promise<{ ok: boolean; error?: string; instructions?: string; tools?: any[]; metrics?: any; counts?: any }>;
     fetch: (serverId: string, tool: string, opts?: { from?: string; to?: string; page?: number }) =>

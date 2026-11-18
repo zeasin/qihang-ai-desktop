@@ -141,6 +141,63 @@ export async function probeServer(url: string, token: string): Promise<ProbeResu
   }
 }
 
+/**
+ * 轻量工具清单：只握手 + listTools，不调 describe_metrics/count_index、不读取业务数据。
+ * 页面进入时不自动调用；由用户主动「读取工具清单」或打开服务详情时触发。
+ * 结果缓存进 mcp_meta，refresh=true 强制重连。
+ */
+export async function listServerTools(
+  serverId: string,
+  refresh = false,
+): Promise<{ ok: boolean; error?: string; tools?: McpToolInfo[]; instructions?: string }> {
+  const conf = readServers().find(s => s.id === serverId);
+  if (!conf) return { ok: false, error: 'MCP 服务不存在' };
+
+  if (!refresh) {
+    try {
+      const cached = metaGet(serverId, 'tools');
+      if (cached) {
+        return { ok: true, tools: JSON.parse(cached), instructions: metaGet(serverId, 'instructions') };
+      }
+    } catch { /* 缓存损坏则重连 */ }
+  }
+
+  try {
+    const result = await withClient(conf.url, conf.token, async (client) => {
+      const tools: McpToolInfo[] = (await client.listTools() || []).map((t: any) => ({
+        name: String(t.name || ''),
+        description: String(t.description || '').split('\n')[0],
+      }));
+      return { tools, instructions: String(client.instructions || '') };
+    }, 20_000);
+    metaSet(serverId, 'tools', JSON.stringify(result.tools));
+    metaSet(serverId, 'instructions', result.instructions);
+    markServerOnline(serverId, result.tools.length);
+    return { ok: true, ...result };
+  } catch (e: any) {
+    return { ok: false, error: friendlyMcpError(e) };
+  }
+}
+
+/** 时间戳统一写上海本地时间（禁止 UTC ISO） */
+function localNow(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 更新某源的最近连接结果（只改状态字段，不影响连接指纹） */
+function markServerOnline(serverId: string, toolCount: number): void {
+  const list = readServers();
+  const conf = list.find(s => s.id === serverId);
+  if (!conf) return;
+  conf.status = 'ok';
+  conf.statusText = `已连接 · ${toolCount} 个工具`;
+  conf.toolCount = toolCount;
+  conf.lastTestedAt = localNow();
+  writeServers(list);
+}
+
 // ---------- 配置读写（config.json 的 mcpServers 键） ----------
 
 function readServers(): McpServerConf[] {
@@ -223,9 +280,8 @@ export async function saveServers(
       lastTestedAt: existing?.lastTestedAt || '',
     };
 
-    // 名称缺失、连接信息变了、或从未握手过（如种子配置）：握手自报名称并确认连通性
-    const needProbe = !conf.name || !existing || existing.url !== url || existing.token !== token
-      || conf.status === 'untested' || !conf.lastTestedAt;
+    // 只在「名称缺失或连接信息变化」时握手：保存配置不应对其它未验证的源产生额外远端请求
+    const needProbe = !conf.name || !existing || existing.url !== url || existing.token !== token;
     if (needProbe) {
       const probe = await probeServer(url, token);
       if (probe.ok) {
@@ -233,7 +289,10 @@ export async function saveServers(
         conf.status = 'ok';
         conf.statusText = `已连接 · ${probe.tools?.length || 0} 个工具`;
         conf.toolCount = probe.tools?.length || 0;
-        conf.lastTestedAt = new Date().toISOString();
+        conf.lastTestedAt = localNow();
+        // 握手已拿到工具清单，顺手落缓存，详情页打开即可秒显
+        metaSet(conf.id, 'tools', JSON.stringify(probe.tools || []));
+        metaSet(conf.id, 'instructions', probe.instructions || '');
       } else if (!conf.name) {
         // 完全拿不到名称时用 host 兜底，保证引擎侧命名空间可用
         conf.name = dedupeName(new URL(url).hostname, incoming as McpServerConf[], conf.id);
@@ -264,10 +323,15 @@ export function mcpFingerprint(): string {
 /**
  * 映射为 SDK 的 LoadedMcpConfig（createMcpExtension 的 loadConfig 返回值）。
  * exposure 必须显式 'direct'——SDK 默认 codemode，工具对模型完全不可见。
+ *
+ * serverIds 传入时进入「受限模式」：只注入这些 MCP 服务，且不注入本机知识库，
+ * 用于 MCP 页面内的专属对话（对话只允许调用所选服务的工具）。
  */
-export function buildLoadedMcpConfig(): { servers: any[]; errors: string[]; autoEnableCodemode: boolean } {
+export function buildLoadedMcpConfig(serverIds?: string[]): { servers: any[]; errors: string[]; autoEnableCodemode: boolean } {
+  const scope = Array.isArray(serverIds) && serverIds.length ? new Set(serverIds) : null;
   const servers = readServers()
     .filter(s => s.enabled && /^https?:\/\//i.test(s.url))
+    .filter(s => !scope || scope.has(s.id))
     .map(s => ({
       name: sanitizeServerName(s.name || s.id),
       config: {
@@ -281,8 +345,9 @@ export function buildLoadedMcpConfig(): { servers: any[]; errors: string[]; auto
     }));
 
   // 本机知识库 MCP：服务运行中才注入（应用内 agent 获得 mcp__qihang_kb__* 工具）
+  // 受限模式（MCP 页面专属对话）下不注入，保证工具面只包含所选服务
   const kb = kbServerStatus();
-  if (kb.running && kb.url) {
+  if (!scope && kb.running && kb.url) {
     servers.push({
       name: 'qihang_kb',
       config: {

@@ -107,8 +107,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Chat (general)
   chat: {
-    send: (question: string, sessionId: string, projectDir: string, images: unknown, agent: string, modelName: string) =>
-      ipcRenderer.invoke('chat:send', { question, sessionId, projectDir, images, agent, modelName }),
+    send: (question: string, sessionId: string, projectDir: string, images: unknown, agent: string, modelName: string, mcpServerId?: string) =>
+      ipcRenderer.invoke('chat:send', { question, sessionId, projectDir, images, agent, modelName, mcpServerId }),
     createSession: (sessionId: string, projectId: number, title: string, mode: string, agent: string, source: string) =>
       ipcRenderer.invoke('chat:session:create', { id: sessionId, projectId, title, mode, source, agent }),
     getSessions: (projectId?: number) => projectId ? ipcRenderer.invoke('chat:session:listByProject', { projectId }) : ipcRenderer.invoke('chat:session:list'),
@@ -148,6 +148,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list: () => ipcRenderer.invoke('mcp:list'),
     save: (servers: unknown[]) => ipcRenderer.invoke('mcp:save', { servers }),
     test: (url: string, token: string) => ipcRenderer.invoke('mcp:test', { url, token }),
+    tools: (serverId: string, refresh?: boolean) => ipcRenderer.invoke('mcp:tools', { serverId, refresh }),
     overview: (serverId: string, refresh?: boolean) => ipcRenderer.invoke('mcp:overview', { serverId, refresh }),
     fetch: (serverId: string, tool: string, opts?: { from?: string; to?: string; page?: number }) =>
       ipcRenderer.invoke('mcp:fetch', { serverId, tool, ...(opts || {}) }),
