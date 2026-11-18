@@ -400,7 +400,7 @@ export async function sourceOverview(
   refresh = false,
 ): Promise<{ ok: boolean; error?: string; instructions?: string; tools?: McpToolInfo[]; metrics?: any; counts?: any }> {
   const conf = readServers().find(s => s.id === serverId);
-  if (!conf) return { ok: false, error: '数据源不存在' };
+  if (!conf) return { ok: false, error: 'MCP 服务不存在' };
 
   if (!refresh) {
     const cachedTools = metaGet(serverId, 'tools');
@@ -462,7 +462,7 @@ export async function fetchRecords(
   opts: { from?: string; to?: string; page?: number } = {},
 ): Promise<{ ok: boolean; error?: string; rows?: any[]; text?: string; hasMore?: boolean; total?: number }> {
   const conf = readServers().find(s => s.id === serverId);
-  if (!conf) return { ok: false, error: '数据源不存在' };
+  if (!conf) return { ok: false, error: 'MCP 服务不存在' };
   const to = opts.to || new Date().toISOString().slice(0, 10);
   const from = opts.from || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
   const page = Math.max(1, Number(opts.page) || 1);
@@ -525,7 +525,7 @@ export async function classifyRecords(
   ok: boolean; error?: string; dimensions?: any[]; labeled?: number; cached?: number;
 }> {
   const conf = readServers().find(s => s.id === serverId);
-  if (!conf) return { ok: false, error: '数据源不存在' };
+  if (!conf) return { ok: false, error: 'MCP 服务不存在' };
   ensureTables();
 
   const limit = Math.min(100, Math.max(1, Number(opts.limit) || 60));

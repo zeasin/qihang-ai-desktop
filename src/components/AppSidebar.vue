@@ -1,7 +1,7 @@
 <!--
   AppSidebar —— 全局固定图标导航栏（64px 迷你导航，所有页面统一）
   图标+小字纵向排列，宽度让给内容区；对话列表已挪进对话页内的 ChatListPanel 面板。
-  结构：品牌区（仅浏览器模式）→ 顶部菜单（今天/对话/任务/数据源）→ 底部功能区（待办/笔记/技能/雷达）
+  结构：品牌区（仅浏览器模式）→ 顶部菜单（今天/对话/任务/MCP）→ 底部功能区（待办/笔记/技能/雷达）
         → 最底部（日志/主题；帮助在 Electron 下位于顶栏右侧，设置在右下角）
 -->
 <template>
@@ -81,7 +81,7 @@ const topMenu = computed(() => [
   { path: '/overview', label: '今天', icon: 'calendar', badge: radarRunning.value, badgeClass: 'run' },
   { path: '/chat', label: '对话', icon: 'message-square', badge: 0, badgeClass: '' },
   { path: '/planner', label: '任务', icon: 'workflow', badge: taskRunning.value, badgeClass: 'run' },
-  { path: '/sources', label: '数据源', icon: 'database', badge: 0, badgeClass: '' },
+  { path: '/sources', label: 'MCP', icon: 'network', badge: 0, badgeClass: '' },
 ]);
 
 const footMenu = computed(() => [

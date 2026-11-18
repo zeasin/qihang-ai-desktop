@@ -53,7 +53,7 @@
 
       <div class="card card-prereq" id="sec-prereq">
         <h2 style="font-size:17px;">📋 使用前必读：两个前置条件</h2>
-        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中笔记库（项目）是 AI 功能的前置条件：支持添加多个，一个都没有时，AI 对话、任务执行、日报生成、待办/工作日志提炼会被门禁拦截并提示；数据源、提醒、日志不受影响。</p>
+        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中笔记库（项目）是 AI 功能的前置条件：支持添加多个，一个都没有时，AI 对话、任务执行、日报生成、待办/工作日志提炼会被门禁拦截并提示；MCP、提醒、日志不受影响。</p>
 
         <div class="prereq-item">
           <div class="prereq-number">1</div>
@@ -80,7 +80,7 @@
           <li>在「今天」页查看引擎简报、AI 工具动态与工作日志，用「问雷达」向已采集的 AI 会话提问</li>
           <li>在「对话」页开始与 AI 对话（支持图片粘贴/上传、切换模型），左侧面板管理会话列表</li>
           <li>在「任务」页创建定时/循环任务，让 AI 定期自动执行（也可交由飞书 Bot 下发指令）</li>
-          <li>在「数据源」页接入外部 MCP 数据源（可选）：AI 对话即可查询外部系统的业务数据</li>
+          <li>在「MCP」页接入外部 MCP 服务（可选）：AI 对话即可查询外部系统的业务数据</li>
           <li>在「待办」页管理待办清单与定时提醒，在「笔记」页浏览笔记库</li>
           <li>在「设置」页配置飞书集成、审批通道、移动端、雷达采集、数据备份等高级功能</li>
         </ol>
@@ -95,7 +95,7 @@
           <tr><td>📅 今天</td><td>每日工作台：引擎简报、AI 工具动态（雷达已并入）、最近活动、等你处理、工作日志、最近活跃会话；运行中的 AI 会话数徽标挂在此入口</td></tr>
           <tr><td>💬 对话</td><td>对话工作台：会话列表内嵌在页面左侧（可折叠），支持多轮对话、图片识别、模型切换、新建对话独立页</td></tr>
           <tr><td>📈 任务</td><td>任务中心，管理挂在项目下的定时/循环任务，支持立即执行、指定时间、周期循环，任务详情含对话记录与执行记录</td></tr>
-          <tr><td>🔌 数据源</td><td>接入外部 MCP server（Streamable HTTP）：配置/连接测试、业务域数据浏览、AI 分类打标、「让 AI 分析」直达对话</td></tr>
+          <tr><td>🔌 MCP</td><td>接入外部 MCP server（Streamable HTTP）：配置/连接测试、业务域数据浏览、AI 分类打标、「让 AI 分析」直达对话</td></tr>
           <tr><td>✅ 待办</td><td>本地待办清单（逾期/今日/即将到来分组）+ 定时提醒（每日/每周/每月/每年/一次性），系统通知 + 飞书推送</td></tr>
           <tr><td>📚 笔记</td><td>笔记库：目录树浏览项目文件、Markdown 渲染预览、文件名关键词搜索</td></tr>
           <tr><td>✨ 技能（beta）</td><td>AI 内容生成工具集：演示、周报/日报、思维导图、文案、网站抓取、图片生成</td></tr>
@@ -135,7 +135,7 @@
           <tbody>
           <tr><td>💬 日常问答</td><td>通用对话，无需绑定项目即可提问</td></tr>
           <tr><td>📚 知识库检索</td><td>添加笔记库并在对话中选择项目后，AI 会自己到该项目目录里搜、读笔记并回答</td></tr>
-          <tr><td>🔌 MCP 数据源查询</td><td>已接入数据源（「数据源」页配置）的业务数据，AI 直接调用对应工具查询并在回答中注明来源</td></tr>
+          <tr><td>🔌 MCP 查询</td><td>已接入的 MCP 服务（「MCP」页配置）的业务数据，AI 直接调用对应工具查询并在回答中注明来源</td></tr>
           <tr><td>📁 笔记读写</td><td>在笔记库目录中浏览、新建、编辑 Markdown 文件</td></tr>
           <tr><td>🌐 联网搜索</td><td>网页搜索与抓取，实时信息补充回答（搜索通道在设置页配置）</td></tr>
           <tr><td>🖼️ 图片识别</td><td>支持粘贴或上传图片，AI 自动识别内容</td></tr>
@@ -160,7 +160,7 @@
       </div>
 
       <div class="card" id="sec-data">
-        <h2>🔌 数据源（MCP）</h2>
+        <h2>🔌 MCP</h2>
         <p class="text-muted mb-2">把外部系统的数据接进来：工作台作为 MCP 客户端连接任意 Streamable HTTP 的 MCP server，AI 对话即可直接查询其数据。</p>
         <ul>
           <li><strong>源管理</strong> — 填 URL + Token 即可接入，名称自动取服务端自报标识；支持启停、编辑、删除与连接测试</li>
@@ -179,7 +179,7 @@
           Claude Code、Codex、opencode、Trae、ZCode 等外部智能体接上后，就能直接检索「我之前写过/做过什么」；工作台自带对话会自动注入，无需配置。
         </p>
 
-        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">一、服务状态与开关（数据源页顶部卡片）</p>
+        <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">一、服务状态与开关（MCP 页顶部卡片）</p>
         <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.9;">
           <li><b>状态</b>：显示「运行中 · 端口」，默认 <code>127.0.0.1:8792</code>，随 App 自启（配置键 <code>kbMcpEnabled</code>，<code>"0"</code> 关闭）</li>
           <li><b>MCP 地址</b>：<code>http://127.0.0.1:8792/mcp</code>（配置键 <code>kbMcpPort</code>，改端口后要重启服务）</li>
@@ -192,7 +192,7 @@
         <table class="help-table">
           <thead><tr><th>工具</th><th>用途</th><th>主要参数</th></tr></thead>
           <tbody>
-            <tr><td><code>search</code></td><td>统一检索四类数据源，命中后可用 get_note / get_session 看详情</td><td><code>query</code>（必填）、<code>scope</code>=all/notes/sessions/chat/reports、<code>agent</code>、<code>days</code>、<code>limit</code></td></tr>
+            <tr><td><code>search</code></td><td>统一检索四类数据来源，命中后可用 get_note / get_session 看详情</td><td><code>query</code>（必填）、<code>scope</code>=all/notes/sessions/chat/reports、<code>agent</code>、<code>days</code>、<code>limit</code></td></tr>
             <tr><td><code>get_note</code></td><td>读一篇笔记的 Markdown 全文（超长截断并标注）</td><td><code>path</code>：绝对路径或「项目名/相对路径」</td></tr>
             <tr><td><code>list_notes</code></td><td>列出笔记项目及篇数；传项目名列出该项目文件清单</td><td><code>project</code>、<code>limit</code></td></tr>
             <tr><td><code>get_session</code></td><td>读外部 AI 会话的元信息、AI 摘要、最近消息</td><td><code>session_id</code>、<code>messages</code>（0-200）</td></tr>
@@ -205,7 +205,7 @@
           <li>服务只监听 <code>127.0.0.1</code>，公网访问不到；<b>不要做端口映射</b></li>
           <li>每个请求必须带请求头 <code>Authorization: Bearer &lt;kbMcpToken&gt;</code>，缺失或错误返回 <code>401</code></li>
           <li>Token 存在本机 <code>config.json</code> 的 <code>kbMcpToken</code>，服务端用 <code>sha256 + timingSafeEqual</code> 恒时比较</li>
-          <li>客户端配置里的 Token 就是数据源页卡片上那串，直接复制粘贴，不要加引号空格</li>
+          <li>客户端配置里的 Token 就是 MCP 页卡片上那串，直接复制粘贴，不要加引号空格</li>
         </ul>
 
         <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">四、各智能体接入配置</p>
@@ -535,7 +535,7 @@ const sections = [
   { id: 'sec-radar', icon: '📡', label: '今天页与雷达' },
   { id: 'sec-chat', icon: '💬', label: 'AI 对话' },
   { id: 'sec-tasks', icon: '📈', label: '任务中心' },
-  { id: 'sec-data', icon: '🔌', label: '数据源' },
+  { id: 'sec-data', icon: '🔌', label: 'MCP' },
   { id: 'sec-kbmcp', icon: '🔗', label: '本机 MCP 服务' },
   { id: 'sec-todo', icon: '✅', label: '待办与提醒' },
   { id: 'sec-notes', icon: '📚', label: '笔记库' },

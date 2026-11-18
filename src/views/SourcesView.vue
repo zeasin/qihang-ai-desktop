@@ -3,11 +3,11 @@
     <!-- ========== 页头 ========== -->
     <header class="page-head">
       <div>
-        <h1 class="page-title">数据源<small>MCP</small></h1>
+        <h1 class="page-title">MCP<small>服务</small></h1>
         <p class="page-sub">通过 MCP 协议接入外部系统的数据；AI 对话可直接查询，这里负责配置、浏览与分类</p>
       </div>
       <div class="page-actions">
-        <button class="btn btn-sm btn-primary" @click="showAddServer"><AppIcon name="plus" :size="13" />添加数据源</button>
+        <button class="btn btn-sm btn-primary" @click="showAddServer"><AppIcon name="plus" :size="13" />添加 MCP 服务</button>
       </div>
     </header>
 
@@ -51,12 +51,12 @@
     <!-- ========== 空态 ========== -->
     <section v-else-if="servers.length === 0" class="panel empty-panel">
       <div class="empty-icon">🔌</div>
-      <div class="empty-title">还没有外部数据源</div>
+      <div class="empty-title">还没有配置 MCP</div>
       <p class="empty-desc">
-        添加一个 MCP 数据源（Streamable HTTP），例如启航官网后台：<code>http://qihangerp.cn:6111/mcp</code><br>
+        添加一个 MCP 服务（Streamable HTTP），例如启航官网后台：<code>http://qihangerp.cn:6111/mcp</code><br>
         添加后，AI 在对话里即可直接查询它的数据；本页提供数据一览与 AI 分类。
       </p>
-      <button class="btn btn-primary" @click="showAddServer">添加数据源</button>
+      <button class="btn btn-primary" @click="showAddServer">添加 MCP 服务</button>
     </section>
 
     <template v-else>
@@ -74,7 +74,7 @@
             </div>
             <div class="src-url">{{ s.url }}</div>
             <div class="src-foot" @click.stop>
-              <label class="toggle" title="启用后 AI 对话可查询该数据源">
+              <label class="toggle" title="启用后 AI 对话可查询该 MCP 服务">
                 <input type="checkbox" :checked="s.enabled" @change="toggleEnabled(s)">
                 <span class="slider"></span>
               </label>
@@ -84,7 +84,7 @@
             </div>
           </div>
           <button class="src-card src-add" @click="showAddServer">
-            <AppIcon name="plus" :size="14" /><span>添加数据源</span>
+            <AppIcon name="plus" :size="14" /><span>添加 MCP 服务</span>
           </button>
         </div>
       </section>
@@ -171,7 +171,7 @@
     <div v-if="showModal" class="modal-overlay" @click="showModal = false">
       <div class="modal-box" @click.stop>
         <div class="modal-header">
-          <h3>{{ editingId ? '编辑数据源' : '添加 MCP 数据源' }}</h3>
+          <h3>{{ editingId ? '编辑 MCP 服务' : '添加 MCP 服务' }}</h3>
           <button class="btn btn-secondary" @click="showModal = false">✕</button>
         </div>
         <div class="modal-body">
@@ -189,7 +189,7 @@
                 <input type="checkbox" v-model="form.enabled">
                 <span class="slider"></span>
               </label>
-              启用（AI 对话可查询该数据源）
+              启用（AI 对话可查询该 MCP 服务）
             </label>
           </div>
           <p class="form-hint">名称无需填写：保存时自动读取服务端自报的名称。Token 明文保存在本机 config.json。</p>
@@ -250,7 +250,7 @@ async function loadServers() {
     }
     // 未验证的源自动补一次握手（触发主进程 saveServers 的探测，结果落库；已验证的不再打扰）
     void autoProbeUntested();
-  } catch (e) { console.error('加载数据源失败:', e); }
+  } catch (e) { console.error('加载 MCP 服务失败:', e); }
   loaded.value = true;
 }
 
@@ -329,7 +329,7 @@ async function saveServer() {
 }
 
 async function removeServer(s: ServerConf) {
-  if (!confirm(`确定删除数据源「${s.name || s.url}」？AI 对话将不再能查询它。`)) return;
+  if (!confirm(`确定删除 MCP 服务「${s.name || s.url}」？AI 对话将不再能查询它。`)) return;
   if (!API) return;
   try {
     await API.mcp.save(servers.value.filter(x => x.id !== s.id).map(x => ({ id: x.id, url: x.url, token: x.token, enabled: x.enabled })));
@@ -450,7 +450,7 @@ async function loadOverview(refresh = false) {
     } else {
       overview.value = {};
       domains.value = [];
-      alert('读取数据源失败：' + (res.error || '未知错误'));
+      alert('读取 MCP 数据失败：' + (res.error || '未知错误'));
     }
   } catch (e: any) {
     console.error('读取概览失败:', e);
@@ -605,7 +605,7 @@ const NEW_CHAT_HANDOFF_KEY = 'new_chat_handoff';
 async function askAi() {
   if (!selected.value || !API) return;
   const toolPart = currentTool.value ? `，重点看 ${currentTool.value.replace(/^list_/, '')} 域` : '';
-  const prompt = `请分析「${selected.value.name}」数据源（MCP）的数据${toolPart}：先用 describe_metrics 和 count_index 了解业务域与数据量，再拉取近 7 天明细，给我一份中文摘要（含关键数字与值得注意的变化）。`;
+  const prompt = `请分析「${selected.value.name}」（MCP 服务）的数据${toolPart}：先用 describe_metrics 和 count_index 了解业务域与数据量，再拉取近 7 天明细，给我一份中文摘要（含关键数字与值得注意的变化）。`;
   const id = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   try {
     await API.chat.createSession(id, null, `${selected.value.name} 分析`, 'general', 'general', 'ui');
