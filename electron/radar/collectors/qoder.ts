@@ -8,11 +8,13 @@ const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-QODER]', msg, .
 
 /** Qoder 主库候选：CN 版 com.qodercn.app.stable，国际版 com.qoder.app.stable */
 function qoderDbCandidates(): string[] {
+  const appSupport = path.join(os.homedir(), 'Library', 'Application Support');
   const roaming = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-  return [
-    path.join(roaming, 'com.qodercn.app.stable', 'main.sqlite'),
-    path.join(roaming, 'com.qoder.app.stable', 'main.sqlite'),
-  ];
+  const bases = process.platform === 'darwin' ? [appSupport] : [roaming];
+  return bases.flatMap((base) => [
+    path.join(base, 'com.qodercn.app.stable', 'main.sqlite'),
+    path.join(base, 'com.qoder.app.stable', 'main.sqlite'),
+  ]);
 }
 
 interface QoderPart {

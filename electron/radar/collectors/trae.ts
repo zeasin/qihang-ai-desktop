@@ -8,11 +8,13 @@ const LOG = (msg: string, ...args: any[]) => console.log('[RADAR-TRAE]', msg, ..
 
 /** Trae 会话库候选路径：CN 版为 "Trae CN"，国际版为 "Trae" */
 function traeDbCandidates(): string[] {
+  const appSupport = path.join(os.homedir(), 'Library', 'Application Support');
   const roaming = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-  return [
-    path.join(roaming, 'Trae CN', 'ModularData', 'ai-agent', 'database.db'),
-    path.join(roaming, 'Trae', 'ModularData', 'ai-agent', 'database.db'),
-  ];
+  const bases = process.platform === 'darwin' ? [appSupport] : [roaming];
+  return bases.flatMap((base) => [
+    path.join(base, 'Trae CN', 'ModularData', 'ai-agent', 'database.db'),
+    path.join(base, 'Trae', 'ModularData', 'ai-agent', 'database.db'),
+  ]);
 }
 
 /** 解密缓存放系统临时目录（源库变了会自动重解） */
