@@ -24,8 +24,30 @@ function getDb(): Database.Database {
   return db;
 }
 
+/** 记录保存回调注册点（工单联动用，由 main.ts 在启动时注册） */
+const dsRecordHooks: Array<(kind: 'insert' | 'update', datasetId: string, recordId: number | null, data: any) => void> = [];
+
 /** 本地 SQLite 表结构 */
 function initSchema() {
+  // 表改名迁移：统一任务域表名前缀为 plan_（与 prj_ / kb_ / data_center_ 对齐）。
+  // 源名兼容历史版本：老库是 plan_tasks/plan_reminders（目标名相同，自然跳过），
+  // 中间版本可能是 tasks/reminders，task_executions 则一直没有前缀。
+  // 幂等：仅当旧表存在且新表不存在时执行；必须在下面 CREATE TABLE 之前跑，
+  // 否则新表先被空建出来，改名会因名字冲突失败。
+  for (const [oldName, newName] of [
+    ['tasks', 'plan_tasks'],
+    ['reminders', 'plan_reminders'],
+    ['task_executions', 'plan_executions'],
+  ] as const) {
+    try {
+      const hasOld = db!.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(oldName);
+      const hasNew = db!.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(newName);
+      if (hasOld && !hasNew) {
+        db!.exec(`ALTER TABLE ${oldName} RENAME TO ${newName}`);
+        logger.info(`[DB] 表改名: ${oldName} → ${newName}`);
+      }
+    } catch (e) {}
+  }
   getDb().exec(`
 
     CREATE TABLE IF NOT EXISTS prj_sessions (
@@ -172,7 +194,20 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
-    CREATE TABLE IF NOT EXISTS task_executions (
+    CREATE TABLE IF NOT EXISTS plan_todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      priority TEXT DEFAULT 'mid',
+      status TEXT DEFAULT 'pending',
+      scheduled_start TEXT DEFAULT '',
+      project_id INTEGER DEFAULT NULL,
+      source TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+
+    CREATE TABLE IF NOT EXISTS plan_executions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id INTEGER,
       task_title TEXT DEFAULT '',
@@ -266,6 +301,19 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_status TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN session_id TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
+  // 待办拆表迁移：历史上待办和定时任务同存 plan_tasks（待办 = trigger_type='manual' 的行）。
+  // 现待办独立成 plan_todos。幂等：仅当 plan_todos 为空且 plan_tasks 里存在 manual 行时迁一次，
+  // 避免每次启动重复插入。迁完不删 plan_tasks 里的旧行（留作回滚余地，且它们已不再被 listTodos 读取）。
+  try { migrateTodosOut(); } catch (e) { logger.warn('[DB] 待办拆表迁移失败: ' + (e && e.message)); }
+  // 工单联动：一次性提醒可关联到来源数据集与记录（record_id 为 TEXT，因为 record_id 本身是数字主键存字符串）
+  try { getDb().exec("ALTER TABLE plan_reminders ADD COLUMN ticket_dataset_id TEXT DEFAULT ''"); } catch (e) {}
+  try { getDb().exec("ALTER TABLE plan_reminders ADD COLUMN source_record_id TEXT DEFAULT ''"); } catch (e) {}
+  // 记录表 dataset_id 归一化：历史上把 JS 数字直接绑进 TEXT 列，存成了 '14.0'，
+  // 与 '14' 的记录混在一起，按 '14' 精确匹配的查询查不到 → 工单建了却看不见。统一改回整数文本。
+  try {
+    const fixed = getDb().prepare("UPDATE data_center_records SET dataset_id = CAST(CAST(dataset_id AS REAL) AS INTEGER) WHERE dataset_id GLOB '[0-9]*.0'").run();
+    if (fixed.changes) logger.info('[DB] 归一化记录 dataset_id：' + fixed.changes + ' 条');
+  } catch (e) { logger.warn('[DB] dataset_id 归一化失败: ' + (e && e.message)); }
   // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
   try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
   // 飞书来源会话的锚点（chat_id）：供「继续」按群/私聊定位最近对话，也为回推飞书留映射
@@ -279,6 +327,26 @@ function initSchema() {
   ensureMessageExtraColumns();
   // prj_sessions 旧版迁移：id TEXT → id INTEGER AUTOINCREMENT + session_id TEXT
   migrateSessionKeyTable();
+}
+
+/**
+ * 待办拆表迁移：把 plan_tasks 里 trigger_type='manual' 的待办行搬到 plan_todos。
+ * 幂等——仅当 plan_todos 为空时执行（首次升级），迁过就跳过。
+ * 字段映射：待办只带走它用得到的列（title/description/priority/status/scheduled_start/project_id/source/时间戳），
+ * 定时任务专属列（cycle_*、output_*、session_id、last_* 等）对待办无意义，丢弃。
+ */
+function migrateTodosOut(): void {
+  const dbi = getDb();
+  const todoCount = (dbi.prepare('SELECT COUNT(*) AS c FROM plan_todos').get() as any).c;
+  if (todoCount > 0) return; // 已迁过或已有数据，不重复迁
+  const manualRows = dbi.prepare("SELECT * FROM plan_tasks WHERE IFNULL(trigger_type, '') = 'manual'").all() as any[];
+  if (!manualRows.length) return;
+  const ins = dbi.prepare('INSERT INTO plan_todos (title, description, priority, status, scheduled_start, project_id, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const tx = dbi.transaction((rows: any[]) => {
+    for (const r of rows) ins.run(r.title, r.description || '', r.priority || 'mid', r.status || 'pending', r.scheduled_start || '', r.project_id ?? null, r.source || '', r.created_at || null, r.updated_at || null);
+  });
+  tx(manualRows);
+  logger.info(`[DB] 待办拆表迁移：${manualRows.length} 条待办从 plan_tasks 迁入 plan_todos`);
 }
 
 function ensureMessageExtraColumns(): void {
@@ -581,7 +649,10 @@ const dm = {
     const mod = dm.get(id);
     const moduleId = mod && mod.module_id ? String(mod.module_id) : String(id);
     const dsList = q<{id: number}>('SELECT id FROM data_center_datasets WHERE module_id = ?', moduleId);
-    for (const d of dsList) { run('DELETE FROM data_center_records WHERE dataset_id = ?', String(d.id)); }
+    for (const d of dsList) {
+      const rw = dsRecordWhere(d.id);
+      run(`DELETE FROM data_center_records WHERE ${rw.sql}`, ...rw.params);
+    }
     run('DELETE FROM data_center_datasets WHERE module_id = ?', moduleId);
     const w = dmWhere(id);
     run(`DELETE FROM data_center_modules WHERE ${w.where}`, ...w.params);
@@ -599,6 +670,32 @@ function dsWhere(id: any): { where: string; params: any[] } {
     : { where: 'dataset_id = ?', params: [s] };
 }
 
+/**
+ * 记录表 dataset_id 的规范写法（写入用）：统一存字符串。
+ * 必须转字符串 —— better-sqlite3 会把 JS 数字按 REAL 绑定，
+ * 存进 TEXT 列就变成 '14.0'，与历史 '14' 的记录混在一起，按 '14' 精确匹配就查不到了。
+ */
+function dsRecordKey(id: any): string {
+  return String(id == null ? '' : id).trim();
+}
+
+/**
+ * 记录表 dataset_id 的查询条件。
+ *
+ * 亲和性坑：dataset_id 是 TEXT 列，拿「数字」参数比对时 SQLite 会给参数套上 TEXT 亲和性，
+ * 把 14 变成 '14.0' 文本再比，跟存着的 '14' 对不上 —— 所以一律用文本精确匹配。
+ * 另给历史的 'N.0' 写法留一个口子（迁移没兜住的旧记录也能查出来），
+ * 用 GLOB 限定只处理纯数字开头的值，UUID 型 dataset_id 不受影响。
+ */
+function dsRecordWhere(id: any): { sql: string; params: any[] } {
+  const key = dsRecordKey(id);
+  if (!/^\d+$/.test(key)) return { sql: 'dataset_id = ?', params: [key] };
+  return {
+    sql: "(dataset_id = ? OR (dataset_id GLOB '[0-9]*.0' AND CAST(dataset_id AS REAL) = CAST(? AS REAL)))",
+    params: [key, key],
+  };
+}
+
 const ds = {
   list: () => {
     const rows = q('SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.id) as record_count FROM data_center_datasets d ORDER BY d.created_at DESC');
@@ -613,7 +710,9 @@ const ds = {
     const id = params.dataset_id || 'ds_' + Date.now();
     run('INSERT INTO data_center_datasets (dataset_id, name, description, type, status, schema_json, module_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
       id, params.name, params.description || '', params.type || '', params.status || '', params.schemaJson || '{}', params.module_id || '');
-    return { id };
+    // 返回真正的自增行 id（记录表按它关联），别把 dataset_id 字符串当成 id 用
+    const row = qOne<{ id: number }>('SELECT id FROM data_center_datasets WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', id);
+    return { id: row ? row.id : id, dataset_id: id };
   },
   updateMeta: (id, data) => {
     const fields: any[] = []; const params: any[] = [];
@@ -621,7 +720,9 @@ const ds = {
     if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description); }
     if (data.type !== undefined) { fields.push('type = ?'); params.push(data.type); }
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
-    if (data.schema_json !== undefined) { fields.push('schema_json = ?'); params.push(data.schema_json); }
+    // schema_json 同时兼容 camelCase 传法（渲染层两套写法都出现过，漏一个就静默不生效）
+    const schemaJson = data.schema_json !== undefined ? data.schema_json : data.schemaJson;
+    if (schemaJson !== undefined) { fields.push('schema_json = ?'); params.push(schemaJson); }
     if (data.module_id !== undefined) { fields.push('module_id = ?'); params.push(data.module_id); }
     if (fields.length) {
       const w = dsWhere(id);
@@ -633,18 +734,54 @@ const ds = {
   remove: (id) => {
     const w = dsWhere(id);
     const dsRow = qOne<{id: number}>(`SELECT id FROM data_center_datasets WHERE ${w.where}`, ...w.params);
-    if (dsRow) { run('DELETE FROM data_center_records WHERE dataset_id = ?', String(dsRow.id)); }
+    if (dsRow) {
+      const rw = dsRecordWhere(dsRow.id);
+      run(`DELETE FROM data_center_records WHERE ${rw.sql}`, ...rw.params);
+    }
     run(`DELETE FROM data_center_datasets WHERE ${w.where}`, ...w.params);
   },
   query: (datasetId, conditions) => {
-    let sql = "SELECT * FROM data_center_records WHERE dataset_id = ?";
-    const params = [String(datasetId)];
+    const w = dsRecordWhere(datasetId);
+    let sql = "SELECT * FROM data_center_records WHERE " + w.sql;
+    const params: any[] = [...w.params];
     if (conditions) { sql += ' AND data_json LIKE ?'; params.push(`%${conditions}%`); }
     sql += ' ORDER BY created_at DESC LIMIT 50';
     return q(sql, ...params).map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
   },
-  insert: (datasetId, dataObj) => run("INSERT INTO data_center_records (dataset_id, data_json) VALUES (?, ?)", datasetId, JSON.stringify(dataObj)),
-  updateRecord: (id, dataObj) => run('UPDATE data_center_records SET data_json = ? WHERE id = ?', JSON.stringify(dataObj), id),
+  /** 工单视图用：分页返回某数据集全部记录（含 id 与 created_at），可按关键词过滤标题 */
+  listRecords: (datasetId, opts?: { search?: string; limit?: number; offset?: number }) => {
+    const limit = Math.max(1, Math.min(200, (opts && opts.limit) || 100));
+    const offset = Math.max(0, (opts && opts.offset) || 0);
+    const w = dsRecordWhere(datasetId);
+    let sql = "SELECT * FROM data_center_records WHERE " + w.sql;
+    const params: any[] = [...w.params];
+    if (opts && opts.search) { sql += ' AND data_json LIKE ?'; params.push(`%${opts.search}%`); }
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'; params.push(limit, offset);
+    const rows = q(sql, ...params).map(r => ({ id: r.id, record_id: r.record_id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
+    const w2 = dsRecordWhere(datasetId);
+    let totalSql = "SELECT COUNT(*) AS c FROM data_center_records WHERE " + w2.sql; const totalParams: any[] = [...w2.params];
+    if (opts && opts.search) { totalSql += ' AND data_json LIKE ?'; totalParams.push(`%${opts.search}%`); }
+    const total = (qOne<{ c: number }>(totalSql, ...totalParams) || { c: 0 }).c;
+    return { rows, total };
+  },
+  insert: (datasetId, dataObj) => {
+    // dataset_id 必须按字符串写入（见 dsRecordKey 注释）
+    const key = dsRecordKey(datasetId);
+    run("INSERT INTO data_center_records (dataset_id, data_json) VALUES (?, ?)", key, JSON.stringify(dataObj));
+    // 工单联动 hook：通知外部（main.ts 注册）记录已保存，便于按承诺时间派生提醒等
+    const rec = qOne<{ id: number }>('SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', key);
+    try { for (const h of dsRecordHooks) h('insert', key, rec ? rec.id : null, dataObj); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
+    return rec ? rec.id : null;
+  },
+  updateRecord: (id, dataObj) => {
+    run('UPDATE data_center_records SET data_json = ? WHERE id = ?', JSON.stringify(dataObj), id);
+    const rec = qOne<{ dataset_id: string | number }>('SELECT dataset_id FROM data_center_records WHERE id = ?', id);
+    try { for (const h of dsRecordHooks) h('update', rec ? String(rec.dataset_id) : '', id, dataObj); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
+  },
+  /** 工单联动等外部逻辑注册的记录保存回调（kind: 'insert' | 'update'） */
+  onRecordSave: (fn: (kind: 'insert' | 'update', datasetId: string, recordId: number | null, data: any) => void) => {
+    dsRecordHooks.push(fn);
+  },
   deleteRecord: (id) => run('DELETE FROM data_center_records WHERE id = ?', id),
 };
 
@@ -668,12 +805,13 @@ const reminder = {
   get: (id) => qOne('SELECT * FROM plan_reminders WHERE id = ?', id),
   add: (data) => {
     const id = data.id || 'R' + Date.now();
-    run('INSERT OR IGNORE INTO plan_reminders (id, name, message, type, time, date, day_of_week, day_of_month, month_day, enabled, created_at, last_triggered, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    run('INSERT OR IGNORE INTO plan_reminders (id, name, message, type, time, date, day_of_week, day_of_month, month_day, enabled, created_at, last_triggered, project_id, ticket_dataset_id, source_record_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       id, data.name, data.message || '', data.type, data.time || '09:00', data.date || '',
       data.day_of_week || 0, data.day_of_month || 1, data.month_day || '',
       data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
       data.created_at || new Date().toISOString().slice(0, 19).replace('T', ' '),
-      data.last_triggered || '', data.project_id || null);
+      data.last_triggered || '', data.project_id || null,
+      data.ticket_dataset_id || '', data.source_record_id != null ? String(data.source_record_id) : '');
     return { id };
   },
   update: (id, data) => {
@@ -682,7 +820,10 @@ const reminder = {
     if (data.message !== undefined) { fields.push('message = ?'); params.push(data.message); }
     if (data.type !== undefined) { fields.push('type = ?'); params.push(data.type); }
     if (data.time !== undefined) { fields.push('time = ?'); params.push(data.time); }
+    if (data.date !== undefined) { fields.push('date = ?'); params.push(data.date); }
     if (data.enabled !== undefined) { fields.push('enabled = ?'); params.push(data.enabled ? 1 : 0); }
+    if (data.ticket_dataset_id !== undefined) { fields.push('ticket_dataset_id = ?'); params.push(data.ticket_dataset_id || ''); }
+    if (data.source_record_id !== undefined) { fields.push('source_record_id = ?'); params.push(data.source_record_id != null ? String(data.source_record_id) : ''); }
     if (fields.length) { params.push(id); run(`UPDATE plan_reminders SET ${fields.join(', ')} WHERE id = ?`, ...params); }
   },
   remove: (id) => run('DELETE FROM plan_reminders WHERE id = ?', id),
@@ -692,13 +833,12 @@ const reminder = {
 
 // ========== AI 任务（挂在笔记库下） ==========
 const task = {
-  // 任务列表：排除 coding 遗留类型与 trigger_type='manual' 的待办行（待办与任务同表但互不混杂）
+  // 任务列表（仅定时/循环任务）。待办已独立到 plan_todos（见 todo 对象），不再存 plan_tasks；
+  // 这里保留 trigger_type != 'manual' 过滤作为防御（历史库若仍有残留 manual 行则排除）。
   list: (status?: string) => {
     if (status) return q("SELECT * FROM plan_tasks WHERE status = ? AND IFNULL(task_type, '') != 'coding' AND IFNULL(trigger_type, '') != 'manual' ORDER BY created_at DESC", status);
     return q("SELECT * FROM plan_tasks WHERE IFNULL(task_type, '') != 'coding' AND IFNULL(trigger_type, '') != 'manual' ORDER BY created_at DESC");
   },
-  // 待办列表：只取 manual 行（todo:add 写入），不包含定时/循环任务
-  listTodos: () => q("SELECT * FROM plan_tasks WHERE trigger_type = 'manual' AND IFNULL(task_type, '') != 'coding' ORDER BY created_at DESC"),
   get: (id: number) => qOne('SELECT * FROM plan_tasks WHERE id = ?', id),
   add: (data: any) => {
     const pid = (data.project_id !== null && data.project_id !== undefined && data.project_id !== '') ? (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null) : null;
@@ -748,7 +888,7 @@ const task = {
       run('DELETE FROM prj_messages WHERE session_id = ?', t.session_id);
       run('DELETE FROM prj_sessions WHERE session_id = ?', t.session_id);
     }
-    run('DELETE FROM task_executions WHERE task_id = ?', id);
+    run('DELETE FROM plan_executions WHERE task_id = ?', id);
     run('DELETE FROM plan_tasks WHERE id = ?', id);
   },
   // 可调度的任务（定时 + 循环），用于恢复调度
@@ -756,12 +896,44 @@ const task = {
   listByProject: (projectId: number) => q('SELECT * FROM plan_tasks WHERE project_id = ? ORDER BY created_at DESC', projectId),
 };
 
+// ========== 待办（独立表 plan_todos，2026-11-20 从 plan_tasks 拆出） ==========
+// 待办是「要动手做的一件事」，只用 title/description/priority/status/scheduled_start/project_id/source；
+// 定时任务（plan_tasks）那套 cycle_*/output_*/session_id/last_* 列对待办无意义，故独立成表。
+const todo = {
+  list: () => q('SELECT * FROM plan_todos ORDER BY created_at DESC'),
+  get: (id: number) => qOne('SELECT * FROM plan_todos WHERE id = ?', id),
+  add: (data: any) => {
+    const pid = (data.project_id !== null && data.project_id !== undefined && data.project_id !== '') ? (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null) : null;
+    run('INSERT INTO plan_todos (title, description, priority, status, scheduled_start, project_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      data.title, data.description || '', data.priority || 'mid', data.status || 'pending', data.scheduled_start || '', pid, data.source || '');
+    const r = qOne<{ id: number }>('SELECT id FROM plan_todos ORDER BY id DESC LIMIT 1');
+    return { id: r!.id };
+  },
+  update: (id: number, data: any) => {
+    const fields: any[] = []; const params: any[] = [];
+    if (data.title !== undefined) { fields.push('title = ?'); params.push(data.title); }
+    if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description); }
+    if (data.priority !== undefined) { fields.push('priority = ?'); params.push(data.priority); }
+    if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
+    if (data.scheduled_start !== undefined) { fields.push('scheduled_start = ?'); params.push(data.scheduled_start); }
+    if (data.project_id !== undefined) {
+      const v = (data.project_id === null || data.project_id === undefined || data.project_id === '') ? null : (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null);
+      fields.push('project_id = ?'); params.push(v);
+    }
+    if (data.source !== undefined) { fields.push('source = ?'); params.push(data.source); }
+    if (fields.length) { fields.push("updated_at = datetime('now', '+8 hours')"); params.push(id); run(`UPDATE plan_todos SET ${fields.join(', ')} WHERE id = ?`, ...params); }
+  },
+  remove: (id: number) => run('DELETE FROM plan_todos WHERE id = ?', id),
+  // 未完成数（今天页/侧栏徽标用）
+  openCount: () => (qOne<{ c: number }>("SELECT COUNT(*) AS c FROM plan_todos WHERE status != 'done'") || { c: 0 }).c,
+};
+
 const taskExecution = {
   add: (data: any) => {
-    run('INSERT INTO task_executions (task_id, task_title, status, trigger_type, start_time, end_time, log_text, result_text, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    run('INSERT INTO plan_executions (task_id, task_title, status, trigger_type, start_time, end_time, log_text, result_text, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       data.task_id || null, data.task_title || '', data.status || 'QUEUED', data.trigger_type || '',
       data.start_time || '', data.end_time || '', data.log_text || '', data.result_text || '', data.error_message || '');
-    const r = qOne<{id: number}>('SELECT id FROM task_executions ORDER BY id DESC LIMIT 1');
+    const r = qOne<{id: number}>('SELECT id FROM plan_executions ORDER BY id DESC LIMIT 1');
     return r ? r.id : null;
   },
   update: (id: number, data: any) => {
@@ -772,16 +944,16 @@ const taskExecution = {
     if (data.log_text !== undefined) { fields.push('log_text = ?'); params.push(data.log_text); }
     if (data.result_text !== undefined) { fields.push('result_text = ?'); params.push(data.result_text); }
     if (data.error_message !== undefined) { fields.push('error_message = ?'); params.push(data.error_message); }
-    if (fields.length) { params.push(id); run(`UPDATE task_executions SET ${fields.join(', ')} WHERE id = ?`, ...params); }
+    if (fields.length) { params.push(id); run(`UPDATE plan_executions SET ${fields.join(', ')} WHERE id = ?`, ...params); }
   },
   list: (page = 1, pageSize = 20) => {
     const offset = Math.max(0, (page - 1) * pageSize);
-    const total = (qOne<{c: number}>('SELECT COUNT(*) as c FROM task_executions') || {}).c || 0;
-    const rows = q('SELECT * FROM task_executions ORDER BY id DESC LIMIT ? OFFSET ?', pageSize, offset);
+    const total = (qOne<{c: number}>('SELECT COUNT(*) as c FROM plan_executions') || {}).c || 0;
+    const rows = q('SELECT * FROM plan_executions ORDER BY id DESC LIMIT ? OFFSET ?', pageSize, offset);
     return { total, rows };
   },
-  listByTask: (taskId: number, limit = 20) => q('SELECT * FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT ?', taskId, limit),
-  get: (id: number) => qOne('SELECT * FROM task_executions WHERE id = ?', id),
+  listByTask: (taskId: number, limit = 20) => q('SELECT * FROM plan_executions WHERE task_id = ? ORDER BY id DESC LIMIT ?', taskId, limit),
+  get: (id: number) => qOne('SELECT * FROM plan_executions WHERE id = ?', id),
 };
 
 // ========== AI 工具箱历史 ==========
@@ -823,4 +995,4 @@ const feishuContext = {
   list: () => q('SELECT * FROM feishu_contexts ORDER BY updated_at DESC'),
 };
 
-export { getDb, close, q, qOne, run, runRaw, save, project, chat, dm, ds, aa, reminder, task, taskExecution, aitoolHistory, feishuContext };
+export { getDb, close, q, qOne, run, runRaw, save, project, chat, dm, ds, aa, reminder, task, todo, taskExecution, aitoolHistory, feishuContext };

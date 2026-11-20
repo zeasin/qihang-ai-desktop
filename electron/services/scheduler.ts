@@ -101,7 +101,7 @@ function getWebhookUrl() {
 
 function buildReportSections(data) {
   const { today, yesterday, greeting, kbName, doneToday, pendingTodos, overdueTodos,
-          reminders, chats, workLogs, recs, recCount, docs, docCountToday, doneWeek,
+          plan_reminders, chats, workLogs, recs, recCount, docs, docCountToday, doneWeek,
           chatCountToday, chatCountWeek, recCountWeek, todos, dsNameMap } = data;
 
   const weekTotal = doneWeek.length ? doneWeek.reduce((s, x) => s + x.c, 0) : 0;
@@ -147,8 +147,8 @@ function buildReportSections(data) {
   }
 
   let reminderSection = '';
-  if (reminders.length) {
-    const todayReminders = reminders.filter(rem => {
+  if (plan_reminders.length) {
+    const todayReminders = plan_reminders.filter(rem => {
       if (rem.type === 'daily') return true;
       if (rem.type === 'weekly') return rem.day_of_week == new Date().getDay();
       if (rem.type === 'monthly') return rem.day_of_month == new Date().getDate();
@@ -482,7 +482,7 @@ async function sendFeishu(message) {
 }
 
 function buildReportCard(data) {
-  const { today, doneToday, overdueTodos, pendingTodos, reminders, chats, workLogs, recs, recCount, docs, docCount, kbName, hour } = data;
+  const { today, doneToday, overdueTodos, pendingTodos, plan_reminders, chats, workLogs, recs, recCount, docs, docCount, kbName, hour } = data;
   const elements: any[] = [];
 
   // greeting
@@ -526,8 +526,8 @@ function buildReportCard(data) {
   }
 
   // ⏰ 今日提醒
-  if (reminders.length) {
-    const todayReminders = reminders.filter(rem => {
+  if (plan_reminders.length) {
+    const todayReminders = plan_reminders.filter(rem => {
       if (rem.type === 'daily') return true;
       if (rem.type === 'weekly') return rem.day_of_week == new Date().getDay();
       if (rem.type === 'monthly') return rem.day_of_month == new Date().getDate();
@@ -713,14 +713,14 @@ function start() {
   if (running) return;
   running = true;
 
-  const reminders = db.reminder.getActive();
-  for (const r of reminders) {
+  const plan_reminders = db.reminder.getActive();
+  for (const r of plan_reminders) {
     scheduleReminder(r);
   }
 
   reloadTasks();
 
-  logger.info(`[Scheduler] started with 0 tasks + ${reminders.length} reminders`);
+  logger.info(`[Scheduler] started with 0 plan_tasks + ${plan_reminders.length} plan_reminders`);
 }
 
 
@@ -837,9 +837,9 @@ function reloadTasks() {
   for (const [id, job] of jobs) {
     if (id.startsWith('task_')) { job.stop(); jobs.delete(id); }
   }
-  const tasks = db.task.schedulable();
-  for (const t of tasks) scheduleTask(t);
-  logger.info(`[Scheduler] tasks scheduled: ${tasks.length}`);
+  const plan_tasks = db.task.schedulable();
+  for (const t of plan_tasks) scheduleTask(t);
+  logger.info(`[Scheduler] plan_tasks scheduled: ${plan_tasks.length}`);
 }
 
 function removeTask(id: number) {

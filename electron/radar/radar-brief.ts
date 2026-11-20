@@ -137,7 +137,7 @@ function readDocExcerpt(full: string, allotment: number): string {
  */
 function collectTodayTodos(digest: any, contextDocs: TodoContextDoc[], activeSince: number): { items: PickedTodo[]; dropped: number } {
   let localTasks: any[] = [];
-  try { localTasks = db.task.listTodos() as any[]; } catch { localTasks = []; }
+  try { localTasks = db.todo.list() as any[]; } catch { localTasks = []; }
   // 时效窗口默认 14 天，可在 config.json 里用 briefTodoWindowDays 调整
   let windowDays = 0;
   try { windowDays = Number(appConfig.getConfig('briefTodoWindowDays') || 0); } catch { windowDays = 0; }

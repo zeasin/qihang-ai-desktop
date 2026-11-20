@@ -94,12 +94,16 @@ interface ElectronAPI {
   };
   ds: {
     list: () => Promise<any[]>;
-    query: (datasetId: string, conditions?: string) => Promise<any[]>;
-    add: (name: string, schemaJson: string) => Promise<any>;
-    insert: (datasetId: string, data: any) => Promise<void>;
-    update: (id: number, data: any) => Promise<void>;
-    delete: (id: number) => Promise<void>;
-    remove: (datasetId: string) => Promise<void>;
+    get: (id: number) => Promise<any>;
+    query: (datasetId: number, conditions: string) => Promise<any[]>;
+    add: (params: { name: string; description?: string; schemaJson?: string; module_id?: string }) => Promise<any>;
+    updateMeta: (id: number, data: { name?: string; description?: string; schema_json?: string; module_id?: string }) => Promise<any>;
+    insert: (datasetId: number, data: any) => Promise<any>;
+    updateRecord: (id: number, data: any) => Promise<any>;
+    deleteRecord: (id: number) => Promise<void>;
+    remove: (id: number) => Promise<void>;
+    listRecords: (datasetId: number, opts?: { search?: string; limit?: number; offset?: number }) => Promise<{ rows: any[]; total: number }>;
+    pendingRecords: () => Promise<any>;
   };
   chat: {
     send: (question: string, sessionId?: string, projectDir?: string, images?: any[], agent?: string, modelName?: string, mcpServerId?: string) => Promise<void>;

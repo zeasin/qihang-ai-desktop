@@ -741,16 +741,20 @@ async function deleteModule(mod: ModuleData) {
 const showDsModal = ref(false);
 const editingDsId = ref<string | number>('');
 const dsForm = ref({ name: '', moduleId: '', description: '', fields: [] as FieldDef[], typeOptions: '', statusOptions: '' });
+/** 数据集 schema 里的终态状态集合（工单数据集用），编辑时保留 */
+const dsFormTerminals = ref<string[]>([]);
 
 function showAddDatasetFor(mod?: ModuleData) {
   editingDsId.value = '';
   dsForm.value = { name: '', moduleId: mod ? mod.id : '', description: '', fields: [newFieldRow()], typeOptions: '', statusOptions: '' };
+  dsFormTerminals.value = [];
   showDsModal.value = true;
 }
 
 function showEditDatasetPortal(mod: ModuleData, ds: DatasetData) {
   editingDsId.value = ds.datasetId;
   const schema = (typeof ds.schema === 'string' ? JSON.parse(ds.schema) : ds.schema) || {};
+  dsFormTerminals.value = Array.isArray(schema.terminalStatuses) ? schema.terminalStatuses.slice() : [];
   dsForm.value = {
     name: ds.name || '',
     moduleId: mod.id,
@@ -811,6 +815,8 @@ async function saveDataset() {
     fields,
     typeOptions: dsForm.value.typeOptions.split('\n').map(s => s.trim()).filter(Boolean),
     statusOptions: dsForm.value.statusOptions.split('\n').map(s => s.trim()).filter(Boolean),
+    // 终态状态集合（工单数据集用）：编辑时原样保留，别把用户的终态标记冲掉
+    terminalStatuses: dsFormTerminals.value,
   });
   try {
     const moduleId = dsForm.value.moduleId;

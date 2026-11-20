@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateRecord: (id: number, data: unknown) => ipcRenderer.invoke('ds:updateRecord', { id, data }),
     deleteRecord: (id: number) => ipcRenderer.invoke('ds:deleteRecord', { id }),
     remove: (id: number) => ipcRenderer.invoke('ds:remove', { datasetId: id }),
+    listRecords: (datasetId: number, opts?: { search?: string; limit?: number; offset?: number }) => ipcRenderer.invoke('ds:listRecords', { datasetId, ...opts }),
     pendingRecords: () => ipcRenderer.invoke('ds:pendingRecords'),
   },
 

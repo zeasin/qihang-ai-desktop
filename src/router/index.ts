@@ -42,9 +42,18 @@ const routes = [
     component: () => import('@/views/PlannerView.vue')
   },
   {
+    // 事项页：待办与提醒 + 工单合并为一个入口（旧路由重定向过来）
+    path: '/items',
+    name: 'Items',
+    component: () => import('@/views/ItemsView.vue')
+  },
+  {
     path: '/reminders',
-    name: 'Reminders',
-    component: () => import('@/views/RemindersView.vue')
+    redirect: '/items'
+  },
+  {
+    path: '/tickets',
+    redirect: '/items'
   },
   {
     path: '/task/:id',

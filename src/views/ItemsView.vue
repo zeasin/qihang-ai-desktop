@@ -1,12 +1,14 @@
 <template>
-  <div class="page todo-view">
+  <div class="page items-page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">待办</h1>
-        <p class="page-sub">需要你动手的事：本地待办与定时提醒都在这里，也可交给引擎执行。</p>
+        <h1 class="page-title">事项</h1>
+        <p class="page-sub">待办与工单混排成一条时间线：要动手的是待办，要跟进的是工单，到点的都会提醒你。</p>
       </div>
       <div class="page-actions">
-        <button class="btn btn-sm btn-secondary" @click="toggleDoneShow">{{ showDone ? '隐藏已完成' : '显示已完成' }}</button>
+        <button class="btn btn-sm btn-secondary" @click="showDone = !showDone">{{ showDone ? '隐藏已完成' : '显示已完成' }}</button>
+        <button class="btn btn-sm btn-secondary" title="工单设置（类型/来源/状态枚举与自定义字段）" @click="showTicketSettings = true"><AppIcon name="settings" :size="13" />工单设置</button>
+        <button class="btn btn-sm btn-secondary" @click="openTicketCreate"><AppIcon name="clipboard-list" :size="13" />新建工单</button>
         <button class="btn btn-primary btn-sm" @click="createReminder"><AppIcon name="bell" :size="13" />新建提醒</button>
       </div>
     </header>
@@ -25,26 +27,67 @@
       <button class="btn btn-primary btn-sm" :disabled="!newTodoTitle.trim()" @click="addTodo">添加</button>
     </div>
 
-    <!-- ========== 待办清单 ========== -->
-    <div class="sec-label"><AppIcon name="list-checks" :size="13" />待办清单<em>{{ openTodoCount }} 项未完成</em></div>
-    <section class="panel">
-      <template v-for="sec in todoSections" :key="sec.key">
-        <div class="sec-row" :class="{ warm: sec.key === 'overdue' }">
-          <AppIcon :name="sec.key === 'overdue' ? 'clock' : 'list-checks'" :size="12" />{{ sec.label }}
-          <span class="sec-count">{{ sec.items.length }}</span>
+    <!-- ========== 统一时间线：逾期 / 今天 / 稍后 ========== -->
+    <div class="sec-label"><AppIcon name="list-checks" :size="13" />时间线<em>待办 {{ openTodoCount }} 项 · 工单 {{ openTicketCount }} 件未关闭</em></div>
+    <template v-for="sec in timeline" :key="sec.key">
+      <div class="tl-sec-head" :class="{ warm: sec.key === 'overdue' }">
+        <AppIcon :name="sec.key === 'overdue' ? 'clock' : 'list-checks'" :size="12" />{{ sec.label }}
+        <span class="sec-count">{{ sec.items.length }}</span>
+      </div>
+
+      <div class="tl-grid" v-if="sec.items.length">
+        <!-- 待办卡 -->
+        <div
+          v-for="t in sec.todos" :key="'todo-' + t.id"
+          class="item-card todo-card"
+          :class="{ done: t.status === 'done', overdue: sec.key === 'overdue' }"
+        >
+          <div class="item-head">
+            <button class="todo-box" :title="t.status === 'done' ? '标记为未完成' : '标记完成'" @click="toggleTodo(t)">
+              <AppIcon v-if="t.status === 'done'" name="check" :size="11" />
+            </button>
+            <span class="prio" :class="t.priority"></span>
+            <span class="item-title">{{ t.title }}</span>
+            <button class="row-del" title="删除待办" @click="removeTodo(t)"><AppIcon name="trash-2" :size="13" /></button>
+          </div>
+          <div class="item-foot">
+            <span class="kind-tag">待办</span>
+            <span class="todo-dt" :class="{ warm: sec.key === 'overdue' }">
+              <AppIcon v-if="todoDue(t)" name="calendar" :size="11" />{{ todoDue(t) || '无截止日期' }}
+            </span>
+          </div>
         </div>
-        <div v-for="t in sec.items" :key="t.id" class="todo-row" :class="{ done: t.status === 'done', overdue: sec.key === 'overdue' }">
-          <button class="todo-box" :title="t.status === 'done' ? '标记为未完成' : '标记完成'" @click="toggleTodo(t)">
-            <AppIcon v-if="t.status === 'done'" name="check" :size="11" />
-          </button>
-          <span class="prio" :class="t.priority"></span>
-          <span class="todo-tx">{{ t.title }}</span>
-          <span v-if="todoDue(t)" class="todo-dt" :class="{ warm: sec.key === 'overdue' }">{{ todoDue(t) }}</span>
-          <button class="row-del" title="删除待办" @click="removeTodo(t)"><AppIcon name="trash-2" :size="13" /></button>
+
+        <!-- 工单卡 -->
+        <div
+          v-for="t in sec.tickets" :key="'ticket-' + t.id"
+          class="item-card ticket-card"
+          :class="{ overdue: sec.key === 'overdue' }"
+          @click="openTicketEdit(t)"
+        >
+          <div class="item-head">
+            <span class="ticket-dot" :class="statusTone(t.状态)"></span>
+            <span class="item-title" :class="{ through: isClosed(t['状态']) }">{{ t.标题 || '(无标题)' }}</span>
+            <button class="row-del" title="删除工单" @click.stop="removeTicket(t)"><AppIcon name="trash-2" :size="13" /></button>
+          </div>
+          <div class="item-badges">
+            <span class="badge" :class="'badge-' + statusTone(t.状态)">{{ t.状态 || '待处理' }}</span>
+            <span class="kind-tag" v-if="t.类型">{{ t.类型 }}</span>
+            <span class="kind-tag kind-tag-dim" v-if="t.来源">{{ t.来源 }}</span>
+            <span class="kind-tag kind-tag-dim" v-if="t.处理人"><AppIcon name="user" :size="10" />{{ t.处理人 }}</span>
+          </div>
+          <div class="item-desc" v-if="t.内容 || t.备注">{{ truncate(t.内容 || t.备注, 90) }}</div>
+          <div class="item-foot">
+            <span class="kind-tag kind-tag-dim">工单</span>
+            <span class="todo-dt" :class="{ warm: isDueSoon(t) }">
+              <AppIcon v-if="promiseOf(t)" name="clock" :size="11" />{{ promiseOf(t) ? fmtPromise(t) : '无承诺时间' }}
+            </span>
+          </div>
         </div>
-        <div v-if="!sec.items.length" class="empty-row">{{ sec.empty }}</div>
-      </template>
-    </section>
+      </div>
+
+      <div v-else class="empty-row">{{ sec.empty }}</div>
+    </template>
 
     <!-- ========== 定时提醒 ========== -->
     <div class="sec-label"><AppIcon name="bell" :size="13" />定时提醒<em>已启用 {{ enabledCount }} / {{ reminders.length }} 条</em></div>
@@ -159,32 +202,35 @@
         </div>
       </div>
     </div>
+
+    <!-- 工单表单弹窗 -->
+    <TicketFormModal
+      :show="showTicketModal"
+      :editing-id="editingTicketId"
+      :initial="editingTicketInitial"
+      @close="showTicketModal = false"
+    />
+
+    <!-- 工单设置弹窗（类型/来源/状态枚举与自定义字段管理） -->
+    <TicketSettingsModal :show="showTicketSettings" @close="showTicketSettings = false" />
   </div>
 </template>
 
 <script setup lang="ts">
+/**
+ * 事项页（ItemsView）：待办 + 工单 + 定时提醒三合一。
+ *
+ * 融合逻辑：待办（plan_todos）与工单（工单数据集）混排成一条统一时间线，
+ * 按逾期/今天/稍后分组——分组只看各自的到期日（待办 scheduled_start，工单承诺时间），
+ * 同组内待办在前、工单在后。定时提醒保持卡片网格收在页尾。
+ */
 import { ref, computed, onMounted } from 'vue';
 import AppIcon from '@/components/AppIcon.vue';
+import TicketFormModal from '@/components/TicketFormModal.vue';
+import TicketSettingsModal from '@/components/TicketSettingsModal.vue';
+import { useTickets, isClosed, promiseOf, promiseDateOf, todayStr } from '@/composables/useTickets';
 
 const API = window.electronAPI;
-
-interface Reminder {
-  id: string;
-  name: string;
-  message: string;
-  type: string;
-  time: string;
-  date: string;
-  day_of_week: number;
-  day_of_month: number;
-  month_day: string;
-  enabled: boolean;
-  created_at: string;
-}
-
-// ========== 提醒 ==========
-const reminders = ref<Reminder[]>([]);
-const enabledCount = computed(() => reminders.value.filter(r => r.enabled).length);
 
 // ========== 待办 ==========
 interface Todo {
@@ -199,39 +245,11 @@ const todos = ref<Todo[]>([]);
 const newTodoTitle = ref('');
 const newTodoDate = ref('');
 const showDone = ref(false);
-const todayStr = (() => {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-})();
+const today = todayStr();
 
 function todoDue(t: Todo): string {
   return (t.due_date || (t.scheduled_start || '').slice(0, 10) || '').trim();
 }
-
-const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'));
-const openTodoCount = computed(() => openTodos.value.length);
-
-const todoSections = computed(() => {
-  const pool = showDone.value ? todos.value : openTodos.value;
-  const overdue: Todo[] = [];
-  const today: Todo[] = [];
-  const later: Todo[] = [];
-  const done: Todo[] = [];
-  for (const t of pool) {
-    if (t.status === 'done') { done.push(t); continue; }
-    const due = todoDue(t);
-    if (due && due < todayStr) overdue.push(t);
-    else if (due && due === todayStr) today.push(t);
-    else later.push(t);
-  }
-  const secs = [
-    { key: 'overdue', label: '逾期', items: overdue, empty: '没有逾期事项' },
-    { key: 'today', label: '今天', items: today, empty: '今天没有到期事项' },
-    { key: 'later', label: '稍后', items: later, empty: '没有待办，用上方输入框添加一条' },
-  ];
-  if (showDone.value) secs.push({ key: 'done', label: '已完成', items: done, empty: '暂无已完成' });
-  return secs;
-});
 
 async function loadTodos() {
   try { todos.value = await API.todo.list(); } catch { todos.value = []; }
@@ -269,7 +287,99 @@ async function removeTodo(t: Todo) {
   } catch {}
 }
 
-// ========== 模态框状态 ==========
+// ========== 工单（数据在 useTickets 单例里） ==========
+const { tickets, init: initTickets, remove: removeTicketById } = useTickets();
+
+const showTicketModal = ref(false);
+const showTicketSettings = ref(false);
+const editingTicketId = ref<number | null>(null);
+const editingTicketInitial = ref<Record<string, any> | null>(null);
+
+const openTicketCount = computed(() => tickets.value.filter(t => !isClosed(t['状态'])).length);
+
+function openTicketCreate(): void {
+  editingTicketId.value = null;
+  editingTicketInitial.value = null;
+  showTicketModal.value = true;
+}
+function openTicketEdit(t: any): void {
+  editingTicketId.value = t.id;
+  editingTicketInitial.value = t;
+  showTicketModal.value = true;
+}
+function removeTicket(t: any): void { void removeTicketById(t); }
+
+function isDueSoon(t: any): boolean {
+  const v = promiseOf(t);
+  if (!v || isClosed(t['状态'])) return false;
+  const ts = Date.parse(v.replace(' ', 'T'));
+  if (isNaN(ts)) return false;
+  return ts - Date.now() <= 24 * 3600 * 1000;
+}
+function fmtPromise(t: any): string {
+  return promiseOf(t).replace('T', ' ').slice(0, 16);
+}
+function statusTone(s?: string): string {
+  const v = String(s || '').trim();
+  if (v === '已完成') return 'green';       // 正向完结
+  if (isClosed(v)) return 'gray';           // 已关闭 / 自定义终态
+  if (v === '处理中') return 'blue';
+  return 'amber';                            // 待处理 / 自定义流转态
+}
+function truncate(s: any, n: number): string {
+  const v = String(s || '').replace(/\s+/g, ' ').trim();
+  return v.length > n ? v.slice(0, n) + '…' : v;
+}
+
+// ========== 统一时间线 ==========
+interface Section { key: string; label: string; items: any[]; todos: Todo[]; tickets: any[]; empty: string; }
+
+const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'));
+const openTodoCount = computed(() => openTodos.value.length);
+
+const timeline = computed<Section[]>(() => {
+  const todoPool = showDone.value ? todos.value : openTodos.value;
+  // 工单：显示已完成的待办时，也带上已关闭的工单；平时只显示未关闭
+  const ticketPool = showDone.value ? tickets.value : tickets.value.filter(t => !isClosed(t['状态']));
+
+  const overdueTodos: Todo[] = []; const todayTodos: Todo[] = []; const laterTodos: Todo[] = []; const doneTodos: Todo[] = [];
+  for (const t of todoPool) {
+    if (t.status === 'done') { doneTodos.push(t); continue; }
+    const due = todoDue(t);
+    if (due && due < today) overdueTodos.push(t);
+    else if (due && due === today) todayTodos.push(t);
+    else laterTodos.push(t);
+  }
+  const overdueTickets: any[] = []; const todayTickets: any[] = []; const laterTickets: any[] = []; const doneTickets: any[] = [];
+  for (const t of ticketPool) {
+    if (isClosed(t['状态'])) { doneTickets.push(t); continue; }
+    const due = promiseDateOf(t);
+    if (due && due < today) overdueTickets.push(t);
+    else if (due && due === today) todayTickets.push(t);
+    else laterTickets.push(t);
+  }
+
+  const secs: Section[] = [
+    { key: 'overdue', label: '逾期', items: [...overdueTodos, ...overdueTickets], todos: overdueTodos, tickets: overdueTickets, empty: '没有逾期事项' },
+    { key: 'today', label: '今天', items: [...todayTodos, ...todayTickets], todos: todayTodos, tickets: todayTickets, empty: '今天没有到期事项' },
+    { key: 'later', label: '稍后', items: [...laterTodos, ...laterTickets], todos: laterTodos, tickets: laterTickets, empty: '没有待办或工单，用上方输入框添加' },
+  ];
+  if (showDone.value) secs.push({ key: 'done', label: '已完成', items: [...doneTodos, ...doneTickets], todos: doneTodos, tickets: doneTickets, empty: '暂无已完成' });
+  return secs;
+});
+
+// ========== 提醒 ==========
+interface Reminder {
+  id: string; name: string; message: string; type: string; time: string; date: string;
+  day_of_week: number; day_of_month: number; month_day: string; enabled: boolean; created_at: string;
+}
+const reminders = ref<Reminder[]>([]);
+const enabledCount = computed(() => reminders.value.filter(r => r.enabled).length);
+
+async function loadReminders() {
+  try { reminders.value = await API.reminder.list(); } catch { reminders.value = []; }
+}
+
 const showReminderModal = ref(false);
 const isEditingReminder = ref(false);
 const editingReminder = ref<Reminder>({
@@ -277,14 +387,6 @@ const editingReminder = ref<Reminder>({
   date: '', day_of_week: 1, day_of_month: 1,
   month_day: '', enabled: true, created_at: ''
 });
-
-const showDeleteModal = ref(false);
-const deleteId = ref('');
-
-// ========== 提醒 CRUD ==========
-async function loadReminders() {
-  try { reminders.value = await API.reminder.list(); } catch { reminders.value = []; }
-}
 
 function createReminder() {
   isEditingReminder.value = false;
@@ -303,25 +405,18 @@ function editReminder(reminder: Reminder) {
 }
 
 async function saveReminder() {
-  if (!editingReminder.value.name.trim()) {
-    alert('请输入提醒名称');
-    return;
-  }
+  if (!editingReminder.value.name.trim()) { alert('请输入提醒名称'); return; }
+  const d = editingReminder.value;
   const data = {
-    name: editingReminder.value.name,
-    message: editingReminder.value.message,
-    type: editingReminder.value.type,
-    time: editingReminder.value.time,
-    day_of_week: editingReminder.value.type === 'weekly' ? editingReminder.value.day_of_week : 0,
-    day_of_month: editingReminder.value.type === 'monthly' ? editingReminder.value.day_of_month : 1,
-    month_day: editingReminder.value.type === 'yearly' ? editingReminder.value.month_day : '',
+    name: d.name, message: d.message, type: d.type, time: d.time,
+    day_of_week: d.type === 'weekly' ? d.day_of_week : 0,
+    day_of_month: d.type === 'monthly' ? d.day_of_month : 1,
+    month_day: d.type === 'yearly' ? d.month_day : '',
+    date: d.type === 'once' ? d.date : '',
   };
   try {
-    if (isEditingReminder.value) {
-      await API.reminder.update(editingReminder.value.id, data);
-    } else {
-      await API.reminder.add(data);
-    }
+    if (isEditingReminder.value) await API.reminder.update(d.id, data);
+    else await API.reminder.add(data);
     showReminderModal.value = false;
     await loadReminders();
   } catch (e: any) { alert('操作失败: ' + (e.message || e)); }
@@ -341,12 +436,9 @@ async function testReminder(reminder: Reminder) {
   } catch (e: any) { alert('触发失败: ' + (e.message || e)); }
 }
 
-// ========== 删除确认 ==========
-function openDeleteModal(id: string) {
-  deleteId.value = id;
-  showDeleteModal.value = true;
-}
-
+const showDeleteModal = ref(false);
+const deleteId = ref('');
+function openDeleteModal(id: string) { deleteId.value = id; showDeleteModal.value = true; }
 async function confirmDelete() {
   try {
     await API.reminder.remove(deleteId.value);
@@ -355,7 +447,6 @@ async function confirmDelete() {
   showDeleteModal.value = false;
 }
 
-// ========== 工具函数 ==========
 function getScheduleText(reminder: Reminder): string {
   const time = reminder.time || '09:00';
   switch (reminder.type) {
@@ -371,13 +462,10 @@ function getScheduleText(reminder: Reminder): string {
   }
 }
 
-function toggleDoneShow() {
-  showDone.value = !showDone.value;
-}
-
 onMounted(() => {
-  loadReminders();
   loadTodos();
+  loadReminders();
+  initTickets();
 });
 </script>
 
@@ -412,33 +500,82 @@ onMounted(() => {
   padding: 5px 8px;
 }
 
-/* ========== 待办清单 ========== */
-.sec-row {
+/* ========== 统一时间线 ========== */
+/* ========== 时间线卡片（与提醒卡同一套视觉语言） ========== */
+.tl-sec-head {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 14px 6px;
+  padding: 10px 2px 8px;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--surface-2);
-  border-top: 1px solid var(--border);
 }
-.sec-row:first-child { border-top: none; }
-.sec-row.warm { color: var(--warning); }
-.sec-count { margin-left: auto; font-weight: 400; }
-.todo-row {
+.tl-sec-head.warm { color: var(--warning); }
+.tl-sec-head .sec-count { margin-left: auto; font-weight: 400; }
+.tl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+  /* 卡片按自身内容高度自适应：待办卡信息少，不被同行工单卡拉出大片空洞 */
+  align-items: start;
+}
+.item-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.item-card:hover { box-shadow: var(--shadow-md); border-color: var(--text-muted); }
+.ticket-card { cursor: pointer; }
+.item-card.overdue { background: var(--danger-soft); border-color: var(--danger); }
+.item-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.item-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item-title.through { color: var(--text-muted); text-decoration: line-through; }
+.item-card.done .item-title { color: var(--text-muted); text-decoration: line-through; }
+.item-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.item-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.item-foot {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 14px;
-  border-top: 1px solid var(--border);
-  font-size: 12.5px;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
 }
-.todo-row:hover { background: var(--primary-soft); }
-.todo-row:first-of-type { border-top: none; }
-.todo-row.done .todo-tx { color: var(--text-muted); text-decoration: line-through; }
-.todo-row.overdue { background: var(--danger-soft); }
+.badge { flex-shrink: 0; padding: 1px 8px; border-radius: 10px; font-size: 11px; }
+.badge-gray { background: var(--surface-2); color: var(--text-muted); }
+.badge-blue { background: var(--primary-soft); color: var(--primary); }
+.badge-amber { background: var(--warning-soft, #fef3c7); color: var(--warning); }
+.badge-green { background: var(--success-soft, #dcfce7); color: var(--success, #16a34a); }
+.ticket-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ticket-dot.gray { background: var(--text-muted); opacity: 0.5; }
+.ticket-dot.blue { background: var(--primary); }
+.ticket-dot.amber { background: var(--warning); }
+.ticket-dot.green { background: var(--success, #16a34a); }
 .todo-box {
   width: 15px;
   height: 15px;
@@ -454,13 +591,32 @@ onMounted(() => {
   padding: 0;
 }
 .todo-box:hover { border-color: var(--primary); }
-.todo-row.done .todo-box { background: var(--primary); border-color: var(--primary); }
+.todo-card.done .todo-box { background: var(--primary); border-color: var(--primary); }
 .prio { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); opacity: 0.6; }
 .prio.high { background: var(--danger); opacity: 1; }
 .prio.mid { background: var(--warning); opacity: 1; }
 .prio.low { background: var(--success); opacity: 1; }
-.todo-tx { flex: 1; min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.todo-dt { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.kind-tag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.kind-tag-dim { background: var(--surface-2); color: var(--text-muted); }
+.todo-dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .todo-dt.warm { color: var(--warning); font-weight: 600; }
 .row-del {
   width: 24px;
@@ -477,9 +633,17 @@ onMounted(() => {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.todo-row:hover .row-del, .reminder-card:hover .row-del { opacity: 1; }
+.item-card:hover .row-del, .reminder-card:hover .row-del { opacity: 1; }
 .row-del:hover { color: var(--danger); background: var(--danger-soft); }
-.empty-row { font-size: 12px; color: var(--text-muted); padding: 13px 14px; text-align: center; }
+.empty-row {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 14px;
+  margin-bottom: 14px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
 
 /* ========== 提醒卡片 ========== */
 .reminder-grid-wrap { min-height: 120px; }
@@ -601,4 +765,5 @@ onMounted(() => {
 .form-row .form-group { flex: 1; }
 textarea.form-control { resize: vertical; min-height: 80px; }
 select.form-control { cursor: pointer; }
+.icon-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 4px; }
 </style>

@@ -159,7 +159,13 @@ export function normalizeDatasetRecord(datasetId: string | number, record: any):
 
   // type
   if (typeOptions.length) {
-    if (heldType) {
+    if (fieldNames.includes('类型')) {
+      // 数据集自带「类型」字段 → 以它为准，不按全文再猜一个（猜出来的可能和真实值矛盾）
+      if (!out['类型'] && heldType) mergeInto('类型', heldType);
+      const own = String(out['类型'] || '').split('\n')[0].trim();
+      if (own) out.type = own;
+      else delete out.type;
+    } else if (heldType) {
       out.type = pickOption(heldType, typeOptions) || typeOptions[0];
     } else {
       let best: string | null = null;
@@ -178,10 +184,15 @@ export function normalizeDatasetRecord(datasetId: string | number, record: any):
 
   // status
   if (statusOptions.length) {
-    if (heldStatus) {
+    if (fieldNames.includes('状态')) {
+      // 数据集自带「状态」字段 → 以它为准，不按全文再猜一个（猜出来的可能和真实值矛盾）
+      if (!out['状态'] && heldStatus) mergeInto('状态', heldStatus);
+      const own = String(out['状态'] || '').split('\n')[0].trim();
+      if (own) out.status = own;
+      else delete out.status;
+    } else if (heldStatus) {
       const p = pickOption(heldStatus, statusOptions);
       if (p) out.status = p;
-      else if (fieldNames.includes('状态')) mergeInto('状态', heldStatus);
     } else {
       let inf: string | null = null;
       for (const s of statusOptions) {

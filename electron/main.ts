@@ -47,6 +47,7 @@ import * as backup from './services/backup';
 import * as feishu from './services/feishu';
 import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice, buildProjectButtons, boundProjectId, needsProjectChoice, stashPendingFollowup, peekPendingFollowup, clearPendingFollowup } from './services/feishu-router';
 import * as scheduler from './services/scheduler';
+import { registerTicketLink } from './services/ticket-link';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { askRadar } from './radar/radar-ask';
@@ -969,6 +970,8 @@ ipcMain.handle('ds:updateRecord', (_, { id, data }) => {
 });
 ipcMain.handle('ds:deleteRecord', (_, { id }) => db.ds.deleteRecord(id));
 ipcMain.handle('ds:remove', (_, { datasetId }) => db.ds.remove(datasetId));
+// 工单视图用：分页读取某数据集记录（含承诺时间→提醒联动结果的展示）
+ipcMain.handle('ds:listRecords', (_, { datasetId, search, limit, offset }) => db.ds.listRecords(datasetId, { search, limit, offset }));
 ipcMain.handle('ds:suites:list', () => listBuiltinSuites());
 ipcMain.handle('ds:suites:apply', (_, { ids }) => {
   try {
@@ -1690,15 +1693,15 @@ ipcMain.handle('reminder:setEnabled', (_, id, enabled) => {
   scheduler.reload();
   return true;
 });
-ipcMain.handle('todo:list', () => db.task.listTodos());
+ipcMain.handle('todo:list', () => db.todo.list());
 ipcMain.handle('todo:add', (_, data) => {
-  const r = db.task.add({ ...data, trigger_type: 'manual', source: 'ui' });
+  const r = db.todo.add({ ...data, source: 'ui' });
   const note = appendTodoNote(data?.project_id ?? null, data?.title || '');
   if (!note.ok) logger.warn('[todo:add] 待办落笔记失败: ' + note.error);
   return r;
 });
-ipcMain.handle('todo:update', (_, id, data) => { db.task.update(id, data); return true; });
-ipcMain.handle('todo:remove', (_, id) => { db.task.remove(id); return true; });
+ipcMain.handle('todo:update', (_, id, data) => { db.todo.update(id, data); return true; });
+ipcMain.handle('todo:remove', (_, id) => { db.todo.remove(id); return true; });
 
 // --- 笔记提炼（概览「来自笔记」） ---
 ipcMain.handle('noteDigest:extract', () => extractDigest());
@@ -2332,6 +2335,8 @@ app.whenReady().then(async () => {
     logger.error('DB init error: %s', e);
   }
   startupElapsed('db loaded');
+  // 工单联动：数据集记录的承诺时间 → 一次性提醒（挂在 db.ds 保存回调上，覆盖所有写入路径）
+  try { registerTicketLink(); } catch (e: any) { logger.warn('[TicketLink] 注册失败: %s', e?.message || e); }
   createTray();
 
   // 旧版内置数据集 schema 升级：补齐字段类型/必填/选项（幂等）
@@ -2399,12 +2404,12 @@ app.whenReady().then(async () => {
   try {
     const feishuOneShotIds: number[] = db.q("SELECT id FROM plan_tasks WHERE source = 'feishu' AND trigger_type = 'now'").map((r: any) => Number(r.id));
     if (feishuOneShotIds.length) {
-      for (const id of feishuOneShotIds) db.run('DELETE FROM task_executions WHERE task_id = ?', id);
+      for (const id of feishuOneShotIds) db.run('DELETE FROM plan_executions WHERE task_id = ?', id);
       db.run("DELETE FROM plan_tasks WHERE source = 'feishu' AND trigger_type = 'now'");
       logger.info('[Migrate] 已将 %d 条飞书一次性任务转为纯会话（任务行已删，会话保留）', feishuOneShotIds.length);
     }
   } catch (e) {
-    logger.error('migrate feishu one-shot tasks error: %s', e);
+    logger.error('migrate feishu one-shot plan_tasks error: %s', e);
   }
 
   // 注：嵌入模型配置（embeddingModel / embeddingBaseUrl / embeddingApiKey）原先只服务于向量索引，

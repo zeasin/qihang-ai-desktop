@@ -570,7 +570,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       } else {
         const id = Number(body?.id);
         if (!Number.isFinite(id)) return sendJson(res, 400, { ok: false, error: '缺少待办 id' });
-        db.task.update(id, { status: done ? 'done' : 'pending' });
+        db.todo.update(id, { status: done ? 'done' : 'pending' });
       }
       return sendJson(res, 200, { ok: true });
     } catch (e: any) {
@@ -581,7 +581,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   // ---------- 首页（今天页聚合）：待办 + 笔记提炼 + 雷达动态 + 最近会话 + 工作日志 ----------
   if (req.method === 'GET' && pathname === '/api/today') {
     const out: any = { ok: true };
-    try { out.todos = (db.task.listTodos() || []).filter((t: any) => t.status !== 'done').slice(0, 8); } catch { out.todos = []; }
+    try { out.todos = (db.todo.list() || []).filter((t: any) => t.status !== 'done').slice(0, 8); } catch { out.todos = []; }
     try {
       const d: any = await extractDigest();
       out.digestTodos = (d?.todos || []).filter((t: any) => !t.done).slice(0, 20);

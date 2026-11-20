@@ -85,7 +85,7 @@ const topMenu = computed(() => [
 ]);
 
 const footMenu = computed(() => [
-  { path: '/reminders', label: '待办', icon: 'list-checks', badge: todoOpen.value, badgeClass: '', beta: false },
+  { path: '/items', label: '事项', icon: 'list-checks', badge: todoOpen.value, badgeClass: '', beta: false },
   { path: '/notes', label: '笔记', icon: 'library', badge: 0, badgeClass: '', beta: false },
   { path: '/tools', label: '技能', icon: 'sparkles', badge: 0, badgeClass: '', beta: true },
 ]);
