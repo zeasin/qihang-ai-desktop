@@ -22,6 +22,7 @@ const CORE_FIELDS = [
   { name: '标题', type: 'string' },
   { name: '类型', type: 'string' },
   { name: '来源', type: 'string' },
+  { name: '项目', type: 'string' },
   { name: '新建人', type: 'string' },
   { name: '处理人', type: 'string' },
   { name: '内容', type: 'text' },
@@ -32,6 +33,7 @@ const CORE_FIELDS = [
 ];
 const DEFAULT_TYPES = ['待办', '需求', '问题', '咨询', '跟进'];
 const DEFAULT_SOURCES = ['微信', '电话', '官网', '邮件', '会议', '其他'];
+const DEFAULT_PROJECTS = ['金箔雲'];
 
 /**
  * 保留状态（系统级，不可删除、不可改名）。
@@ -67,6 +69,8 @@ const statusOptions = ref<string[]>([...DEFAULT_STATUS]);
 const terminalStatuses = ref<string[]>([...RESERVED_TERMINAL]);
 const typeOptions = ref<string[]>([...DEFAULT_TYPES]);
 const sourceOptions = ref<string[]>([...DEFAULT_SOURCES]);
+/** 项目枚举（与类型/来源同机制：ticket_settings.projectOptions，工单设置页管理） */
+const projectOptions = ref<string[]>([...DEFAULT_PROJECTS]);
 /** 关联待办（ticket_todos 联查出来的，待办本身是类型'待办'的工单） */
 const linkedTodos = ref<any[]>([]);
 /** 各工单关联的待办数量（卡片上显示 🔗 N） */
@@ -130,9 +134,17 @@ async function loadSettings(): Promise<void> {
   syncSchema(schema);
 }
 
-function buildSchemaObject(custom: FieldDef[], statuses: string[], types: string[], sources: string[], terminals: string[]): any {
+function buildSchemaObject(custom: FieldDef[], statuses: string[], types: string[], sources: string[], terminals: string[], projects: string[]): any {
   const fields = [...CORE_FIELDS, ...custom].map(f => ({ name: f.name, type: f.type }));
-  return { fields, statusOptions: statuses, terminalStatuses: terminals, typeOptions: types, sourceOptions: sources };
+  // 各数组浅拷贝成普通数组再过 IPC（ref 深层是 reactive 代理，直接传会报 An object could not be cloned）
+  return {
+    fields,
+    statusOptions: [...statuses],
+    terminalStatuses: [...terminals],
+    typeOptions: [...types],
+    sourceOptions: [...sources],
+    projectOptions: [...projects],
+  };
 }
 
 /** 从设置回读：区分核心字段与自定义字段，同步状态/类型/来源枚举 */
@@ -143,6 +155,7 @@ function syncSchema(schema: any): void {
     terminalStatuses.value = [...RESERVED_TERMINAL];
     typeOptions.value = [...DEFAULT_TYPES];
     sourceOptions.value = [...DEFAULT_SOURCES];
+    projectOptions.value = [...DEFAULT_PROJECTS];
     return;
   }
   const fields: any[] = schema.fields || [];
@@ -156,6 +169,7 @@ function syncSchema(schema: any): void {
   };
   typeOptions.value = mergedEnums(schema.typeOptions, DEFAULT_TYPES);
   sourceOptions.value = mergedEnums(schema.sourceOptions, DEFAULT_SOURCES);
+  projectOptions.value = mergedEnums(schema.projectOptions, DEFAULT_PROJECTS);
 
   // 状态：终态集合 + 顺序规范化
   // （老 schema 里自定义状态是追加在末尾的，这里统一重排到「处理中」和「已完成」之间）
@@ -178,7 +192,7 @@ function syncSchema(schema: any): void {
 
 /** 把当前自定义字段 + 枚举写回设置（增删自定义字段或枚举时调用） */
 async function persistSchema(): Promise<void> {
-  await API.ticket.settings.save(buildSchemaObject(customFields.value, statusOptions.value, typeOptions.value, sourceOptions.value, terminalStatuses.value));
+  await API.ticket.settings.save(buildSchemaObject(customFields.value, statusOptions.value, typeOptions.value, sourceOptions.value, terminalStatuses.value, projectOptions.value));
 }
 
 // ========== 加载 / 保存 / 删除 ==========
@@ -208,9 +222,12 @@ async function init(): Promise<void> {
  *  状态流转时间戳（处理时间/完结时间）与承诺时间归一由主进程 tickets 服务统一盖章。 */
 async function save(form: Record<string, any>, editingId: number | null): Promise<void> {
   if (!form.标题?.trim()) return;
+  // 浅拷贝成普通对象再过 IPC：编辑弹窗的 form 是 reactive 代理，
+  // 直接传给 invoke 会报「An object could not be cloned」
+  const payload: Record<string, any> = { ...form };
   try {
-    if (editingId) await API.ticket.data.update(editingId, form);
-    else await API.ticket.data.create(form);
+    if (editingId) await API.ticket.data.update(editingId, payload);
+    else await API.ticket.data.create(payload);
     await reload();
   } catch (e: any) { alert('保存失败：' + (e?.message || e)); }
 }
@@ -224,7 +241,7 @@ async function remove(t: Ticket): Promise<void> {
 /** 空白表单（含全部核心字段 + 自定义字段） */
 function blankForm(): Record<string, any> {
   const f: Record<string, any> = {
-    标题: '', 类型: '', 来源: '', 新建人: '', 处理人: '',
+    标题: '', 类型: '', 来源: '', 项目: '', 新建人: '', 处理人: '',
     内容: '', 备注: '', 状态: '待处理', 承诺时间: '', 处理时间: '', 完结时间: '',
   };
   for (const cf of customFields.value) f[cf.name] = '';
@@ -244,8 +261,8 @@ function removeCustomField(name: string): void {
   persistSchema();
 }
 /** 枚举管理：类型 / 来源 / 状态三种可配置枚举（状态删除时保护保留状态，否则流转规则失效） */
-type EnumKind = 'type' | 'source' | 'status';
-const enumList = (which: EnumKind) => which === 'type' ? typeOptions : which === 'source' ? sourceOptions : statusOptions;
+type EnumKind = 'type' | 'source' | 'project' | 'status';
+const enumList = (which: EnumKind) => which === 'type' ? typeOptions : which === 'source' ? sourceOptions : which === 'project' ? projectOptions : statusOptions;
 
 function addEnumOption(which: EnumKind, value: string): boolean {
   const v = value.trim();
@@ -433,7 +450,7 @@ async function removeHandler(id: number): Promise<void> {
 /** 导出共享状态与操作 */
 export function useTickets() {
   return {
-    tickets, loading, customFields, statusOptions, terminalStatuses, typeOptions, sourceOptions,
+    tickets, loading, customFields, statusOptions, terminalStatuses, typeOptions, sourceOptions, projectOptions,
     linkedTodos, ticketLogs, linkedCountsMap, flowNodes, handlers,
     init, reload, save, remove, blankForm, setStatus,
     loadLogs, loadLinkedTodos, loadLinkedCounts, addLogNote, createTodo, linkTodo, unlinkTodo, toggleTodo,

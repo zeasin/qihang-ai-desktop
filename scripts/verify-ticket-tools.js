@@ -24,8 +24,9 @@ const sqlite = new Database(':memory:');
 sqlite.exec(`
 CREATE TABLE tickets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  "标题" TEXT DEFAULT '', "类型" TEXT DEFAULT '', "来源" TEXT DEFAULT '', "新建人" TEXT DEFAULT '',
-  "处理人" TEXT DEFAULT '', "内容" TEXT DEFAULT '', "备注" TEXT DEFAULT '', "状态" TEXT DEFAULT '待处理',
+  "标题" TEXT DEFAULT '', "类型" TEXT DEFAULT '', "来源" TEXT DEFAULT '', "项目" TEXT DEFAULT '',
+  "新建人" TEXT DEFAULT '', "处理人" TEXT DEFAULT '', "内容" TEXT DEFAULT '', "备注" TEXT DEFAULT '',
+  "状态" TEXT DEFAULT '待处理',
   "承诺时间" TEXT DEFAULT '', "处理时间" TEXT DEFAULT '', "完结时间" TEXT DEFAULT '',
   extra_json TEXT DEFAULT '{}',
   created_at TEXT DEFAULT (datetime('now','+8 hours')), updated_at TEXT
@@ -144,7 +145,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const created = await call('create_ticket', {
     title: '金箔雲需求-按月统计销售员提成',
     content: '按月统计销售员提成，提成比例按商品分类设置',
-    handler: '老齐', type: '需求', promise_time: '2026-12-01', creator: '飞书-测试',
+    handler: '老齐', type: '需求', project: '金箔雲', promise_time: '2026-12-01', creator: '飞书-测试',
   });
   assert(/已创建工单 #\d+/.test(created), 'create_ticket 返回工单 id');
   assert(/承诺时间：2026-12-01 18:00/.test(created), '纯日期承诺时间补齐为 YYYY-MM-DD 18:00');
@@ -152,6 +153,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   const rec = fakeDb.qOne(`SELECT * FROM tickets WHERE "标题" = '金箔雲需求-按月统计销售员提成'`);
   assert(!!rec && rec['状态'] === '待处理' && rec['处理人'] === '老齐', '工单落库（专表列 + 初始状态待处理）');
+  assert(rec['项目'] === '金箔雲', '项目字段落库（固定列）');
   assert((fakeDb.qOne('SELECT COUNT(*) c FROM ticket_logs WHERE record_id = ? AND action = ?', rec.id, 'create') || {}).c === 1,
     'tracker 留痕：create 流水');
   await sleep(120);
@@ -208,11 +210,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const finalRow = ticketStore.get(rec.id);
   assert(finalRow['完结时间'] !== '', '进终态自动盖完结时间（服务层盖章）');
 
-  // 9) query_tickets：关键词/状态过滤
+  // 9) query_tickets：关键词/状态/项目过滤
   const listed = await call('query_tickets', { keyword: '金箔雲' });
   assert(listed.includes('#' + rec.id) && listed.includes('已完成'), 'query_tickets 关键词命中');
   const byStatus = await call('query_tickets', { status: '待处理' });
   assert(byStatus.includes('今天要回访客户'), 'query_tickets 状态过滤命中');
+  const byProject = await call('query_tickets', { project: '金箔雲' });
+  assert(byProject.includes('#' + rec.id), 'query_tickets 项目过滤命中');
   const empty = await call('query_tickets', { status: '已关闭' });
   assert(empty.includes('没有匹配'), 'query_tickets 无命中时给总数提示');
 

@@ -19,7 +19,7 @@ import { q, qOne, run, runInsertId } from './database';
 import logger from './logger';
 
 /** 核心字段 = tickets 表的中文列（其余键进 extra_json） */
-export const CORE_FIELDS = ['标题', '类型', '来源', '新建人', '处理人', '内容', '备注', '状态', '承诺时间', '处理时间', '完结时间'];
+export const CORE_FIELDS = ['标题', '类型', '来源', '项目', '新建人', '处理人', '内容', '备注', '状态', '承诺时间', '处理时间', '完结时间'];
 
 /** 终态关键字兜底：状态名含这些词即视为终态（与渲染层 TERMINAL_KEYWORDS 同口径） */
 const TERMINAL_KEYWORDS = ['已关闭', '已完结', '已完成', '已解决', '已取消', '已终止', '已作废', '已失效', '已废弃', '已退单', '已拒绝', '已放弃'];
@@ -166,9 +166,9 @@ export function create(form: any): number {
   if (!cols['状态']) cols['状态'] = '待处理';
   if (cols['承诺时间']) cols['承诺时间'] = normalizePromiseTime(cols['承诺时间']);
   stampTimestamps(cols, terminals);
-  const id = runInsertId(`INSERT INTO tickets ("标题", "类型", "来源", "新建人", "处理人", "内容", "备注", "状态", "承诺时间", "处理时间", "完结时间", extra_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    cols['标题'] || '', cols['类型'] || '', cols['来源'] || '', cols['新建人'] || '', cols['处理人'] || '',
+  const id = runInsertId(`INSERT INTO tickets ("标题", "类型", "来源", "项目", "新建人", "处理人", "内容", "备注", "状态", "承诺时间", "处理时间", "完结时间", extra_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    cols['标题'] || '', cols['类型'] || '', cols['来源'] || '', cols['项目'] || '', cols['新建人'] || '', cols['处理人'] || '',
     cols['内容'] || '', cols['备注'] || '', cols['状态'] || '待处理', cols['承诺时间'] || '',
     cols['处理时间'] || '', cols['完结时间'] || '', JSON.stringify(extra));
   const merged = get(id);
@@ -186,13 +186,13 @@ export function update(id: number, form: any): boolean {
   const { cols, extra } = splitRecord(form);
   if (cols['承诺时间']) cols['承诺时间'] = normalizePromiseTime(cols['承诺时间']);
   stampTimestamps(cols, terminals, prev);
-  run(`UPDATE tickets SET "标题" = ?, "类型" = ?, "来源" = ?, "新建人" = ?, "处理人" = ?, "内容" = ?, "备注" = ?,
+  run(`UPDATE tickets SET "标题" = ?, "类型" = ?, "来源" = ?, "项目" = ?, "新建人" = ?, "处理人" = ?, "内容" = ?, "备注" = ?,
         "状态" = ?, "承诺时间" = ?, "处理时间" = ?, "完结时间" = ?, extra_json = ?,
         updated_at = datetime('now', '+8 hours') WHERE id = ?`,
     cols['标题'] ?? prev['标题'] ?? '', cols['类型'] ?? prev['类型'] ?? '', cols['来源'] ?? prev['来源'] ?? '',
-    cols['新建人'] ?? prev['新建人'] ?? '', cols['处理人'] ?? prev['处理人'] ?? '', cols['内容'] ?? prev['内容'] ?? '',
-    cols['备注'] ?? prev['备注'] ?? '', cols['状态'] ?? prev['状态'] ?? '待处理', cols['承诺时间'] ?? prev['承诺时间'] ?? '',
-    cols['处理时间'] ?? prev['处理时间'] ?? '', cols['完结时间'] ?? prev['完结时间'] ?? '',
+    cols['项目'] ?? prev['项目'] ?? '', cols['新建人'] ?? prev['新建人'] ?? '', cols['处理人'] ?? prev['处理人'] ?? '',
+    cols['内容'] ?? prev['内容'] ?? '', cols['备注'] ?? prev['备注'] ?? '', cols['状态'] ?? prev['状态'] ?? '待处理',
+    cols['承诺时间'] ?? prev['承诺时间'] ?? '', cols['处理时间'] ?? prev['处理时间'] ?? '', cols['完结时间'] ?? prev['完结时间'] ?? '',
     JSON.stringify(extra), id);
   const merged = get(id);
   logger.info('[Tickets] update #%s fields=%j', id, Object.keys(cols));

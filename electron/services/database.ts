@@ -102,6 +102,7 @@ function initSchema() {
       "标题" TEXT DEFAULT '',
       "类型" TEXT DEFAULT '',
       "来源" TEXT DEFAULT '',
+      "项目" TEXT DEFAULT '',
       "新建人" TEXT DEFAULT '',
       "处理人" TEXT DEFAULT '',
       "内容" TEXT DEFAULT '',
@@ -333,6 +334,15 @@ function initSchema() {
   // 工单联动：一次性提醒可关联到来源工单（ticket_dataset_id 2026-11-21 起恒为 'tickets'）
   try { getDb().exec("ALTER TABLE plan_reminders ADD COLUMN ticket_dataset_id TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_reminders ADD COLUMN source_record_id TEXT DEFAULT ''"); } catch (e) {}
+  // 工单表补列：tickets 专表落地后又加的核心字段（缺哪补哪，已有列不动）
+  // 「项目」固定字段（2026-11-21 用户要求）：枚举存 ticket_settings.projectOptions，与类型/来源同机制
+  try {
+    const tcols = getDb().prepare('PRAGMA table_info(tickets)').all() as any[];
+    if (tcols.length && !tcols.some((c: any) => c.name === '项目')) {
+      getDb().exec(`ALTER TABLE tickets ADD COLUMN "项目" TEXT DEFAULT ''`);
+      logger.info('[DB] tickets 补列：项目');
+    }
+  } catch (e) { logger.warn('[DB] tickets 补列失败: ' + (e && e.message)); }
   // 工单存储迁移（2026-11-21 去 data_center 通用层，全部幂等，失败只告警不阻断启动）：
   //   ① side 表去 dataset_id；② 「工单」数据集记录迁入 tickets（保留原 id）；
   //   ③ plan_todos 待办并入 tickets（类型='待办'，迁完删旧表）；④ 无节点账的工单补初始节点

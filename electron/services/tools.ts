@@ -335,7 +335,7 @@ function ticketStatusOptions(): string[] {
   return Array.isArray(s && s.statusOptions) && s.statusOptions.length ? s.statusOptions : ['待处理', '处理中', '已完成', '已关闭'];
 }
 
-async function createTicketTool({ title, content, handler, type, source, status, promise_time, remark, creator }) {
+async function createTicketTool({ title, content, handler, type, source, project, status, promise_time, remark, creator }) {
   const t = String(title || '').trim();
   if (!t) return '请提供工单标题（title）';
   const statusOptions = ticketStatusOptions();
@@ -346,6 +346,7 @@ async function createTicketTool({ title, content, handler, type, source, status,
   if (handler) form['处理人'] = String(handler).trim();
   if (type) form['类型'] = String(type).trim();
   if (source) form['来源'] = String(source).trim();
+  if (project) form['项目'] = String(project).trim();
   if (creator) form['新建人'] = String(creator).trim();
   if (promise_time) form['承诺时间'] = String(promise_time).trim();   // 纯日期由服务层补 18:00
   if (remark) form['备注'] = String(remark).trim();
@@ -365,20 +366,23 @@ async function createTicketTool({ title, content, handler, type, source, status,
     + (saved['承诺时间'] ? `，承诺时间：${saved['承诺时间']}` : '') + `）。${notify}`;
 }
 
-async function queryTicketsTool({ status, handler, keyword, limit }) {
+async function queryTicketsTool({ status, handler, project, keyword, limit }) {
   const lim = Math.max(1, Math.min(50, toNumber(limit, 20)));
   const all = tickets.list({ limit: 500 });
   const st = String(status || '').trim();
   const hd = String(handler || '').trim();
+  const pj = String(project || '').trim();
   const kw = String(keyword || '').trim().toLowerCase();
   let hit = all;
   if (st) hit = hit.filter(r => String(r['状态'] || '').trim() === st);
   if (hd) hit = hit.filter(r => String(r['处理人'] || '').includes(hd));
+  if (pj) hit = hit.filter(r => String(r['项目'] || '').includes(pj));
   if (kw) hit = hit.filter(r =>
     String(r['标题'] || '').toLowerCase().includes(kw) || String(r['内容'] || '').toLowerCase().includes(kw) || String(r['备注'] || '').toLowerCase().includes(kw));
   if (!hit.length) return `没有匹配的工单（当前共 ${all.length} 条在库）。`;
   return `${all.length} 条在库，命中 ${hit.length} 条：\n` + hit.slice(0, lim).map(r =>
     `#${r.id} 「${r['标题'] || '(无标题)'}」[${r['状态'] || '待处理'}]`
+    + (r['项目'] ? ` 项目:${r['项目']}` : '')
     + ` 处理人:${r['处理人'] || '未指派'}`
     + ` 承诺:${r['承诺时间'] || '无'}`
     + (r['备注'] ? ` 备注:${String(r['备注']).slice(0, 60)}` : '')
@@ -423,13 +427,14 @@ async function buildTicketToolDefs() {
   return [
     {
       name: 'create_ticket', label: 'create_ticket',
-      description: '创建一条工单/事项（挂在事项页时间线上）。当用户说"记个工单 / 加个需求 / 建个工单 / 这件事要跟进 / 帮我记一下要处理"等要求登记待跟进事项时应调用本工具。标题要短（一句话），详情放 content；填了 handler（处理人）会触发飞书指派通知，填了 promise_time 到点自动提醒。类型可选：需求/问题/咨询/跟进。',
+      description: '创建一条工单/事项（挂在事项页时间线上）。当用户说"记个工单 / 加个需求 / 建个工单 / 这件事要跟进 / 帮我记一下要处理"等要求登记待跟进事项时应调用本工具。标题要短（一句话），详情放 content；填了 handler（处理人）会触发飞书指派通知，填了 promise_time 到点自动提醒。类型可选：待办/需求/问题/咨询/跟进；project 填项目名（可选项见工单设置）。',
       parameters: Type.Object({
-        title: Type.String({ description: '工单标题，一句话概括，如 "金箔雲需求-按月统计销售员提成"' }),
+        title: Type.String({ description: '工单标题，一句话概括，如 "按月统计销售员提成"' }),
         content: optStr('详细描述：需求背景、具体要求等'),
         handler: optStr('处理人名字（须与工单设置里的处理人节点对齐才能定向通知，如 "老齐"）'),
-        type: optStr('类型：需求 / 问题 / 咨询 / 跟进'),
+        type: optStr('类型：待办 / 需求 / 问题 / 咨询 / 跟进'),
         source: optStr('来源：微信 / 电话 / 官网 / 邮件 / 会议 / 其他（飞书里说的一般填 "其他" 或 "会议"）'),
+        project: optStr('归属项目名（与工单设置里的项目枚举对齐，如 "金箔雲"；用户说"XX项目的需求"时填 XX）'),
         status: optStr('初始状态，默认 "待处理"'),
         promise_time: optStr('承诺完成时间 YYYY-MM-DD HH:MM（只给日期则默认当天 18:00），到点自动提醒'),
         remark: optStr('备注'),
@@ -439,10 +444,11 @@ async function buildTicketToolDefs() {
     },
     {
       name: 'query_tickets', label: 'query_tickets',
-      description: '查询工单列表（事项页时间线里的工单）。可按状态/处理人/关键词过滤。用户问"现在有哪些工单 / 某件事登记了没有 / 谁手里压着单"时调用；建单前也可先查一下避免重复登记。',
+      description: '查询工单列表（事项页时间线里的工单）。可按状态/处理人/项目/关键词过滤。用户问"现在有哪些工单 / 某件事登记了没有 / 谁手里压着单 / XX项目有什么需求"时调用；建单前也可先查一下避免重复登记。',
       parameters: Type.Object({
         status: optStr('按状态过滤：待处理 / 处理中 / 已完成 / 已关闭'),
         handler: optStr('按处理人过滤（模糊匹配）'),
+        project: optStr('按项目过滤（模糊匹配，如 "金箔雲"）'),
         keyword: optStr('按标题/内容关键词过滤'),
         limit: optNum('返回条数上限，默认20，最大50'),
       }),

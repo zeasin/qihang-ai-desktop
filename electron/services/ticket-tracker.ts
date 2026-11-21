@@ -30,6 +30,7 @@ const TRACKED_FIELDS: Array<{ field: string; label: string }> = [
   { field: '备注', label: '备注' },
   { field: '类型', label: '类型' },
   { field: '来源', label: '来源' },
+  { field: '项目', label: '项目' },
 ];
 
 /** 状态是否终态（与前端 isClosed 同口径） */

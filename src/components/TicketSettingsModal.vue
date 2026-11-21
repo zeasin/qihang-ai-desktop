@@ -30,6 +30,18 @@
           </div>
         </div>
 
+        <!-- 项目枚举（工单归属哪个项目；与类型/来源同机制） -->
+        <div class="set-sec">
+          <div class="set-title">项目 <em class="hint">工单归属的项目，卡片上会带项目徽标</em></div>
+          <div class="chip-row">
+            <span v-for="p in projectOptions" :key="p" class="chip">
+              {{ p }}
+              <button class="chip-x" title="删除" @click="removeEnum('project', p)"><AppIcon name="x" :size="10" /></button>
+            </span>
+            <input v-model="newProject" class="chip-input" type="text" placeholder="加项目…" @keyup.enter="addEnum('project')">
+          </div>
+        </div>
+
         <!-- 状态枚举 -->
         <div class="set-sec">
           <div class="set-title">状态 <em class="hint">「待处理 / 处理中 / 已完成 / 已关闭」是保留状态，不可删除——流转规则都挂在它们身上</em></div>
@@ -106,10 +118,11 @@ import { useTickets, RESERVED_STATUSES, isFixedTerminal } from '@/composables/us
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
-const { typeOptions, sourceOptions, statusOptions, customFields, addEnumOption, removeEnumOption, addCustomField, removeCustomField, toggleTerminalStatus, isTerminalStatus, handlers, loadHandlers, addHandler, updateHandler, removeHandler } = useTickets();
+const { typeOptions, sourceOptions, projectOptions, statusOptions, customFields, addEnumOption, removeEnumOption, addCustomField, removeCustomField, toggleTerminalStatus, isTerminalStatus, handlers, loadHandlers, addHandler, updateHandler, removeHandler } = useTickets();
 
 const newType = ref('');
 const newSource = ref('');
+const newProject = ref('');
 const newStatus = ref('');
 const newField = ref('');
 const newHandlerName = ref('');
@@ -117,7 +130,7 @@ const newHandlerWebhook = ref('');
 
 watch(() => props.show, (v) => {
   if (!v) return;
-  newType.value = ''; newSource.value = ''; newStatus.value = ''; newField.value = '';
+  newType.value = ''; newSource.value = ''; newProject.value = ''; newStatus.value = ''; newField.value = '';
   newHandlerName.value = ''; newHandlerWebhook.value = '';
   void loadHandlers();
 });
@@ -127,12 +140,12 @@ function isReserved(s: string): boolean { return RESERVED_STATUSES.includes(s); 
 /** 是否终态 */
 function isTerminal(s: string): boolean { return isTerminalStatus(s); }
 
-function addEnum(which: 'type' | 'source' | 'status'): void {
-  const input = which === 'type' ? newType : which === 'source' ? newSource : newStatus;
+function addEnum(which: 'type' | 'source' | 'project' | 'status'): void {
+  const input = which === 'type' ? newType : which === 'source' ? newSource : which === 'project' ? newProject : newStatus;
   if (addEnumOption(which, input.value)) input.value = '';
 }
 
-function removeEnum(which: 'type' | 'source' | 'status', v: string): void {
+function removeEnum(which: 'type' | 'source' | 'project' | 'status', v: string): void {
   removeEnumOption(which, v);
 }
 

@@ -79,6 +79,7 @@
             </button>
             <span class="kind-tag" v-if="t.类型">{{ t.类型 }}</span>
             <span class="kind-tag kind-tag-dim" v-if="t.来源">{{ t.来源 }}</span>
+            <span class="kind-tag kind-tag-dim" v-if="t.项目"><AppIcon name="folder" :size="10" />{{ t.项目 }}</span>
             <span class="kind-tag kind-tag-dim" v-if="t.处理人"><AppIcon name="user" :size="10" />{{ t.处理人 }}</span>
             <button
               v-if="linkedCount(t.id)"

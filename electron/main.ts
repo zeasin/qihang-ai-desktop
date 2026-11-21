@@ -495,8 +495,9 @@ const feishuMessageHandler = async (msg) => {
       for (const it of items) {
         const endTag = detectWorkOrderEnd(it);
         inserted.push(ticketStore.create({
-          '标题': `${wo.project}·${it.slice(0, 24)}`,
+          '标题': it.slice(0, 24),
           '类型': kindType,
+          '项目': wo.project,
           '内容': it,
           '备注': `端：${endTag}`,
           '新建人': '飞书',

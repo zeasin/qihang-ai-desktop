@@ -26,6 +26,13 @@
               <option v-for="s in sourceOptions" :key="s" :value="s">{{ s }}</option>
             </select>
           </div>
+          <div class="form-group">
+            <label>项目 <em class="hint">可选项在「工单设置」维护</em></label>
+            <select v-model="form.项目" class="form-control">
+              <option value="">未指定</option>
+              <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
+            </select>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -179,7 +186,7 @@ const props = defineProps<{ show: boolean; editingId: number | null; initial?: R
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const {
-  customFields, statusOptions, typeOptions, sourceOptions,
+  customFields, statusOptions, typeOptions, sourceOptions, projectOptions,
   save: saveTicket, blankForm,
   ticketLogs, linkedTodos, loadLogs, loadLinkedTodos,
   flowNodes, loadFlowNodes, handlers, loadHandlers,
