@@ -240,6 +240,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     todoCreate: (datasetId: number, recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) =>
       ipcRenderer.invoke('ticket:todo:create', { datasetId, recordId, ...data }),
     todoToggle: (todoId: number, done: boolean) => ipcRenderer.invoke('ticket:todo:toggle', { todoId, done }),
+    // 流转：处理人节点 + 节点时间轴
+    handler: {
+      list: () => ipcRenderer.invoke('ticket:handler:list'),
+      add: (data: { name: string; webhook_url?: string; remark?: string }) => ipcRenderer.invoke('ticket:handler:add', data),
+      update: (id: number, data: { name?: string; webhook_url?: string; remark?: string; enabled?: boolean }) =>
+        ipcRenderer.invoke('ticket:handler:update', { id, data }),
+      remove: (id: number) => ipcRenderer.invoke('ticket:handler:remove', { id }),
+    },
+    flowNodes: {
+      list: (datasetId: number, recordId: number) => ipcRenderer.invoke('ticket:flowNodes:list', { datasetId, recordId }),
+    },
   },
 
   // 笔记提炼（概览「来自笔记」）

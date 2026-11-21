@@ -257,6 +257,39 @@
         <AppIcon v-if="s === (statusMenu.ticket && statusMenu.ticket['状态'])" name="check" :size="12" />
       </button>
     </div>
+
+    <!-- 流转确认弹窗（快捷切状态 → 选处理节点 + 填处理结果，确认后状态/处理人/结果一次落库） -->
+    <div v-if="handlerPick.open" class="hp-mask" @click.self="closeHandlerPick">
+      <div class="handler-pick">
+        <div class="status-pop-head">流转确认 · {{ handlerPick.status }}</div>
+        <p class="hp-hint">「{{ handlerPick.ticket?.标题 || '(无标题)' }}」→「{{ handlerPick.status }}」。选择流转到的处理节点：换了节点（或建单后首次指派）会触发通知到该节点的 webhook。</p>
+        <div class="hp-opts" v-if="enabledHandlerNodes.length">
+          <button
+            v-for="h in enabledHandlerNodes" :key="h.id"
+            class="hp-opt" :class="{ sel: handlerPick.picked === h.name }"
+            :title="h.webhook_url ? '已配 webhook：指派即通知' : '未配 webhook：指派后不通知'"
+            @click="handlerPick.picked = handlerPick.picked === h.name ? '' : h.name"
+          ><AppIcon name="user" :size="12" />{{ h.name }}<em v-if="h.webhook_url">🔔</em></button>
+        </div>
+        <p class="hp-note" v-else>还没有启用的处理人节点：可直接手输名字（通知走全局兜底 webhook），或在「工单设置 → 处理人节点」里配置。</p>
+        <input
+          v-model="handlerPick.picked"
+          class="hp-input" type="text"
+          placeholder="点上面节点快选；留空则保持当前处理人…"
+          @keyup.enter="confirmHandlerPick"
+        >
+        <input
+          v-model="handlerPick.result"
+          class="hp-input hp-result" type="text"
+          placeholder="处理结果（可留空）：这一步做了什么、结论…"
+          @keyup.enter="confirmHandlerPick"
+        >
+        <div class="hp-foot">
+          <button class="btn btn-secondary btn-sm" @click="closeHandlerPick">取消</button>
+          <button class="btn btn-primary btn-sm" @click="confirmHandlerPick">确认流转</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -332,7 +365,7 @@ async function removeTodo(t: Todo) {
 }
 
 // ========== 工单（数据在 useTickets 单例里） ==========
-const { tickets, init: initTickets, remove: removeTicketById, setStatus, statusOptions, linkedCountsMap, linkedTodos, loadLinkedTodos, toggleTodo: toggleLinkedTodo } = useTickets();
+const { tickets, init: initTickets, remove: removeTicketById, setStatus, statusOptions, handlers, loadHandlers, linkedCountsMap, linkedTodos, loadLinkedTodos, toggleTodo: toggleLinkedTodo } = useTickets();
 
 const showTicketModal = ref(false);
 const showTicketSettings = ref(false);
@@ -377,16 +410,17 @@ function openStatusMenu(e: MouseEvent, t: any): void {
 function closeStatusMenu(): void {
   if (statusMenu.value.open) statusMenu.value = { ...statusMenu.value, open: false };
 }
-/** 选中状态 → 走统一保存通道（主进程记流水 + 触发终态联动） */
+/** 选中状态 → 走统一保存通道（主进程记流水 + 触发终态联动）；处理人为空先弹必选 */
 async function pickStatus(s: string): Promise<void> {
   const t = statusMenu.value.ticket;
   closeStatusMenu();
-  if (t) await setStatus(t, s);
+  if (t) await changeStatusWithHandler(t, s);
 }
 
 /**
  * 快捷推进：一键把工单推到流转链上的下一个状态。
  * 待处理 → 处理中 →（自定义流转态…）→ 已完成；终态按钮变成 ↩ 打回处理中。
+ * 同样受「处理人必选」约束（见 changeStatusWithHandler）：为空时先弹选人再切。
  */
 const NEXT_FALLBACK: Record<string, string> = { '待处理': '处理中' };
 function nextStatusOf(t: any): string {
@@ -407,7 +441,35 @@ function advanceLabel(t: any): string {
 async function advanceStatus(t: any): Promise<void> {
   const cur = String(t['状态'] || '待处理').trim();
   const target = isClosed(cur) ? '处理中' : nextStatusOf(t);
-  await setStatus(t, target);
+  await changeStatusWithHandler(t, target);
+}
+
+// ========== 流转确认（快捷切状态：选处理节点 + 处理结果，确认后一次落库） ==========
+const handlerPick = ref<{ open: boolean; ticket: any; status: string; picked: string; result: string }>({ open: false, ticket: null, status: '', picked: '', result: '' });
+/** 启用中的处理人节点（弹窗里的快选项） */
+const enabledHandlerNodes = computed(() => handlers.value.filter((h: any) => h && Number(h.enabled) === 1));
+
+/**
+ * 快捷切状态统一入口（下拉菜单 pickStatus / 一键推进 advanceStatus 都走这里）。
+ * 每次状态变更都弹「流转确认」：选处理节点（默认带出当前处理人）+ 填处理结果，
+ * 确认后状态+处理人+结果合并一次落库 → 钩子开关节点；若换了处理节点即触发
+ * 指派通知到该节点的 webhook。
+ */
+async function changeStatusWithHandler(t: any, status: string): Promise<void> {
+  if (!t || !status || String(t['状态'] || '') === status) return;
+  handlerPick.value = { open: true, ticket: t, status, picked: String(t['处理人'] || '').trim(), result: '' };
+}
+function closeHandlerPick(): void {
+  if (handlerPick.value.open) handlerPick.value = { open: false, ticket: null, status: '', picked: '', result: '' };
+}
+/** 确认流转：处理节点（可留空）+ 处理结果（可留空）+ 状态一次保存 */
+async function confirmHandlerPick(): Promise<void> {
+  const { ticket: t, status, picked, result } = handlerPick.value;
+  if (!t) return;
+  const name = picked.trim();
+  const res = result.trim();
+  closeHandlerPick();
+  await setStatus(t, status, { handler: name || undefined, result: res || undefined });
 }
 
 /** 卡片上的关联待办（点 🔗 展开勾选） */
@@ -424,7 +486,7 @@ async function flipLinkedTodo(t: any, td: any): Promise<void> {
   await toggleLinkedTodo(t, td.id, td.status !== 'done');
 }
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') closeStatusMenu();
+  if (e.key === 'Escape') { closeStatusMenu(); closeHandlerPick(); }
 }
 
 function isDueSoon(t: any): boolean {
@@ -584,6 +646,7 @@ onMounted(() => {
   loadTodos();
   loadReminders();
   initTickets();
+  loadHandlers();   // 处理人必选弹窗的快选项
   window.addEventListener('keydown', onKeydown);
 });
 onUnmounted(() => {
@@ -789,6 +852,41 @@ onUnmounted(() => {
 .status-pop-item:hover { background: var(--primary-soft); }
 .status-pop-item.current { color: var(--primary); font-weight: 600; }
 .status-pop-label { flex: 1; min-width: 0; }
+
+/* ========== 处理人必选弹窗 ========== */
+.hp-mask {
+  position: fixed; inset: 0; z-index: 1300;
+  background: rgba(15, 22, 18, 0.32);
+  display: flex; align-items: center; justify-content: center;
+}
+.handler-pick {
+  width: 340px; max-width: calc(100vw - 48px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 12px 14px;
+}
+.hp-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin: 8px 0; }
+.hp-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.hp-opt {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font: inherit; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--text-primary); cursor: pointer;
+}
+.hp-opt:hover { border-color: var(--primary); color: var(--primary); }
+.hp-opt.sel { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+.hp-opt em { font-style: normal; font-size: 11px; color: var(--text-muted); }
+.hp-note { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin: 4px 0 8px; }
+.hp-input {
+  width: 100%; padding: 6px 10px; font: inherit; font-size: 12.5px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-primary); outline: none;
+}
+.hp-input:focus { border-color: var(--primary); }
+.hp-result { margin-top: 6px; }
+.hp-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .ticket-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ticket-dot.gray { background: var(--text-muted); opacity: 0.5; }
 .ticket-dot.blue { background: var(--primary); }

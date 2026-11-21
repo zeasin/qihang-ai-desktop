@@ -74,6 +74,10 @@ const linkedTodos = ref<any[]>([]);
 const linkedCountsMap = ref<Record<string, number>>({});
 /** 处理记录流水 */
 const ticketLogs = ref<any[]>([]);
+/** 流转节点时间轴（ticket_flow_nodes 查出的有序行） */
+const flowNodes = ref<any[]>([]);
+/** 处理人节点（工单设置页管理） */
+const handlers = ref<any[]>([]);
 let datasetId: number | null = null;
 
 /** 当前工单数据集 id（处理记录 / 关联待办的 API 要用） */
@@ -357,12 +361,21 @@ function ticketFields(t: Ticket): Record<string, any> {
 /**
  * 快捷改状态（卡片上的状态徽章点一下就用它）。
  * 走同一条 save 通道 → 主进程记录流水 + 触发终态联动，逻辑不分叉。
+ * extra.handler：顺手带上处理人（流转到某节点）；extra.result：本次处理结果
+ * （并入备注尾部，流转引擎写进节点账、随指派通知一起发出）。
  */
-async function setStatus(ticket: Ticket, status: string): Promise<void> {
+async function setStatus(ticket: Ticket, status: string, extra?: { handler?: string; result?: string }): Promise<void> {
   if (!ticket || !status) return;
-  if (String(ticket['状态'] || '') === status) return;
+  if (String(ticket['状态'] || '') === status && !(extra && extra.handler)) return;
   const f = ticketFields(ticket);
   f['状态'] = status;
+  const handler = String(extra?.handler || '').trim();
+  if (handler) f['处理人'] = handler;
+  const result = String(extra?.result || '').trim();
+  if (result) {
+    const remark = String(f['备注'] || '').trim();
+    f['备注'] = remark ? `${remark}；结果：${result}` : `结果：${result}`;
+  }
   await save(f, ticket.id);
 }
 
@@ -429,13 +442,44 @@ async function toggleTodo(ticket: Ticket | null, todoId: number, done: boolean):
   await loadLinkedTodos(ticket);
 }
 
+// ========== 流转：处理人节点 + 节点时间轴 ==========
+
+/** 载入某工单的流转节点时间轴（按 node_index 正序） */
+async function loadFlowNodes(ticket: Ticket | null): Promise<void> {
+  if (!ticket || !datasetId) { flowNodes.value = []; return; }
+  try { flowNodes.value = await API.ticket.flowNodes.list(datasetId, ticket.id); }
+  catch { flowNodes.value = []; }
+}
+
+/** 载入处理人节点（工单设置页管理；保存/编辑页用来下拉选人） */
+async function loadHandlers(): Promise<void> {
+  try { handlers.value = await API.ticket.handler.list(); }
+  catch { handlers.value = []; }
+}
+
+/** 处理人节点 CRUD（设置页用） */
+async function addHandler(data: { name: string; webhook_url?: string; remark?: string }): Promise<any> {
+  const r = await API.ticket.handler.add(data);
+  await loadHandlers();
+  return r;
+}
+async function updateHandler(id: number, data: { name?: string; webhook_url?: string; remark?: string; enabled?: boolean }): Promise<void> {
+  await API.ticket.handler.update(id, data);
+  await loadHandlers();
+}
+async function removeHandler(id: number): Promise<void> {
+  await API.ticket.handler.remove(id);
+  await loadHandlers();
+}
+
 /** 导出共享状态与操作 */
 export function useTickets() {
   return {
     tickets, loading, customFields, statusOptions, terminalStatuses, typeOptions, sourceOptions,
-    linkedTodos, ticketLogs, linkedCountsMap,
+    linkedTodos, ticketLogs, linkedCountsMap, flowNodes, handlers,
     init, reload, save, remove, blankForm, setStatus,
     loadLogs, loadLinkedTodos, loadLinkedCounts, addLogNote, createTodo, linkTodo, unlinkTodo, toggleTodo,
+    loadFlowNodes, loadHandlers, addHandler, updateHandler, removeHandler,
     addCustomField, removeCustomField, addEnumOption, removeEnumOption,
     toggleTerminalStatus, isTerminalStatus,
   };

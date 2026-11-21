@@ -54,6 +54,25 @@
           <p class="set-note">流转顺序：待处理 → 处理中 →（自定义）→ 已完成 → 已关闭。自定义状态填在中间就是流转态；点「流」变「终」即终态（结束后盖完结时间、停止承诺提醒）。</p>
         </div>
 
+        <!-- 处理人节点（人=名字+webhook一体；流转/指派到该节点时触发通知） -->
+        <div class="set-sec">
+          <div class="set-title">处理人节点 <em class="hint">流转/指派到某节点时，通知到该节点的 webhook；名字与工单「处理人」字段对齐</em></div>
+          <div class="handler-list" v-if="handlers.length">
+            <div class="handler-row" v-for="h in handlers" :key="h.id" :class="{ off: !h.enabled }">
+              <input v-model="h.name" class="handler-name" type="text" placeholder="节点名（如 张三 / 售前组）" @blur="saveHandler(h)">
+              <input v-model="h.webhook_url" class="handler-webhook" type="text" placeholder="webhook url（飞书/钉钉/企微…）" @blur="saveHandler(h)">
+              <button class="handler-toggle" :class="{ on: !!h.enabled }" :title="h.enabled ? '停用该节点' : '启用该节点'" @click="toggleHandler(h)">{{ h.enabled ? '开' : '关' }}</button>
+              <button class="chip-x" title="删除节点（历史节点账不受影响）" @click="removeHandlerRow(h)"><AppIcon name="trash-2" :size="12" /></button>
+            </div>
+          </div>
+          <div class="handler-add">
+            <input v-model="newHandlerName" class="chip-input handler-input" type="text" placeholder="节点名…" @keyup.enter="addHandlerRow">
+            <input v-model="newHandlerWebhook" class="chip-input handler-input handler-webhook-new" type="text" placeholder="webhook url（可选）" @keyup.enter="addHandlerRow">
+            <button class="btn btn-secondary btn-sm" :disabled="!newHandlerName.trim()" @click="addHandlerRow">添加节点</button>
+          </div>
+          <p class="set-note">「处理人」字段填了/改了谁，匹配到这里的节点且有 webhook 就通知谁——与状态无关。删掉节点不影响已有工单的流转历史（历史靠名字冗余留存）。</p>
+        </div>
+
         <!-- 自定义字段 -->
         <div class="set-sec">
           <div class="set-title">自定义字段 <em class="hint">核心字段（标题/内容/状态等）固定不可改</em></div>
@@ -87,16 +106,20 @@ import { useTickets, RESERVED_STATUSES, isFixedTerminal } from '@/composables/us
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
-const { typeOptions, sourceOptions, statusOptions, customFields, addEnumOption, removeEnumOption, addCustomField, removeCustomField, toggleTerminalStatus, isTerminalStatus } = useTickets();
+const { typeOptions, sourceOptions, statusOptions, customFields, addEnumOption, removeEnumOption, addCustomField, removeCustomField, toggleTerminalStatus, isTerminalStatus, handlers, loadHandlers, addHandler, updateHandler, removeHandler } = useTickets();
 
 const newType = ref('');
 const newSource = ref('');
 const newStatus = ref('');
 const newField = ref('');
+const newHandlerName = ref('');
+const newHandlerWebhook = ref('');
 
 watch(() => props.show, (v) => {
   if (!v) return;
   newType.value = ''; newSource.value = ''; newStatus.value = ''; newField.value = '';
+  newHandlerName.value = ''; newHandlerWebhook.value = '';
+  void loadHandlers();
 });
 
 /** 保留状态：不可删除 */
@@ -123,6 +146,33 @@ function addField(): void {
 }
 
 function removeField(name: string): void { removeCustomField(name); }
+
+// ========== 处理人节点 ==========
+
+async function addHandlerRow(): Promise<void> {
+  const name = newHandlerName.value.trim();
+  if (!name) return;
+  const r = await addHandler({ name, webhook_url: newHandlerWebhook.value.trim() });
+  if (r && r.ok) {
+    newHandlerName.value = '';
+    newHandlerWebhook.value = '';
+  } else {
+    alert((r && r.error) || '添加失败');
+  }
+}
+
+async function saveHandler(h: any): Promise<void> {
+  await updateHandler(h.id, { name: String(h.name || '').trim(), webhook_url: String(h.webhook_url || '') });
+}
+
+async function toggleHandler(h: any): Promise<void> {
+  await updateHandler(h.id, { enabled: !h.enabled });
+}
+
+async function removeHandlerRow(h: any): Promise<void> {
+  if (!confirm('删除处理人节点「' + h.name + '」？（历史流转账不受影响）')) return;
+  await removeHandler(h.id);
+}
 
 function close(): void { emit('close'); }
 </script>
@@ -203,4 +253,40 @@ function close(): void { emit('close'); }
   outline: none;
 }
 .chip-input:focus { border-color: var(--primary); }
+
+/* ========== 处理人节点 ========== */
+.handler-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.handler-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+}
+.handler-row.off { opacity: 0.55; }
+.handler-name, .handler-webhook {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  min-width: 0;
+}
+.handler-name:focus, .handler-webhook:focus { border-color: var(--primary); }
+.handler-add { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.handler-input { width: 110px; }
+.handler-webhook-new { flex: 1; min-width: 220px; }
+.handler-toggle {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.handler-toggle.on { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 </style>

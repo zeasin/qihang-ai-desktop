@@ -49,6 +49,7 @@ import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPe
 import * as scheduler from './services/scheduler';
 import { registerTicketLink } from './services/ticket-link';
 import * as tracker from './services/ticket-tracker';
+import * as ticketFlow from './services/ticket-flow';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { askRadar } from './radar/radar-ask';
@@ -983,6 +984,12 @@ ipcMain.handle('ticket:todo:unlink', (_, { datasetId, recordId, todoId }) => tra
 ipcMain.handle('ticket:todo:create', (_, { datasetId, recordId, title, priority, scheduled_start }) =>
   tracker.createTodoForTicket(String(datasetId), Number(recordId), { title, priority, scheduled_start }));
 ipcMain.handle('ticket:todo:toggle', (_, { todoId, done }) => tracker.toggleLinkedTodo(Number(todoId), !!done));
+// ---- 工单流转：处理人节点 + 节点时间轴 ----
+ipcMain.handle('ticket:handler:list', () => ticketFlow.listHandlers());
+ipcMain.handle('ticket:handler:add', (_, data) => ticketFlow.addHandler(data || {}));
+ipcMain.handle('ticket:handler:update', (_, { id, data }) => ticketFlow.updateHandler(Number(id), data || {}));
+ipcMain.handle('ticket:handler:remove', (_, { id }) => ticketFlow.removeHandler(Number(id)));
+ipcMain.handle('ticket:flowNodes:list', (_, { datasetId, recordId }) => ticketFlow.listFlowNodes(String(datasetId), Number(recordId)));
 ipcMain.handle('ds:suites:list', () => listBuiltinSuites());
 ipcMain.handle('ds:suites:apply', (_, { ids }) => {
   try {
@@ -2350,6 +2357,8 @@ app.whenReady().then(async () => {
   try { registerTicketLink(); } catch (e: any) { logger.warn('[TicketLink] 注册失败: %s', e?.message || e); }
   // 工单追踪：处理记录流水 + 工单↔待办终态联动（同样挂在记录保存回调上）
   try { tracker.registerTicketTracker(); } catch (e: any) { logger.warn('[TicketTracker] 注册失败: %s', e?.message || e); }
+  // 工单流转：节点账 + 处理人变更通知（挂在同一钩子链）
+  try { ticketFlow.registerTicketFlow(); } catch (e: any) { logger.warn('[TicketFlow] 注册失败: %s', e?.message || e); }
   createTray();
 
   // 旧版内置数据集 schema 升级：补齐字段类型/必填/选项（幂等）

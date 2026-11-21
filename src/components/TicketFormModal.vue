@@ -33,8 +33,11 @@
             <input v-model="form.新建人" class="form-control" type="text" placeholder="谁提的">
           </div>
           <div class="form-group">
-            <label>处理人</label>
-            <input v-model="form.处理人" class="form-control" type="text" placeholder="谁跟进">
+            <label>处理人 <em class="hint">与「处理人节点」同名即触发 webhook 通知</em></label>
+            <input v-model="form.处理人" class="form-control" type="text" list="handlerNames" placeholder="谁跟进">
+            <datalist id="handlerNames">
+              <option v-for="h in handlers" :key="h.id" :value="h.name">{{ h.webhook_url ? '已配通知' : '未配通知' }}</option>
+            </datalist>
           </div>
         </div>
         <div class="form-row">
@@ -56,6 +59,11 @@
         <div class="form-group">
           <label>备注</label>
           <textarea v-model="form.备注" class="form-control" rows="2" placeholder="处理进展、跟进记录（可追加）"></textarea>
+        </div>
+        <!-- 处理结果：编辑时改了状态，带上本次处理结果（写入流转节点账） -->
+        <div class="form-group" v-if="editingId && statusChanged">
+          <label>处理结果 <em class="hint">随状态变化记入流转账，会随通知一起发出</em></label>
+          <input v-model="flowResult" class="form-control" type="text" placeholder="这一步做了什么、结论是什么（可留空）">
         </div>
 
         <!-- 关联待办（工单 ↔ 待办联动） -->
@@ -112,6 +120,32 @@
           <div class="log-empty" v-else>还没有处理记录</div>
         </div>
 
+        <!-- 流转历史（ticket_flow_nodes 时间轴：每个节点一行，可回放整个生命周期） -->
+        <div class="form-group" v-if="editingId">
+          <label>流转历史 <em class="hint">每个节点一行：状态 · 处理人 · 停留时长 · 处理结果</em></label>
+          <div class="flow-list" v-if="flowNodes.length">
+            <div class="flow-item" v-for="(n, i) in flowNodes" :key="n.id">
+              <div class="flow-rail" :class="{ last: i === flowNodes.length - 1 }"><span class="flow-dot" :class="{ open: !n.exited_at }"></span></div>
+              <div class="flow-main">
+                <div class="flow-head">
+                  <span class="flow-status">{{ n.status || '（空）' }}</span>
+                  <span class="flow-handler" v-if="n.handler_name">· {{ n.handler_name }}</span>
+                  <span class="flow-open" v-if="!n.exited_at">当前节点</span>
+                  <span class="flow-time">{{ n.entered_at }}</span>
+                </div>
+                <div class="flow-meta">
+                  <span v-if="n.exited_at && n.duration_minutes != null">停留 {{ durationText(n.duration_minutes) }}</span>
+                  <span v-if="n.exited_at && n.result">结果：{{ n.result }}</span>
+                  <span v-if="!n.exited_at">进入节点至今</span>
+                </div>
+                <div class="flow-notify" v-if="n.notified === 1">已通知 {{ n.handler_name || '' }}</div>
+                <div class="flow-notify fail" v-else-if="n.notified === -1" :title="n.notify_error">通知失败：{{ n.notify_error || '未知原因' }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="log-empty" v-else>还没有流转记录</div>
+        </div>
+
         <!-- 自定义字段（在「工单设置」里增删，这里只填写） -->
         <div class="custom-fields" v-if="customFields.length">
           <div class="cf-label">自定义字段 <em class="hint">在右上角「工单设置」里管理</em></div>
@@ -137,7 +171,7 @@
  * 新建/编辑工单的统一入口。数据与 schema 逻辑在 useTickets 组合式函数里，
  * 这里只管表单状态与弹窗开关。
  */
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import AppIcon from '@/components/AppIcon.vue';
 import { useTickets } from '@/composables/useTickets';
 
@@ -148,12 +182,17 @@ const {
   customFields, statusOptions, typeOptions, sourceOptions,
   save: saveTicket, blankForm,
   ticketLogs, linkedTodos, loadLogs, loadLinkedTodos,
+  flowNodes, loadFlowNodes, handlers, loadHandlers,
   addLogNote: addLogNoteApi, createTodo, unlinkTodo, toggleTodo,
 } = useTickets();
 
 const form = ref<Record<string, any>>(blankForm());
 const newLogNote = ref('');
 const newTodoTitle = ref('');
+/** 处理结果：随状态变化一起写入库 + 发通知 */
+const flowResult = ref('');
+/** 打开表单时记下原状态，用于检测「本次编辑改了状态」 */
+const origStatus = ref('');
 
 /** 当前编辑的工单（日志/关联待办都挂在它身上） */
 function currentTicket(): any {
@@ -175,6 +214,17 @@ function logText(lg: any): string {
   }
 }
 
+/** 本次编辑是否改了状态（决定「处理结果」输入框是否出现） */
+const statusChanged = computed(() => props.editingId != null && String(form.value.状态 || '').trim() !== origStatus.value);
+
+/** 停留时长文案 */
+function durationText(m: number): string {
+  if (m < 60) return m + ' 分钟';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + ' 小时';
+  return Math.round(h / 24) + ' 天';
+}
+
 // 打开时同步表单：editingId 为空 → 空白新建；有 initial → 复制编辑 + 载入日志/关联待办
 watch(() => props.show, (v) => {
   if (!v) return;
@@ -185,10 +235,14 @@ watch(() => props.show, (v) => {
   form.value = base;
   newLogNote.value = '';
   newTodoTitle.value = '';
+  flowResult.value = '';
+  origStatus.value = String(base['状态'] || '').trim();
+  void loadHandlers();   // 处理人 datalist 需要
   if (props.editingId) {
     const t = currentTicket();
     void loadLogs(t);
     void loadLinkedTodos(t);
+    void loadFlowNodes(t);
   }
 });
 
@@ -196,6 +250,11 @@ function close(): void { emit('close'); }
 
 async function save(): Promise<void> {
   if (!form.value.标题?.trim()) return;
+  // 状态变了 → 把「处理结果」并进备注尾部，供流转引擎写节点账 + 随通知发出
+  if (props.editingId && statusChanged.value && flowResult.value.trim()) {
+    const remark = String(form.value.备注 || '').trim();
+    form.value.备注 = remark ? remark + '；结果：' + flowResult.value.trim() : '结果：' + flowResult.value.trim();
+  }
   await saveTicket(form.value, props.editingId);
   close();
 }
@@ -325,4 +384,32 @@ textarea.form-control { resize: vertical; }
 .log-title { font-size: 12px; color: var(--text-primary); line-height: 1.45; word-break: break-all; }
 .log-time { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px; }
 .log-empty { font-size: 12px; color: var(--text-muted); padding: 10px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+
+/* ========== 流转历史（节点时间轴） ========== */
+.flow-list {
+  display: flex; flex-direction: column;
+  max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 8px 10px;
+}
+.flow-item { display: flex; gap: 8px; }
+.flow-rail { display: flex; flex-direction: column; align-items: center; width: 12px; flex-shrink: 0; }
+.flow-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-muted); flex-shrink: 0; margin-top: 5px;
+}
+.flow-dot.open { background: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.flow-rail::after { content: ''; flex: 1; width: 1px; background: var(--border); margin-top: 2px; }
+.flow-rail.last::after { display: none; }
+.flow-main { flex: 1; min-width: 0; padding-bottom: 10px; }
+.flow-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.flow-status { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.flow-handler { font-size: 11.5px; color: var(--text-secondary); }
+.flow-open { font-size: 10px; color: var(--primary); border: 1px solid var(--primary); border-radius: 8px; padding: 0 6px; }
+.flow-time { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); margin-left: auto; }
+.flow-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-tertiary); margin-top: 2px; }
+.flow-notify { font-size: 10.5px; color: var(--success, #16a34a); margin-top: 1px; }
+.flow-notify.fail { color: var(--danger); word-break: break-all; }
 </style>

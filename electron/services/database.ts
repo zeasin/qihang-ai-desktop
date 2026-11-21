@@ -232,6 +232,38 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_ticket_todos_record ON ticket_todos(dataset_id, record_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_todos_todo ON ticket_todos(todo_id);
 
+    -- 处理人节点：人=名字+webhook一体；流转/指派到该节点时触发通知到其 url
+    CREATE TABLE IF NOT EXISTS ticket_handlers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      webhook_url TEXT DEFAULT '',
+      enabled INTEGER DEFAULT 1,
+      remark TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+
+    -- 流转节点实例：一次状态变更一行，工单的完整生命周期账本（可回放/审计）
+    CREATE TABLE IF NOT EXISTS ticket_flow_nodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      dataset_id TEXT DEFAULT '',
+      record_id INTEGER NOT NULL,
+      node_index INTEGER NOT NULL DEFAULT 1,
+      status TEXT DEFAULT '',
+      handler_name TEXT DEFAULT '',
+      handler_id INTEGER,
+      entered_at TEXT DEFAULT (datetime('now', '+8 hours')),
+      exited_at TEXT,
+      duration_minutes INTEGER,
+      result TEXT DEFAULT '',
+      result_kind TEXT DEFAULT '',
+      trigger TEXT DEFAULT '',
+      notified INTEGER DEFAULT 0,
+      notify_error TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_flow_nodes_record ON ticket_flow_nodes(dataset_id, record_id, node_index);
+
     CREATE TABLE IF NOT EXISTS plan_executions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id INTEGER,
@@ -359,6 +391,31 @@ function initSchema() {
     `).run();
     if (backfill.changes) logger.info('[DB] 记录镜像列回填：' + backfill.changes + ' 条');
   } catch (e) { logger.warn('[DB] 记录镜像列回填失败: ' + (e && e.message)); }
+  // 流转节点账初始回填：给「工单」数据集的存量记录各补一条初始节点（当前状态），
+  // 让账本从启用那天起完整。幂等：已有节点行的工单跳过。
+  try {
+    const dsRow = getDb().prepare("SELECT id FROM data_center_datasets WHERE name = '工单'").get() as any;
+    if (dsRow) {
+      const rows = getDb().prepare(`
+        SELECT r.id, r.data_json, r.updated_at
+          FROM data_center_records r
+         WHERE r.dataset_id = ?
+           AND NOT EXISTS (SELECT 1 FROM ticket_flow_nodes n WHERE n.dataset_id = ? AND n.record_id = r.id)
+      `).all(String(dsRow.id), String(dsRow.id)) as any[];
+      const ins = getDb().prepare(`
+        INSERT INTO ticket_flow_nodes (dataset_id, record_id, node_index, status, handler_name, handler_id, entered_at, result, result_kind, trigger, notified)
+        VALUES (?, ?, 1, ?, ?, NULL, ?, '', 'auto', 'backfill', 0)
+      `);
+      let n = 0;
+      for (const r of rows) {
+        let d: any = {};
+        try { d = JSON.parse(r.data_json || '{}'); } catch {}
+        ins.run(String(dsRow.id), r.id, String(d['状态'] || '待处理'), String(d['处理人'] || ''), r.updated_at || null);
+        n++;
+      }
+      if (n) logger.info('[DB] 流转节点账初始回填：' + n + ' 单');
+    }
+  } catch (e) { logger.warn('[DB] 流转节点账回填失败: ' + (e && e.message)); }
   // 待办表补列：线上 plan_todos 是旧结构（缺 scheduled_start / project_id / source），
   // 而代码往这三列写 → 「新建待办」直接报 no such column。缺哪补哪，已有列不动。
   try {
