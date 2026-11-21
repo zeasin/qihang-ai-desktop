@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <h1 class="page-title">事项</h1>
-        <p class="page-sub">待办与工单混排成一条时间线：要动手的是待办，要跟进的是工单，到点的都会提醒你。</p>
+        <p class="page-sub">待办与工单同表存储、分开显示：要动手的是待办，要跟进的是工单，到点的都会提醒你。</p>
       </div>
       <div class="page-actions">
         <button class="btn btn-sm btn-secondary" @click="showDone = !showDone">{{ showDone ? '隐藏已完成' : '显示已完成' }}</button>
@@ -27,20 +27,14 @@
       <button class="btn btn-primary btn-sm" :disabled="!newTodoTitle.trim()" @click="addTodo">添加</button>
     </div>
 
-    <!-- ========== 统一时间线：逾期 / 今天 / 稍后 ========== -->
-    <div class="sec-label"><AppIcon name="list-checks" :size="13" />时间线<em>待办 {{ openTodoCount }} 项 · 工单 {{ openTicketCount }} 件未关闭</em></div>
-    <template v-for="sec in timeline" :key="sec.key">
-      <div class="tl-sec-head" :class="{ warm: sec.key === 'overdue' }">
-        <AppIcon :name="sec.key === 'overdue' ? 'clock' : 'list-checks'" :size="12" />{{ sec.label }}
-        <span class="sec-count">{{ sec.items.length }}</span>
-      </div>
-
-      <div class="tl-grid" v-if="sec.items.length">
+    <!-- ========== 待办 ========== -->
+    <div class="sec-label"><AppIcon name="check-square" :size="13" />待办<em>{{ visibleTodos.length }} 项</em></div>
+    <div class="tl-grid" v-if="visibleTodos.length">
         <!-- 待办卡 -->
         <div
-          v-for="t in sec.todos" :key="'todo-' + t.id"
+          v-for="t in visibleTodos" :key="'todo-' + t.id"
           class="item-card todo-card"
-          :class="{ done: t.status === 'done', overdue: sec.key === 'overdue' }"
+          :class="{ done: t.status === 'done', overdue: isTodoOverdue(t) }"
         >
           <div class="item-head">
             <button class="todo-box" :title="t.status === 'done' ? '标记为未完成' : '标记完成'" @click="toggleTodo(t)">
@@ -52,17 +46,28 @@
           </div>
           <div class="item-foot">
             <span class="kind-tag">待办</span>
-            <span class="todo-dt" :class="{ warm: sec.key === 'overdue' }">
+            <span class="todo-dt" :class="{ warm: isTodoOverdue(t) }">
               <AppIcon v-if="todoDue(t)" name="calendar" :size="11" />{{ todoDue(t) || '无截止日期' }}
             </span>
           </div>
         </div>
+    </div>
+    <div v-else class="empty-row">没有待办，用上方输入框添加</div>
 
+    <!-- ========== 工单 ========== -->
+    <div class="sec-label"><AppIcon name="clipboard-list" :size="13" />工单<em>{{ openTicketCount }} 件未关闭</em>
+      <select v-model="projectFilter" class="tl-filter" title="按项目筛选工单">
+        <option value="">全部项目</option>
+        <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
+        <option value="__none__">（未指定项目）</option>
+      </select>
+    </div>
+    <div class="tl-grid" v-if="visibleTickets.length">
         <!-- 工单卡 -->
         <div
-          v-for="t in sec.tickets" :key="'ticket-' + t.id"
+          v-for="t in visibleTickets" :key="'ticket-' + t.id"
           class="item-card ticket-card"
-          :class="{ overdue: sec.key === 'overdue' }"
+          :class="{ overdue: isTicketOverdue(t) }"
           @click="openTicketEdit(t)"
         >
           <div class="item-head">
@@ -108,10 +113,8 @@
             </span>
           </div>
         </div>
-      </div>
-
-      <div v-else class="empty-row">{{ sec.empty }}</div>
-    </template>
+    </div>
+    <div v-else class="empty-row">没有匹配的工单</div>
 
     <!-- ========== 定时提醒 ========== -->
     <div class="sec-label"><AppIcon name="bell" :size="13" />定时提醒<em>已启用 {{ enabledCount }} / {{ reminders.length }} 条</em></div>
@@ -298,9 +301,9 @@
 /**
  * 事项页（ItemsView）：待办 + 工单 + 定时提醒三合一。
  *
- * 融合逻辑：待办（plan_todos）与工单（工单数据集）混排成一条统一时间线，
- * 按逾期/今天/稍后分组——分组只看各自的到期日（待办 scheduled_start，工单承诺时间），
- * 同组内待办在前、工单在后。定时提醒保持卡片网格收在页尾。
+ * 布局（2026-11-21）：时间线日期分组移除，页面平铺「待办」「工单」两个区块——
+ * 待办=类型'待办'的工单（复选框卡），工单=其余类型（状态徽章卡），工单支持按项目筛选；
+ * 逾期信息不再靠分组表达，改为卡片上的红色逾期标记。定时提醒保持卡片网格收在页尾。
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import AppIcon from '@/components/AppIcon.vue';
@@ -381,14 +384,27 @@ async function removeTodo(t: Todo) {
 }
 
 // ========== 工单（数据在 useTickets 单例里） ==========
-const { tickets, init: initTickets, remove: removeTicketById, setStatus, statusOptions, handlers, loadHandlers, linkedCountsMap, linkedTodos, loadLinkedTodos, toggleTodo: toggleLinkedTodo } = useTickets();
+const { tickets, init: initTickets, remove: removeTicketById, setStatus, statusOptions, projectOptions, handlers, loadHandlers, linkedCountsMap, linkedTodos, loadLinkedTodos, toggleTodo: toggleLinkedTodo } = useTickets();
 
 const showTicketModal = ref(false);
 const showTicketSettings = ref(false);
 const editingTicketId = ref<number | null>(null);
 const editingTicketInitial = ref<Record<string, any> | null>(null);
 
-const openTicketCount = computed(() => tickets.value.filter(t => !isClosed(t['状态'])).length);
+const openTicketCount = computed(() => tickets.value.filter(t => ticketPoolPred(t)).length);
+
+// ========== 项目筛选（只作用于工单卡；待办不受影响） ==========
+/** '' = 全部项目；'__none__' = 未指定项目 */
+const projectFilter = ref('');
+function matchProject(t: any): boolean {
+  if (projectFilter.value === '') return true;
+  const p = String(t['项目'] || '').trim();
+  return projectFilter.value === '__none__' ? !p : p === projectFilter.value;
+}
+/** 未关闭的非待办工单（含项目筛选，头部统计与时间线共用同一口径） */
+function ticketPoolPred(t: any): boolean {
+  return String(t['类型'] || '') !== '待办' && !isClosed(t['状态']) && matchProject(t);
+}
 
 function openTicketCreate(): void {
   editingTicketId.value = null;
@@ -527,42 +543,33 @@ function truncate(s: any, n: number): string {
   return v.length > n ? v.slice(0, n) + '…' : v;
 }
 
-// ========== 统一时间线 ==========
-interface Section { key: string; label: string; items: any[]; todos: Todo[]; tickets: any[]; empty: string; }
-
+// ========== 待办 / 工单 平铺列表（2026-11-21：时间线日期分组移除） ==========
 const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'));
-const openTodoCount = computed(() => openTodos.value.length);
 
-const timeline = computed<Section[]>(() => {
-  const todoPool = showDone.value ? todos.value : openTodos.value;
-  // 工单：显示已完成的待办时，也带上已关闭的工单；平时只显示未关闭
-  const ticketPool = showDone.value ? tickets.value : tickets.value.filter(t => !isClosed(t['状态']));
-
-  const overdueTodos: Todo[] = []; const todayTodos: Todo[] = []; const laterTodos: Todo[] = []; const doneTodos: Todo[] = [];
-  for (const t of todoPool) {
-    if (t.status === 'done') { doneTodos.push(t); continue; }
-    const due = todoDue(t);
-    if (due && due < today) overdueTodos.push(t);
-    else if (due && due === today) todayTodos.push(t);
-    else laterTodos.push(t);
-  }
-  const overdueTickets: any[] = []; const todayTickets: any[] = []; const laterTickets: any[] = []; const doneTickets: any[] = [];
-  for (const t of ticketPool) {
-    if (isClosed(t['状态'])) { doneTickets.push(t); continue; }
-    const due = promiseDateOf(t);
-    if (due && due < today) overdueTickets.push(t);
-    else if (due && due === today) todayTickets.push(t);
-    else laterTickets.push(t);
-  }
-
-  const secs: Section[] = [
-    { key: 'overdue', label: '逾期', items: [...overdueTodos, ...overdueTickets], todos: overdueTodos, tickets: overdueTickets, empty: '没有逾期事项' },
-    { key: 'today', label: '今天', items: [...todayTodos, ...todayTickets], todos: todayTodos, tickets: todayTickets, empty: '今天没有到期事项' },
-    { key: 'later', label: '稍后', items: [...laterTodos, ...laterTickets], todos: laterTodos, tickets: laterTickets, empty: '没有待办或工单，用上方输入框添加' },
-  ];
-  if (showDone.value) secs.push({ key: 'done', label: '已完成', items: [...doneTodos, ...doneTickets], todos: doneTodos, tickets: doneTickets, empty: '暂无已完成' });
-  return secs;
+/** 待办列表：未完成在前、已完成在后（显示已完成时划线可见） */
+const visibleTodos = computed<Todo[]>(() => {
+  const pool = showDone.value ? todos.value : openTodos.value;
+  return [...pool.filter(t => t.status !== 'done'), ...pool.filter(t => t.status === 'done')];
 });
+
+/** 工单列表：未关闭在前、已关闭在后；叠加项目筛选；待办工单不在此列（已在待办区） */
+const visibleTickets = computed<any[]>(() => {
+  const pool = showDone.value
+    ? tickets.value.filter(t => String(t['类型'] || '') !== '待办' && matchProject(t))
+    : tickets.value.filter(ticketPoolPred);
+  return [...pool.filter(t => !isClosed(t['状态'])), ...pool.filter(t => isClosed(t['状态']))];
+});
+
+/** 待办卡逾期标记（截止日早于今天且未完成） */
+function isTodoOverdue(t: Todo): boolean {
+  const due = todoDue(t);
+  return !!due && due < today && t.status !== 'done';
+}
+/** 工单卡逾期标记（承诺日早于今天且未关闭） */
+function isTicketOverdue(t: any): boolean {
+  const due = promiseDateOf(t);
+  return !!due && due < today && !isClosed(t['状态']);
+}
 
 // ========== 提醒 ==========
 interface Reminder {
@@ -703,17 +710,6 @@ onUnmounted(() => {
 
 /* ========== 统一时间线 ========== */
 /* ========== 时间线卡片（与提醒卡同一套视觉语言） ========== */
-.tl-sec-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 2px 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-.tl-sec-head.warm { color: var(--warning); }
-.tl-sec-head .sec-count { margin-left: auto; font-weight: 400; }
 .tl-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -722,6 +718,22 @@ onUnmounted(() => {
   /* 卡片按自身内容高度自适应：待办卡信息少，不被同行工单卡拉出大片空洞 */
   align-items: start;
 }
+/* 工单标题行内的项目筛选（em 的 margin-left:auto 负责把右侧顶齐，这里只留间距） */
+.tl-filter {
+  margin-left: 12px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  outline: none;
+  cursor: pointer;
+}
+.tl-filter:focus { border-color: var(--primary); }
+.sec-label .tl-filter + em { margin-left: 12px; }
 .item-card {
   background: var(--surface);
   border: 1px solid var(--border);

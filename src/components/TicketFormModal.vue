@@ -27,8 +27,8 @@
             </select>
           </div>
           <div class="form-group">
-            <label>项目 <em class="hint">可选项在「工单设置」维护</em></label>
-            <select v-model="form.项目" class="form-control">
+            <label>项目 <em class="hint" title="可选项在「工单设置」里维护">选项在设置维护</em></label>
+            <select v-model="form.项目" class="form-control" title="可选项在「工单设置」里维护">
               <option value="">未指定</option>
               <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
             </select>
@@ -40,8 +40,8 @@
             <input v-model="form.新建人" class="form-control" type="text" placeholder="谁提的">
           </div>
           <div class="form-group">
-            <label>处理人 <em class="hint">与「处理人节点」同名即触发 webhook 通知</em></label>
-            <input v-model="form.处理人" class="form-control" type="text" list="handlerNames" placeholder="谁跟进">
+            <label>处理人 <em class="hint" title="与「处理人节点」同名即触发 webhook 通知">同名触发通知</em></label>
+            <input v-model="form.处理人" class="form-control" type="text" list="handlerNames" placeholder="谁跟进" title="与「处理人节点」同名即触发 webhook 通知">
             <datalist id="handlerNames">
               <option v-for="h in handlers" :key="h.id" :value="h.name">{{ h.webhook_url ? '已配通知' : '未配通知' }}</option>
             </datalist>
@@ -102,55 +102,67 @@
           </div>
         </div>
 
-        <!-- 处理记录（新建/状态变化/流转自动留痕） -->
-        <div class="form-group" v-if="editingId">
-          <label>处理记录 <em class="hint">新建、状态变化、流转自动留痕</em></label>
-          <div class="log-add">
-            <input
-              v-model="newLogNote"
-              class="form-control"
-              type="text"
-              placeholder="补一条处理说明（回车记录）…"
-              @keyup.enter="addLogNote"
-            >
-            <button class="btn btn-secondary btn-sm" :disabled="!newLogNote.trim()" @click="addLogNote">记录</button>
-          </div>
-          <div class="log-list" v-if="ticketLogs.length">
-            <div class="log-item" v-for="lg in ticketLogs" :key="lg.id">
-              <span class="log-dot" :class="'log-' + lg.action"></span>
-              <div class="log-main">
-                <div class="log-title">{{ logText(lg) }}</div>
-                <div class="log-time">{{ lg.created_at }}</div>
+        <!-- 处理记录（新建/状态变化/流转自动留痕；默认收起，点标题展开） -->
+        <div class="form-group collapse-sec" v-if="editingId">
+          <button class="collapse-head" type="button" @click="showLogs = !showLogs">
+            <AppIcon name="chevron-right" :size="12" :class="{ open: showLogs }" />
+            <span>处理记录</span>
+            <em class="hint">新建、状态变化、流转自动留痕 · {{ ticketLogs.length }} 条</em>
+          </button>
+          <div class="collapse-body" v-show="showLogs">
+            <div class="log-add">
+              <input
+                v-model="newLogNote"
+                class="form-control"
+                type="text"
+                placeholder="补一条处理说明（回车记录）…"
+                @keyup.enter="addLogNote"
+              >
+              <button class="btn btn-secondary btn-sm" :disabled="!newLogNote.trim()" @click="addLogNote">记录</button>
+            </div>
+            <div class="log-list" v-if="ticketLogs.length">
+              <div class="log-item" v-for="lg in ticketLogs" :key="lg.id">
+                <span class="log-dot" :class="'log-' + lg.action"></span>
+                <div class="log-main">
+                  <div class="log-title">{{ logText(lg) }}</div>
+                  <div class="log-time">{{ lg.created_at }}</div>
+                </div>
               </div>
             </div>
+            <div class="log-empty" v-else>还没有处理记录</div>
           </div>
-          <div class="log-empty" v-else>还没有处理记录</div>
         </div>
 
-        <!-- 流转历史（ticket_flow_nodes 时间轴：每个节点一行，可回放整个生命周期） -->
-        <div class="form-group" v-if="editingId">
-          <label>流转历史 <em class="hint">每个节点一行：状态 · 处理人 · 停留时长 · 处理结果</em></label>
-          <div class="flow-list" v-if="flowNodes.length">
-            <div class="flow-item" v-for="(n, i) in flowNodes" :key="n.id">
-              <div class="flow-rail" :class="{ last: i === flowNodes.length - 1 }"><span class="flow-dot" :class="{ open: !n.exited_at }"></span></div>
-              <div class="flow-main">
-                <div class="flow-head">
-                  <span class="flow-status">{{ n.status || '（空）' }}</span>
-                  <span class="flow-handler" v-if="n.handler_name">· {{ n.handler_name }}</span>
-                  <span class="flow-open" v-if="!n.exited_at">当前节点</span>
-                  <span class="flow-time">{{ n.entered_at }}</span>
+        <!-- 流转历史（ticket_flow_nodes 时间轴：每个节点一行，可回放整个生命周期；默认收起） -->
+        <div class="form-group collapse-sec" v-if="editingId">
+          <button class="collapse-head" type="button" @click="showFlow = !showFlow">
+            <AppIcon name="chevron-right" :size="12" :class="{ open: showFlow }" />
+            <span>流转历史</span>
+            <em class="hint">每个节点一行：状态 · 处理人 · 停留时长 · 处理结果 · {{ flowNodes.length }} 节点</em>
+          </button>
+          <div class="collapse-body" v-show="showFlow">
+            <div class="flow-list" v-if="flowNodes.length">
+              <div class="flow-item" v-for="(n, i) in flowNodes" :key="n.id">
+                <div class="flow-rail" :class="{ last: i === flowNodes.length - 1 }"><span class="flow-dot" :class="{ open: !n.exited_at }"></span></div>
+                <div class="flow-main">
+                  <div class="flow-head">
+                    <span class="flow-status">{{ n.status || '（空）' }}</span>
+                    <span class="flow-handler" v-if="n.handler_name">· {{ n.handler_name }}</span>
+                    <span class="flow-open" v-if="!n.exited_at">当前节点</span>
+                    <span class="flow-time">{{ n.entered_at }}</span>
+                  </div>
+                  <div class="flow-meta">
+                    <span v-if="n.exited_at && n.duration_minutes != null">停留 {{ durationText(n.duration_minutes) }}</span>
+                    <span v-if="n.exited_at && n.result">结果：{{ n.result }}</span>
+                    <span v-if="!n.exited_at">进入节点至今</span>
+                  </div>
+                  <div class="flow-notify" v-if="n.notified === 1">已通知 {{ n.handler_name || '' }}</div>
+                  <div class="flow-notify fail" v-else-if="n.notified === -1" :title="n.notify_error">通知失败：{{ n.notify_error || '未知原因' }}</div>
                 </div>
-                <div class="flow-meta">
-                  <span v-if="n.exited_at && n.duration_minutes != null">停留 {{ durationText(n.duration_minutes) }}</span>
-                  <span v-if="n.exited_at && n.result">结果：{{ n.result }}</span>
-                  <span v-if="!n.exited_at">进入节点至今</span>
-                </div>
-                <div class="flow-notify" v-if="n.notified === 1">已通知 {{ n.handler_name || '' }}</div>
-                <div class="flow-notify fail" v-else-if="n.notified === -1" :title="n.notify_error">通知失败：{{ n.notify_error || '未知原因' }}</div>
               </div>
             </div>
+            <div class="log-empty" v-else>还没有流转记录</div>
           </div>
-          <div class="log-empty" v-else>还没有流转记录</div>
         </div>
 
         <!-- 自定义字段（在「工单设置」里增删，这里只填写） -->
@@ -196,6 +208,9 @@ const {
 const form = ref<Record<string, any>>(blankForm());
 const newLogNote = ref('');
 const newTodoTitle = ref('');
+/** 追溯区折叠：处理记录 / 流转历史默认收起，点标题展开（弹窗太挤时先收掉这两块） */
+const showLogs = ref(false);
+const showFlow = ref(false);
 /** 处理结果：随状态变化一起写入库 + 发通知 */
 const flowResult = ref('');
 /** 打开表单时记下原状态，用于检测「本次编辑改了状态」 */
@@ -235,6 +250,8 @@ function durationText(m: number): string {
 // 打开时同步表单：editingId 为空 → 空白新建；有 initial → 复制编辑 + 载入日志/关联待办
 watch(() => props.show, (v) => {
   if (!v) return;
+  showLogs.value = false;
+  showFlow.value = false;
   const base = blankForm();
   if (props.initial) {
     for (const k of Object.keys(base)) base[k] = props.initial[k] != null ? String(props.initial[k]) : '';
@@ -311,7 +328,30 @@ async function toggleLinkedTodo(td: any): Promise<void> {
   overflow-y: auto;
   width: 520px;
 }
-.modal-box-ticket { width: 620px; }
+.modal-box-ticket { width: 720px; }
+
+/* 追溯区折叠头（处理记录 / 流转历史） */
+.collapse-sec { margin-bottom: 10px; }
+.collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.collapse-head:hover { color: var(--text-primary); }
+.collapse-head svg { transition: transform 0.15s ease; flex-shrink: 0; }
+.collapse-head svg.open { transform: rotate(90deg); }
+.collapse-head .hint { margin-left: auto; font-weight: 400; }
+.collapse-body { padding-top: 4px; }
 .modal-header {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
