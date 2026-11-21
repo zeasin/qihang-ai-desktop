@@ -364,9 +364,11 @@ function openNoteFile(f: any) {
 }
 
 async function toggleTodo(t: any) {
-  const newStatus = t.status === 'done' ? 'pending' : 'done';
-  await API.todo.update(t.id, { status: newStatus });
-  t.status = newStatus;
+  // 2026-11-21 待办并入工单：勾选 = 待办工单 状态流转（已完成/待处理）
+  const done = t.status === 'done';
+  const nextStatus = done ? '待处理' : '已完成';
+  await API.ticket.data.update(t.id, { '状态': nextStatus });
+  t.status = done ? 'pending' : 'done';
 }
 
 async function loadOverviewData() {
@@ -374,7 +376,13 @@ async function loadOverviewData() {
   todayStr.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   try { stats.value = await API.insights.stats(); } catch {}
   try { reports.value = await API.insights.reports(); } catch {}
-  try { todos.value = (await API.todo.list()).filter((t: any) => t.status !== 'done').slice(0, 8); } catch {}
+  // 待办 = 类型'待办'的未完结工单（2026-11-21 待办并入工单）
+  try {
+    todos.value = (await API.ticket.data.list())
+      .filter((t: any) => t['类型'] === '待办' && !['已完成', '已关闭'].includes(String(t['状态'] || '')))
+      .map((t: any) => ({ id: t.id, title: t['标题'], status: 'pending' }))
+      .slice(0, 8);
+  } catch {}
   try { recentFiles.value = await API.insights.recentFiles(12); } catch {}
   // 数据页退役（本地数据集隐藏）：pendingRecords 不再加载
   // 日报调度时间来自内置的「生成综合日报」任务（未开启则不显示该行）

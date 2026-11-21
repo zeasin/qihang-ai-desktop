@@ -33,7 +33,7 @@ try {
   }
 } catch {} // worker_threads not available
 import * as db from './services/database';
-import { normalizeDatasetRecord } from './services/dataset-normalize';
+import * as ticketStore from './services/tickets';
 import * as appConfig from './services/app-config';
 import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession, resetAllPiSessions } from './services/pi-agent';
 import * as mcpManager from './services/mcp-manager';
@@ -41,7 +41,6 @@ import { agentVersions } from './services/agent-versions';
 import { buildDataToolDefs, appendTodoNote } from './services/tools';
 import { followUpFeishuSession, buildKbPrompt } from './services/task-runner';
 import * as aitool from './services/ai-tools';
-import { listBuiltinSuites, applyBuiltinSuites, upgradeBuiltinSchemas } from './services/builtin-datasets';
 import { getSearchConfig, saveSearchConfig, webSearch } from './services/search';
 import * as backup from './services/backup';
 import * as feishu from './services/feishu';
@@ -485,49 +484,38 @@ const feishuMessageHandler = async (msg) => {
     return;
   }
 
-  // 工单记录指令 → 确定性写入"项目工单"数据集（不经过 AI，保证落库）
+  // 工单记录指令 → 确定性写入 tickets 表（不经过 AI，保证落库）
+  // 2026-11-21 起不再有独立「项目工单」数据集：项目名进标题、端进备注、需求/BUG/优化映射到工单类型
   try {
     const wo = parseWorkOrderRecord(msg.text);
     if (wo) {
-      let ds = db.ds.list().find(d => d.name === '项目工单') || null;
-      if (!ds) {
-        db.ds.add({
-          name: '项目工单',
-          description: '项目需求、BUG、优化跟踪',
-          schemaJson: JSON.stringify({
-            fields: [
-              { name: '项目', type: 'string' }, { name: '端', type: 'string' },
-              { name: '详细', type: 'string' }, { name: '优先级', type: 'string' },
-            ],
-            typeOptions: ['需求', 'BUG', '优化'],
-            statusOptions: ['待处理', '已修复', '已发布', '已取消'],
-          }),
-        });
-        ds = db.ds.list().find(d => d.name === '项目工单') || null;
+      const items = splitWorkOrderItems(wo.content);
+      const kindType = /bug/i.test(wo.kind) ? '问题' : (wo.kind === '优化' ? '跟进' : '需求');
+      const inserted: number[] = [];
+      for (const it of items) {
+        const endTag = detectWorkOrderEnd(it);
+        inserted.push(ticketStore.create({
+          '标题': `${wo.project}·${it.slice(0, 24)}`,
+          '类型': kindType,
+          '内容': it,
+          '备注': `端：${endTag}`,
+          '新建人': '飞书',
+        }));
       }
-      if (ds) {
-        const items = splitWorkOrderItems(wo.content);
-        const inserted: number[] = [];
-        for (const it of items) {
-          db.ds.insert(ds.id, { 项目: wo.project, 端: detectWorkOrderEnd(it), 详细: it, 优先级: '中' });
-          const r = db.qOne('SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', String(ds.id));
-          if (r) inserted.push(r.id);
-        }
-        const summary = `✅ 已向「${ds.name}」数据集写入 ${inserted.length} 条工单（项目：${wo.project}）\n\n${items.map((it, i) => `${i + 1}. ${it.slice(0, 60)}${it.length > 60 ? '…' : ''}`).join('\n')}\n\n可在「数据中心 → 项目工单」中查看与编辑。`;
-        // 工单本身点名了项目（「…金箔雲项目工单…」）→ 落到该项目；
-        // 认不出来时退回默认项目，不阻断工单记录（工单里已单独存了项目字段）。
-        const woTarget = resolveFeishuTarget({ text: `项目：${wo.project}`, chatId: msg.chatId, chatType: msg.chatType, db });
-        const noteProj = woTarget.project
-          || db.project.list().find(p => p.dir === (appConfig.getConfig('notesDir') || ''))
-          || db.project.list()[0] || null;
-        // 会话化（2026-10-31）：工单记录也是纯会话，不落 plan_tasks
-        const sessionId = 'feishu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-        try { db.chat.createSession(sessionId, noteProj ? noteProj.id : null, msg.text.slice(0, 30), 'kb', 'pi', 'feishu', msg.chatId || ''); } catch {}
-        db.chat.addMessage(sessionId, 'user', msg.text, 'general');
-        db.chat.addMessage(sessionId, 'assistant', summary, 'general');
-        feishu.replyCard(msg, convertMarkdownForFeishu(summary), '📋 工单已记录');
-        return;
-      }
+      const summary = `✅ 已记录 ${inserted.length} 条工单（项目：${wo.project}）\n\n${items.map((it, i) => `${i + 1}. ${it.slice(0, 60)}${it.length > 60 ? '…' : ''}`).join('\n')}\n\n可在「事项」页时间线查看与跟进，到承诺时间会自动提醒。`;
+      // 工单本身点名了项目（「…金箔雲项目工单…」）→ 落到该项目；
+      // 认不出来时退回默认项目，不阻断工单记录（工单里已单独存了标题）。
+      const woTarget = resolveFeishuTarget({ text: `项目：${wo.project}`, chatId: msg.chatId, chatType: msg.chatType, db });
+      const noteProj = woTarget.project
+        || db.project.list().find(p => p.dir === (appConfig.getConfig('notesDir') || ''))
+        || db.project.list()[0] || null;
+      // 会话化（2026-10-31）：工单记录也是纯会话，不落 plan_tasks
+      const sessionId = 'feishu_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      try { db.chat.createSession(sessionId, noteProj ? noteProj.id : null, msg.text.slice(0, 30), 'kb', 'pi', 'feishu', msg.chatId || ''); } catch {}
+      db.chat.addMessage(sessionId, 'user', msg.text, 'general');
+      db.chat.addMessage(sessionId, 'assistant', summary, 'general');
+      feishu.replyCard(msg, convertMarkdownForFeishu(summary), '📋 工单已记录');
+      return;
     }
   } catch (e) {
     logger.error('[Feishu] Work order record error: %s', e.message);
@@ -907,97 +895,37 @@ ipcMain.handle('kb:search', async (_, { dir, query }) => {
     return [];
   }
 });
-// --- Module ---
-ipcMain.handle('module:list', () => db.dm.list());
-ipcMain.handle('module:get', (_, { id }) => db.dm.get(id));
-ipcMain.handle('module:add', (_, { name, description, icon }) => db.dm.add(name, description, icon));
-ipcMain.handle('module:update', (_, { id, data }) => db.dm.update(id, data));
-ipcMain.handle('module:remove', (_, { id }) => db.dm.remove(id));
-
-// --- Dataset ---
-ipcMain.handle('ds:list', () => db.ds.list());
-ipcMain.handle('ds:get', (_, { id }) => db.ds.get(id));
-ipcMain.handle('ds:query', (_, { datasetId, conditions }) => db.ds.query(datasetId, conditions));
-ipcMain.handle('ds:add', (_, params) => db.ds.add(params));
-ipcMain.handle('ds:updateMeta', (_, { id, data }) => db.ds.updateMeta(id, data));
-
-/** 按数据集 schema 的字段类型对记录值做校验与归一化（非法值抛错，由前端提示） */
-function normalizeRecordBySchema(datasetId: string | number, record: any): any {
-  if (!record) return record;
-  const dsRow = db.qOne('SELECT schema_json FROM data_center_datasets WHERE id = ? OR dataset_id = ?', datasetId, datasetId);
-  if (!dsRow || !dsRow.schema_json) return record;
-  let schema: any = null;
-  try { schema = JSON.parse(dsRow.schema_json); } catch { return record; }
-  const fields = (schema && schema.fields) || [];
-  const out: any = { ...record };
-  for (const f of fields) {
-    if (!f || !f.name || !f.type) continue;
-    const raw = out[f.name];
-    if (raw === undefined || raw === null || raw === '') continue;
-    const label = f.displayName || f.name;
-    const v = String(raw).trim();
-    if (f.type === 'number' || f.type === 'money') {
-      if (v === '') { delete out[f.name]; continue; }
-      const n = Number(v);
-      if (isNaN(n)) throw new Error(`字段「${label}」必须是数字，当前值: ${v}`);
-      out[f.name] = n;
-    } else if (f.type === 'date') {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(v) && isNaN(Date.parse(v))) {
-        throw new Error(`字段「${label}」必须是日期（如 2026-08-04），当前值: ${v}`);
-      }
-      out[f.name] = v.slice(0, 10);
-    } else if (f.type === 'datetime') {
-      if (isNaN(Date.parse(v))) {
-        throw new Error(`字段「${label}」必须是日期时间，当前值: ${v}`);
-      }
-    } else if (f.type === 'select' && Array.isArray(f.options) && f.options.length) {
-      if (!f.options.includes(v)) {
-        throw new Error(`字段「${label}」的值不在选项列表中: ${v}`);
-      }
-    }
+// ---- 工单数据（tickets 专表，2026-11-21 起 datasetId 不再存在） ----
+ipcMain.handle('ticket:data:list', () => ticketStore.list());
+ipcMain.handle('ticket:data:create', (_, form) => {
+  const id = ticketStore.create(form || {});
+  // 待办快加（事项页「添加待办」）保持旧行为：同步追加进项目根 待办.md
+  if (form && String(form['类型'] || '') === '待办') {
+    const note = appendTodoNote(form?.project_id ?? null, form?.['标题'] || '');
+    if (!note.ok) logger.warn('[ticket:create] 待办落笔记失败: ' + note.error);
   }
-  return out;
-}
-
-ipcMain.handle('ds:insert', (_, { datasetId, data }) => {
-  const record = normalizeRecordBySchema(datasetId, normalizeDatasetRecord(datasetId, data || {}));
-  return db.ds.insert(datasetId, record);
+  return id;
 });
-ipcMain.handle('ds:updateRecord', (_, { id, data }) => {
-  const dsRow = db.qOne('SELECT dataset_id FROM data_center_records WHERE id = ?', id);
-  const record = dsRow
-    ? normalizeRecordBySchema(dsRow.dataset_id, normalizeDatasetRecord(dsRow.dataset_id, data || {}))
-    : data;
-  return db.ds.updateRecord(id, record);
-});
-ipcMain.handle('ds:deleteRecord', (_, { id }) => db.ds.deleteRecord(id));
-ipcMain.handle('ds:remove', (_, { datasetId }) => db.ds.remove(datasetId));
-// 工单视图用：分页读取某数据集记录（含承诺时间→提醒联动结果的展示）
-ipcMain.handle('ds:listRecords', (_, { datasetId, search, limit, offset }) => db.ds.listRecords(datasetId, { search, limit, offset }));
-// ---- 工单追踪：处理记录 + 工单↔待办联动 ----
-ipcMain.handle('ticket:log:list', (_, { datasetId, recordId }) => tracker.listLogs(String(datasetId), Number(recordId)));
-ipcMain.handle('ticket:log:add', (_, { datasetId, recordId, note }) => tracker.addManualLog(String(datasetId), Number(recordId), String(note || '')));
-ipcMain.handle('ticket:todo:list', (_, { datasetId, recordId }) => tracker.listLinkedTodos(String(datasetId), Number(recordId)));
-ipcMain.handle('ticket:todo:counts', (_, { datasetId }) => tracker.linkedCounts(String(datasetId)));
-ipcMain.handle('ticket:todo:link', (_, { datasetId, recordId, todoId }) => tracker.linkTodo(String(datasetId), Number(recordId), Number(todoId)));
-ipcMain.handle('ticket:todo:unlink', (_, { datasetId, recordId, todoId }) => tracker.unlinkTodo(String(datasetId), Number(recordId), Number(todoId)));
-ipcMain.handle('ticket:todo:create', (_, { datasetId, recordId, title, priority, scheduled_start }) =>
-  tracker.createTodoForTicket(String(datasetId), Number(recordId), { title, priority, scheduled_start }));
+ipcMain.handle('ticket:data:update', (_, { id, form }) => ticketStore.update(Number(id), form || {}));
+ipcMain.handle('ticket:data:remove', (_, { id }) => ticketStore.remove(Number(id)));
+ipcMain.handle('ticket:settings:get', () => ticketStore.getSettings());
+ipcMain.handle('ticket:settings:save', (_, schema) => { ticketStore.saveSettings(schema); return true; });
+// ---- 工单追踪：处理记录 + 工单↔待办联动（待办=类型'待办'的工单） ----
+ipcMain.handle('ticket:log:list', (_, { recordId }) => tracker.listLogs(Number(recordId)));
+ipcMain.handle('ticket:log:add', (_, { recordId, note }) => tracker.addManualLog(Number(recordId), String(note || '')));
+ipcMain.handle('ticket:todo:list', (_, { recordId }) => tracker.listLinkedTodos(Number(recordId)));
+ipcMain.handle('ticket:todo:counts', () => tracker.linkedCounts());
+ipcMain.handle('ticket:todo:link', (_, { recordId, todoId }) => tracker.linkTodo(Number(recordId), Number(todoId)));
+ipcMain.handle('ticket:todo:unlink', (_, { recordId, todoId }) => tracker.unlinkTodo(Number(recordId), Number(todoId)));
+ipcMain.handle('ticket:todo:create', (_, { recordId, title, priority, scheduled_start }) =>
+  tracker.createTodoForTicket(Number(recordId), { title, priority, scheduled_start }));
 ipcMain.handle('ticket:todo:toggle', (_, { todoId, done }) => tracker.toggleLinkedTodo(Number(todoId), !!done));
 // ---- 工单流转：处理人节点 + 节点时间轴 ----
 ipcMain.handle('ticket:handler:list', () => ticketFlow.listHandlers());
 ipcMain.handle('ticket:handler:add', (_, data) => ticketFlow.addHandler(data || {}));
 ipcMain.handle('ticket:handler:update', (_, { id, data }) => ticketFlow.updateHandler(Number(id), data || {}));
 ipcMain.handle('ticket:handler:remove', (_, { id }) => ticketFlow.removeHandler(Number(id)));
-ipcMain.handle('ticket:flowNodes:list', (_, { datasetId, recordId }) => ticketFlow.listFlowNodes(String(datasetId), Number(recordId)));
-ipcMain.handle('ds:suites:list', () => listBuiltinSuites());
-ipcMain.handle('ds:suites:apply', (_, { ids }) => {
-  try {
-    return applyBuiltinSuites(ids || []);
-  } catch (e: any) {
-    return { applied: [], skipped: [], failed: [], error: (e && e.message) || String(e) };
-  }
-});
+ipcMain.handle('ticket:flowNodes:list', (_, { recordId }) => ticketFlow.listFlowNodes(Number(recordId)));
 
 // --- Backup / Restore ---
 ipcMain.handle('backup:create', async (_, { dir }) => {
@@ -1060,21 +988,6 @@ ipcMain.handle('backup:openDir', async (_, { dir }) => {
   } catch (e: any) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 
-ipcMain.handle('ds:pendingRecords', () => {
-  const datasets = db.q("SELECT id, name FROM data_center_datasets ORDER BY name");
-  const result: any[] = [];
-  for (const ds of datasets) {
-    const records = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? AND (record_status IS NULL OR record_status = '' OR record_status = 'pending') ORDER BY created_at DESC LIMIT 5", String(ds.id));
-    if (records.length) {
-      result.push({
-        datasetName: ds.name,
-        datasetId: ds.id,
-        records: records.map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at })),
-      });
-    }
-  }
-  return result;
-});
 
 // --- Chat / Orchestrator ---
 /**
@@ -1717,18 +1630,6 @@ ipcMain.handle('reminder:setEnabled', (_, id, enabled) => {
   scheduler.reload();
   return true;
 });
-ipcMain.handle('todo:list', () => db.todo.list());
-ipcMain.handle('todo:add', (_, data) => {
-  const r = db.todo.add({ ...data, source: 'ui' });
-  const note = appendTodoNote(data?.project_id ?? null, data?.title || '');
-  if (!note.ok) logger.warn('[todo:add] 待办落笔记失败: ' + note.error);
-  return r;
-});
-ipcMain.handle('todo:update', (_, id, data) => { db.todo.update(id, data); return true; });
-ipcMain.handle('todo:remove', (_, id) => { db.todo.remove(id); return true; });
-
-// --- 笔记提炼（概览「来自笔记」） ---
-ipcMain.handle('noteDigest:extract', () => extractDigest());
 ipcMain.handle('noteDigest:syncDone', () => {
   const touched = syncCheckedDone();
   if (touched.length) {
@@ -1798,177 +1699,6 @@ function ensureDailyReportTask() {
   }
 }
 
-// --- Archive ---
-
-// 生成模块级业务分析报告（基于模块下所有数据集的业务内容）— 保留旧接口兼容
-ipcMain.handle('archive:report', async (_, { moduleId }) => {
-  const mod = db.dm.get(moduleId);
-  if (!mod) return { ok: false, error: '模块不存在' };
-  const dsRows = db.q('SELECT id, name, description FROM data_center_datasets WHERE module_id = ?', moduleId);
-  if (!dsRows.length) return { ok: false, error: '该模块下无数据集' };
-  let businessData = '';
-  let totalRecords = 0;
-  for (const dsRow of dsRows) {
-    const rows = db.ds.query(dsRow.id, null);
-    totalRecords += rows.length;
-    if (rows.length > 0) {
-      businessData += `\n\n### 数据集：${dsRow.name}${dsRow.description ? '（' + dsRow.description + '）' : ''}\n\n`;
-      for (const r of rows) {
-        const data = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r;
-        const fields = Object.entries(data)
-          .filter(([k, v]) => v !== null && v !== '' && typeof v === 'string')
-          .map(([k, v]) => `${k}: ${v}`)
-          .join('；') || JSON.stringify(data);
-        businessData += `- ${fields}\n`;
-      }
-    }
-  }
-  if (!businessData.trim()) businessData = '该模块下所有数据集暂无记录';
-  const dsNames = dsRows.map(d => d.name).join('、');
-  const prompt = `你是一位业务分析专家。以下是业务模块「${mod.name}」中的业务数据，请从**业务运营角度**进行深度分析：\n\n日期：${new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)}\n\n模块：${mod.name}\n包含数据项：${dsNames}\n\n业务数据：\n${businessData}\n\n请生成一份面向业务管理者的分析报告，包含：\n1. 业务整体概况 — 当前业务状态与关键指标\n2. 核心业务洞察 — 从数据中发现的业务趋势、问题和机会\n3. 关键事件与进展 — 值得关注的业务动态\n4. 风险与预警 — 潜在风险点及需关注的事项\n5. 行动建议 — 可落地的业务优化建议`;
-  try {
-    const content = await piGenerateDailyReport('archive_' + Date.now(), prompt);
-    return { ok: true, content };
-  } catch (e: any) {
-    return { ok: false, error: e.message || '生成失败' };
-  }
-});
-
-// 生成模块级 AI 业务分析并保存到 ai_analysis（新版）
-ipcMain.handle('archive:moduleAnalysis', async (_, { moduleId, force }) => {
-  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-  const mod = db.dm.get(moduleId);
-  if (!mod) return { ok: false, error: '模块不存在' };
-
-  if (!force) {
-    const existing = db.qOne("SELECT * FROM ai_analysis WHERE module_id = ? AND type = 'module_analysis' AND report_date = ? ORDER BY created_at DESC LIMIT 1", moduleId, today);
-    if (existing) {
-      return { ok: true, content: existing.content, moduleId, date: today, fromCache: true, analysisId: existing.id };
-    }
-  }
-
-  const dsRows = db.q('SELECT id, name, description, schema_json FROM data_center_datasets WHERE module_id = ?', moduleId);
-  if (!dsRows.length) return { ok: false, error: '该模块下无数据集' };
-
-  let businessData = '';
-  let totalRecords = 0;
-  let dsSummary: any[] = [];
-
-  for (const dsRow of dsRows) {
-    const rows = db.ds.query(dsRow.id, null);
-    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", String(dsRow.id)) || {}).c || 0;
-    totalRecords += count;
-    dsSummary.push({ name: dsRow.name, count, description: dsRow.description });
-
-    if (rows.length > 0) {
-      businessData += `\n### 数据集：${dsRow.name}（共${count}条记录）\n`;
-      for (const r of rows) {
-        const data = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r;
-        const fields = Object.entries(data)
-          .filter(([k, v]) => v !== null && v !== '' && typeof v === 'string')
-          .map(([k, v]) => `${k}: ${v}`)
-          .join('；') || JSON.stringify(data);
-        businessData += `- ${fields}\n`;
-      }
-    } else {
-      businessData += `\n### 数据集：${dsRow.name}（暂无记录）\n`;
-    }
-  }
-
-  const dsNames = dsSummary.map(d => d.name).join('、');
-  const prompt = `你是一位深谙业务运营的资深分析师。请对以下业务模块进行深度分析，要求从业务规律、运营健康度、增长机会等角度出发，给出有洞察力的分析：
-
-模块名称：${mod.name}
-模块描述：${mod.description || '无'}
-分析日期：${today}
-包含数据集：${dsNames}
-数据总量：${totalRecords}条
-
-业务数据详情：
-${businessData}
-
-请生成一份业务分析报告，要求：
-1. **业务整体概况** — 当前业务状态、关键指标、数据量级
-2. **业务规律与趋势** — 从数据中发现业务规律，例如：更新频率如何、多久没有更新了、哪些类型的数据最多、数据分布有何特点
-3. **运营健康度评估** — 数据完整性、时效性、活跃度评估
-4. **关键发现** — 值得关注的业务动态、异常或潜在问题
-5. **业务建议** — 可落地的具体行动建议，例如：建议补充哪些数据、如何优化业务流程、下一步可以关注什么
-
-注意：语言要专业务实，用中文，避免空泛套话，基于实际数据说话。`;
-
-  try {
-    const content = await piGenerateDailyReport('module_' + Date.now(), prompt);
-    if (content) {
-      const analysisId = db.aa.save(moduleId, 'module_analysis', content, prompt, today);
-      return { ok: true, content, moduleId, date: today, fromCache: false, analysisId };
-    }
-    return { ok: false, error: '生成内容为空' };
-  } catch (e: any) {
-    return { ok: false, error: e.message || '生成失败' };
-  }
-});
-
-// 获取模块最新分析
-ipcMain.handle('archive:moduleAnalysisLatest', async (_, { moduleId }) => {
-  const analysis = db.aa.latestByModule(moduleId);
-  return { ok: true, analysis };
-});
-
-// 获取模块分析历史
-ipcMain.handle('archive:moduleAnalysisList', async (_, { moduleId }) => {
-  const list = db.aa.listByModule(moduleId);
-  return { ok: true, list };
-});
-
-// 将分析结果存档到默认项目目录
-ipcMain.handle('archive:saveAnalysisToNotes', async (_, { moduleId, analysisId }) => {
-  const analysis = db.aa.get(analysisId);
-  if (!analysis) return { ok: false, error: '分析记录不存在' };
-  const mod = db.dm.get(moduleId);
-  if (!mod) return { ok: false, error: '模块不存在' };
-
-  const notesDir = appConfig.getNotesDir() || ((db.project.getDefault() || db.project.list()[0] || {}) as any).dir || '';
-  if (!notesDir) return { ok: false, error: '尚未添加任何项目' };
-
-  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-  const fileName = `数据模块分析-${mod.name}-${today}.md`;
-  const filePath = path.join(notesDir, fileName);
-  const content = `# 数据模块业务分析报告\n\n**模块**: ${mod.name}\n**日期**: ${today}\n\n---\n\n${analysis.content}\n`;
-
-  try {
-    fs.writeFileSync(filePath, content, 'utf-8');
-    return { ok: true, filePath };
-  } catch (e: any) {
-    return { ok: false, error: '保存失败: ' + e.message };
-  }
-});
-
-// 获取模块概览数据（含数据集、最近记录、分析摘要）
-ipcMain.handle('archive:moduleOverview', async (_, { moduleId }) => {
-  const mod = db.dm.get(moduleId);
-  if (!mod) return { ok: false, error: '模块不存在' };
-  const dsRows = db.q('SELECT id, name, description, schema_json, created_at FROM data_center_datasets WHERE module_id = ? ORDER BY created_at DESC', moduleId);
-  const datasets = dsRows.map(dsRow => {
-    const count = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id = ?", String(dsRow.id)) || {}).c || 0;
-    const recentRows = db.q("SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY created_at DESC LIMIT 5", String(dsRow.id));
-    const recentRecords = recentRows.map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
-    // 按 data_json.status 分组计数，供数据页卡片显示状态分布
-    const statusRows = db.q("SELECT IFNULL(JSON_EXTRACT(data_json, '$.status'), '') AS status, COUNT(*) AS c FROM data_center_records WHERE dataset_id = ? GROUP BY status", String(dsRow.id));
-    const statusCounts = statusRows.map(r => ({ status: r.status || '无', count: r.c }));
-    return {
-      datasetId: dsRow.id,
-      name: dsRow.name,
-      description: dsRow.description,
-      schema: dsRow.schema_json ? JSON.parse(dsRow.schema_json) : null,
-      recordCount: count,
-      statusCounts,
-      recentRecords,
-    };
-  });
-  const analysis = db.aa.latestByModule(moduleId);
-  return { ok: true, module: mod, datasets, analysis };
-});
-
 ipcMain.handle('insights:stats', () => {
   // 文件相关数字改为实时扫盘（索引路线已下线，kb_documents / kb_chunks 不再是数据源）
   const scan = projectScan.collectStats();
@@ -1977,7 +1707,8 @@ ipcMain.handle('insights:stats', () => {
   const todoPending = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const todoOverdue = (db.qOne("SELECT COUNT(*) as c FROM plan_tasks WHERE scheduled_start != '' AND scheduled_start < datetime('now', '+8 hours') AND status IN ('pending','in_progress') AND IFNULL(task_type, '') != 'coding'") || {}).c || 0;
   const remindersActive = (db.qOne("SELECT COUNT(*) as c FROM plan_reminders WHERE enabled = 1") || {}).c || 0;
-  const todayDataRecords = (db.qOne("SELECT COUNT(*) as c FROM data_center_records WHERE created_at >= datetime('now', '+8 hours', 'start of day')") || {}).c || 0;
+  // 2026-11-21 数据中心退役：今日新增记录改为统计今日新增工单（tickets）
+  const todayDataRecords = (db.qOne("SELECT COUNT(*) as c FROM tickets WHERE created_at >= datetime('now', '+8 hours', 'start of day')") || {}).c || 0;
   return {
     fileCount: scan.fileCount,
     notesFileCount: scan.fileCount,
@@ -2359,21 +2090,13 @@ app.whenReady().then(async () => {
     logger.error('DB init error: %s', e);
   }
   startupElapsed('db loaded');
-  // 工单联动：数据集记录的承诺时间 → 一次性提醒（挂在 db.ds 保存回调上，覆盖所有写入路径）
+  // 工单联动：工单承诺时间 → 一次性提醒（挂在 tickets.onSave 上，覆盖所有写入路径）
   try { registerTicketLink(); } catch (e: any) { logger.warn('[TicketLink] 注册失败: %s', e?.message || e); }
-  // 工单追踪：处理记录流水 + 工单↔待办终态联动（同样挂在记录保存回调上）
+  // 工单追踪：处理记录流水 + 工单↔待办终态联动（同样挂在保存回调上）
   try { tracker.registerTicketTracker(); } catch (e: any) { logger.warn('[TicketTracker] 注册失败: %s', e?.message || e); }
   // 工单流转：节点账 + 处理人变更通知（挂在同一钩子链）
   try { ticketFlow.registerTicketFlow(); } catch (e: any) { logger.warn('[TicketFlow] 注册失败: %s', e?.message || e); }
   createTray();
-
-  // 旧版内置数据集 schema 升级：补齐字段类型/必填/选项（幂等）
-  try {
-    const n = upgradeBuiltinSchemas();
-    if (n > 0) logger.info('[Builtin] 已升级 %d 个内置数据集 schema', n);
-  } catch (e) {
-    logger.error('upgradeBuiltinSchemas error: %s', e);
-  }
 
   // 旧版飞书写入暂存区（~/.qihang-ai-desktop/pending）已随笔记工具下线而废弃：
   // 写入不再需要「确认后落盘」，残留目录直接清掉，避免留下永远无法落地的产物。
@@ -2403,19 +2126,6 @@ app.whenReady().then(async () => {
     await syncDefaultModelSettings();
   } catch (e) {
     logger.error('syncDefaultModelSettings error: %s', e);
-  }
-
-  // 数据中心记录迁移：data_center_records.dataset_id 改为关联 data_center_datasets 主键 id（幂等）
-  // 历史数据中 records.dataset_id 可能存的是旧 dataset_id 字符串，这里统一改为主键 id。
-  try {
-    const r = db.q("SELECT COUNT(*) as c FROM data_center_records WHERE dataset_id IN (SELECT dataset_id FROM data_center_datasets)");
-    const n = (r[0] || {}).c || 0;
-    if (n > 0) {
-      db.run("UPDATE data_center_records SET dataset_id = (SELECT id FROM data_center_datasets WHERE dataset_id = data_center_records.dataset_id) WHERE dataset_id IN (SELECT dataset_id FROM data_center_datasets)");
-      logger.info('[Migrate] 已迁移 %d 条数据中心记录的 dataset_id 为主键 id', n);
-    }
-  } catch (e) {
-    logger.error('migrate data_center_records.dataset_id error: %s', e);
   }
 
   // 多笔记库迁移：旧版单库（config.notesDir）转正为默认笔记库，并维持指针不变量（幂等）

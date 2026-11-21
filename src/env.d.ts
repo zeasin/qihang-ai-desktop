@@ -92,19 +92,6 @@ interface ElectronAPI {
     setDefault: (id: number) => Promise<any>;
     getDefault: () => Promise<any>;
   };
-  ds: {
-    list: () => Promise<any[]>;
-    get: (id: number) => Promise<any>;
-    query: (datasetId: number, conditions: string) => Promise<any[]>;
-    add: (params: { name: string; description?: string; schemaJson?: string; module_id?: string }) => Promise<any>;
-    updateMeta: (id: number, data: { name?: string; description?: string; schema_json?: string; module_id?: string }) => Promise<any>;
-    insert: (datasetId: number, data: any) => Promise<any>;
-    updateRecord: (id: number, data: any) => Promise<any>;
-    deleteRecord: (id: number) => Promise<void>;
-    remove: (id: number) => Promise<void>;
-    listRecords: (datasetId: number, opts?: { search?: string; limit?: number; offset?: number }) => Promise<{ rows: any[]; total: number }>;
-    pendingRecords: () => Promise<any>;
-  };
   chat: {
     send: (question: string, sessionId?: string, projectDir?: string, images?: any[], agent?: string, modelName?: string, mcpServerId?: string) => Promise<void>;
     createSession: (sessionId?: string, projectId?: number, title?: string, mode?: string, agent?: string, source?: string) => Promise<any>;
@@ -271,24 +258,27 @@ interface ElectronAPI {
       status: { running: boolean; port: number; address: string; devices: number; clients: number };
     }>;
   };
-  archive: {
-    report: (moduleId: string) => Promise<{ ok: boolean; content?: string; error?: string }>;
-  };
-  todo: {
-    list: () => Promise<any[]>;
-    add: (data: any) => Promise<{ id: number }>;
-    update: (id: number, data: any) => Promise<void>;
-    remove: (id: number) => Promise<void>;
-  };
-  /** 工单追踪：处理记录流水 + 工单↔待办联动 + 流转 */
+  /** 工单（tickets 专表 + 追踪 + 流转，2026-11-21 起待办并入：类型='待办' 的工单） */
   ticket: {
-    logList: (datasetId: number, recordId: number) => Promise<any[]>;
-    logAdd: (datasetId: number, recordId: number, note: string) => Promise<boolean>;
-    todoList: (datasetId: number, recordId: number) => Promise<any[]>;
-    todoCounts: (datasetId: number) => Promise<Record<string, number>>;
-    todoLink: (datasetId: number, recordId: number, todoId: number) => Promise<boolean>;
-    todoUnlink: (datasetId: number, recordId: number, todoId: number) => Promise<boolean>;
-    todoCreate: (datasetId: number, recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) => Promise<any>;
+    /** 工单数据 CRUD */
+    data: {
+      list: () => Promise<any[]>;
+      create: (form: Record<string, any>) => Promise<number>;
+      update: (id: number, form: Record<string, any>) => Promise<boolean>;
+      remove: (id: number) => Promise<boolean>;
+    };
+    /** 枚举/字段定义（schema_json 结构同旧 datasets.schema_json） */
+    settings: {
+      get: () => Promise<any>;
+      save: (schema: any) => Promise<boolean>;
+    };
+    logList: (recordId: number) => Promise<any[]>;
+    logAdd: (recordId: number, note: string) => Promise<boolean>;
+    todoList: (recordId: number) => Promise<any[]>;
+    todoCounts: () => Promise<Record<string, number>>;
+    todoLink: (recordId: number, todoId: number) => Promise<boolean>;
+    todoUnlink: (recordId: number, todoId: number) => Promise<boolean>;
+    todoCreate: (recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) => Promise<any>;
     todoToggle: (todoId: number, done: boolean) => Promise<boolean>;
     /** 处理人节点（人=名字+webhook 一体） */
     handler: {
@@ -299,7 +289,7 @@ interface ElectronAPI {
     };
     /** 某工单的流转节点时间轴 */
     flowNodes: {
-      list: (datasetId: number, recordId: number) => Promise<any[]>;
+      list: (recordId: number) => Promise<any[]>;
     };
   };
   noteDigest: {

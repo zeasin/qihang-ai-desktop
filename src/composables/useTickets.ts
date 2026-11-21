@@ -1,12 +1,12 @@
 /**
  * 工单数据组合式函数（useTickets）
  *
- * 把工单数据集的逻辑从页面里抽出来，供事项页（列表）与工单表单弹窗共用。
- * 模块级状态 = 单例：多个组件引用同一份 tickets / 枚举，避免重复加载数据集。
+ * 把工单数据的逻辑从页面里抽出来，供事项页（列表）与工单表单弹窗共用。
+ * 模块级状态 = 单例：多个组件引用同一份 tickets / 枚举，避免重复加载。
  *
- * 存储：data_center_datasets 的「工单」数据集，记录在 data_json。
- * 核心字段固定（标题/类型/来源/新建人/处理人/内容/备注/状态/承诺时间/处理时间/完结时间），
- * 自定义字段与类型/来源枚举持久化在 schema_json。
+ * 存储（2026-11-21）：tickets 专表（中文列名 + extra_json 自定义字段），
+ * 枚举/字段定义存 ticket_settings。待办已并入工单（类型='待办'），
+ * data_center 通用层与独立待办表已退役。
  *
  * 状态模型（2026-11-20 定稿）：
  *   保留状态（不可删除）待处理 → 处理中 → 已完成 → 已关闭，各挂一条流转规则；
@@ -30,9 +30,8 @@ const CORE_FIELDS = [
   { name: '处理时间', type: 'datetime' },
   { name: '完结时间', type: 'datetime' },
 ];
-const DEFAULT_TYPES = ['需求', '问题', '咨询', '跟进'];
+const DEFAULT_TYPES = ['待办', '需求', '问题', '咨询', '跟进'];
 const DEFAULT_SOURCES = ['微信', '电话', '官网', '邮件', '会议', '其他'];
-const TICKET_DS_NAME = '工单';
 
 /**
  * 保留状态（系统级，不可删除、不可改名）。
@@ -64,11 +63,11 @@ const loading = ref(true);
 const loaded = ref(false);
 const customFields = ref<FieldDef[]>([]);
 const statusOptions = ref<string[]>([...DEFAULT_STATUS]);
-/** 终态状态集合（保留终态 + 用户自定义终态），持久化在 schema_json.terminalStatuses */
+/** 终态状态集合（保留终态 + 用户自定义终态），持久化在 ticket_settings.schema_json */
 const terminalStatuses = ref<string[]>([...RESERVED_TERMINAL]);
 const typeOptions = ref<string[]>([...DEFAULT_TYPES]);
 const sourceOptions = ref<string[]>([...DEFAULT_SOURCES]);
-/** 关联待办（ticket_todos 联查出来的） */
+/** 关联待办（ticket_todos 联查出来的，待办本身是类型'待办'的工单） */
 const linkedTodos = ref<any[]>([]);
 /** 各工单关联的待办数量（卡片上显示 🔗 N） */
 const linkedCountsMap = ref<Record<string, number>>({});
@@ -78,10 +77,6 @@ const ticketLogs = ref<any[]>([]);
 const flowNodes = ref<any[]>([]);
 /** 处理人节点（工单设置页管理） */
 const handlers = ref<any[]>([]);
-let datasetId: number | null = null;
-
-/** 当前工单数据集 id（处理记录 / 关联待办的 API 要用） */
-export function ticketDatasetId(): number | null { return datasetId; }
 
 // ========== 工具 ==========
 /** 状态名是否命中终态关键字（自定义「已作废」这类状态也能被认出来） */
@@ -129,32 +124,19 @@ export function promiseDateOf(t: Ticket): string {
   return promiseOf(t).slice(0, 10);
 }
 
-// ========== 数据集：找到或创建（含核心字段 schema） ==========
-async function ensureDataset(): Promise<number> {
-  const all = await API.ds.list();
-  const found = Array.isArray(all) ? all.find((d: any) => d.name === TICKET_DS_NAME) : null;
-  if (found) {
-    datasetId = found.id;
-    syncSchemaFromDataset(found);
-    return found.id;
-  }
-  const schemaJson = buildSchemaJson([], [...DEFAULT_STATUS], [...DEFAULT_TYPES], [...DEFAULT_SOURCES], [...RESERVED_TERMINAL]);
-  await API.ds.add({ name: TICKET_DS_NAME, description: '通用事项：核心字段固定，自定义字段按需添加。填承诺时间到点自动提醒。', schemaJson });
-  const all2 = await API.ds.list();
-  const made = Array.isArray(all2) ? all2.find((d: any) => d.name === TICKET_DS_NAME) : null;
-  datasetId = made ? made.id : null;
-  return datasetId!;
+// ========== 设置：枚举/字段定义（ticket_settings 单行） ==========
+async function loadSettings(): Promise<void> {
+  const schema = await API.ticket.settings.get();
+  syncSchema(schema);
 }
 
-function buildSchemaJson(custom: FieldDef[], statuses: string[], types: string[], sources: string[], terminals: string[]): string {
+function buildSchemaObject(custom: FieldDef[], statuses: string[], types: string[], sources: string[], terminals: string[]): any {
   const fields = [...CORE_FIELDS, ...custom].map(f => ({ name: f.name, type: f.type }));
-  return JSON.stringify({ fields, statusOptions: statuses, terminalStatuses: terminals, typeOptions: types, sourceOptions: sources });
+  return { fields, statusOptions: statuses, terminalStatuses: terminals, typeOptions: types, sourceOptions: sources };
 }
 
-/** 从已有数据集回读：区分核心字段与自定义字段，同步状态/类型/来源枚举 */
-function syncSchemaFromDataset(ds: any): void {
-  let schema: any = null;
-  try { schema = ds.schemaJson ? JSON.parse(ds.schemaJson) : (ds.schema_json ? JSON.parse(ds.schema_json) : null); } catch { schema = null; }
+/** 从设置回读：区分核心字段与自定义字段，同步状态/类型/来源枚举 */
+function syncSchema(schema: any): void {
   if (!schema) {
     customFields.value = [];
     statusOptions.value = [...DEFAULT_STATUS];
@@ -194,64 +176,48 @@ function syncSchemaFromDataset(ds: any): void {
   }
 }
 
-/** 把当前自定义字段 + 枚举写回 schema（增删自定义字段或枚举时调用） */
+/** 把当前自定义字段 + 枚举写回设置（增删自定义字段或枚举时调用） */
 async function persistSchema(): Promise<void> {
-  if (!datasetId) return;
-  const schemaJson = buildSchemaJson(customFields.value, statusOptions.value, typeOptions.value, sourceOptions.value, terminalStatuses.value);
-  // 字段名必须是 schema_json（snake_case）：主进程按这个键取值，传 camelCase 会被静默忽略
-  await API.ds.updateMeta(datasetId, { schema_json: schemaJson });
+  await API.ticket.settings.save(buildSchemaObject(customFields.value, statusOptions.value, typeOptions.value, sourceOptions.value, terminalStatuses.value));
 }
 
 // ========== 加载 / 保存 / 删除 ==========
 async function reload(): Promise<void> {
-  if (!datasetId) return;
   loading.value = true;
   try {
-    const res = await API.ds.listRecords(datasetId, { limit: 200 });
-    tickets.value = (res && res.rows) || [];
+    tickets.value = (await API.ticket.data.list()) || [];
   } catch { tickets.value = []; }
   loading.value = false;
   await loadLinkedCounts();
 }
 
-/** 初始化（幂等）：确保数据集存在并加载记录。事项页 onMounted 调用一次。 */
+/** 初始化（幂等）：同步枚举设置并加载工单。事项页 onMounted 调用一次。 */
 async function init(): Promise<void> {
   const first = !loaded.value;
   loaded.value = true;
   try {
-    // 每次进入都回同步一次 schema：枚举可能在「工单设置」或数据中心页被改过
-    await ensureDataset();
+    // 每次进入都回同步一次设置：枚举可能在「工单设置」里被改过（主进程侧已有默认值 bootstrap）
+    await loadSettings();
     if (first) await reload();
   } finally {
     loading.value = false;
   }
 }
 
-/** 保存（新建或编辑）。form 为完整字段对象；editingId 为空即新建。 */
+/** 保存（新建或编辑）。form 为完整字段对象；editingId 为空即新建。
+ *  状态流转时间戳（处理时间/完结时间）与承诺时间归一由主进程 tickets 服务统一盖章。 */
 async function save(form: Record<string, any>, editingId: number | null): Promise<void> {
-  if (!datasetId || !form.标题?.trim()) return;
-  const f = { ...form };
-  // 状态流转自动盖时间戳：
-  //   离开「待处理」进入流转态 → 盖处理时间（处理中 / 自定义流转态都算）
-  //   进入终态 → 盖完结时间；离开终态 → 清空完结时间
-  const now = nowLocal();
-  const st = String(f.状态 || '').trim();
-  const terminal = isClosed(st);
-  if (!terminal && st && st !== '待处理' && !f.处理时间) f.处理时间 = now;
-  if (terminal) { if (!f.完结时间) f.完结时间 = now; }
-  else { f.完结时间 = ''; }
-  // 承诺时间存成 "YYYY-MM-DD HH:MM"（联动层认这个格式）
-  if (f.承诺时间) f.承诺时间 = f.承诺时间.replace('T', ' ');
+  if (!form.标题?.trim()) return;
   try {
-    if (editingId) await API.ds.updateRecord(editingId, f);
-    else await API.ds.insert(datasetId, f);
+    if (editingId) await API.ticket.data.update(editingId, form);
+    else await API.ticket.data.create(form);
     await reload();
   } catch (e: any) { alert('保存失败：' + (e?.message || e)); }
 }
 
 async function remove(t: Ticket): Promise<void> {
   if (!confirm('删除这条工单？（关联的自动提醒会一并停用）')) return;
-  await API.ds.deleteRecord(t.id);
+  await API.ticket.data.remove(t.id);
   await reload();
 }
 
@@ -335,12 +301,6 @@ export function isFixedTerminal(value: string): boolean {
   return LEGACY_TERMINAL.includes(value) || hitsTerminalKeyword(value);
 }
 
-function nowLocal(): string {
-  const d = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 /** 今天日期串（本地） */
 export function todayStr(): string {
   const d = new Date();
@@ -383,37 +343,36 @@ async function setStatus(ticket: Ticket, status: string, extra?: { handler?: str
 
 /** 载入关联数量（卡片上显示 🔗 N） */
 async function loadLinkedCounts(): Promise<void> {
-  if (!datasetId) { linkedCountsMap.value = {}; return; }
-  try { linkedCountsMap.value = (await API.ticket.todoCounts(datasetId)) || {}; }
+  try { linkedCountsMap.value = (await API.ticket.todoCounts()) || {}; }
   catch { linkedCountsMap.value = {}; }
 }
 
 /** 载入某工单的处理记录 */
 async function loadLogs(ticket: Ticket | null): Promise<void> {
-  if (!ticket || !datasetId) { ticketLogs.value = []; return; }
-  try { ticketLogs.value = await API.ticket.logList(datasetId, ticket.id); }
+  if (!ticket) { ticketLogs.value = []; return; }
+  try { ticketLogs.value = await API.ticket.logList(ticket.id); }
   catch { ticketLogs.value = []; }
 }
 
 /** 载入某工单关联的待办 */
 async function loadLinkedTodos(ticket: Ticket | null): Promise<void> {
-  if (!ticket || !datasetId) { linkedTodos.value = []; return; }
-  try { linkedTodos.value = await API.ticket.todoList(datasetId, ticket.id); }
+  if (!ticket) { linkedTodos.value = []; return; }
+  try { linkedTodos.value = await API.ticket.todoList(ticket.id); }
   catch { linkedTodos.value = []; }
 }
 
 /** 手工补一条处理记录 */
 async function addLogNote(ticket: Ticket | null, note: string): Promise<boolean> {
-  if (!ticket || !datasetId) return false;
-  const ok = await API.ticket.logAdd(datasetId, ticket.id, note);
+  if (!ticket) return false;
+  const ok = await API.ticket.logAdd(ticket.id, note);
   await loadLogs(ticket);
   return !!ok;
 }
 
 /** 由工单拆一条待办并关联 */
 async function createTodo(ticket: Ticket | null, title: string, opts?: { priority?: string; scheduled_start?: string }): Promise<any> {
-  if (!ticket || !datasetId) return null;
-  const created = await API.ticket.todoCreate(datasetId, ticket.id, { title, ...(opts || {}) });
+  if (!ticket) return null;
+  const created = await API.ticket.todoCreate(ticket.id, { title, ...(opts || {}) });
   await loadLinkedTodos(ticket);
   await loadLinkedCounts();
   return created;
@@ -421,23 +380,22 @@ async function createTodo(ticket: Ticket | null, title: string, opts?: { priorit
 
 /** 关联一条已有待办 */
 async function linkTodo(ticket: Ticket | null, todoId: number): Promise<void> {
-  if (!ticket || !datasetId) return;
-  await API.ticket.todoLink(datasetId, ticket.id, todoId);
+  if (!ticket) return;
+  await API.ticket.todoLink(ticket.id, todoId);
   await loadLinkedTodos(ticket);
   await loadLinkedCounts();
 }
 
 /** 解除关联 */
 async function unlinkTodo(ticket: Ticket | null, todoId: number): Promise<void> {
-  if (!ticket || !datasetId) return;
-  await API.ticket.todoUnlink(datasetId, ticket.id, todoId);
+  if (!ticket) return;
+  await API.ticket.todoUnlink(ticket.id, todoId);
   await loadLinkedTodos(ticket);
   await loadLinkedCounts();
 }
 
 /** 勾掉 / 恢复关联待办 */
 async function toggleTodo(ticket: Ticket | null, todoId: number, done: boolean): Promise<void> {
-  if (!datasetId) return;
   await API.ticket.todoToggle(todoId, done);
   await loadLinkedTodos(ticket);
 }
@@ -446,8 +404,8 @@ async function toggleTodo(ticket: Ticket | null, todoId: number, done: boolean):
 
 /** 载入某工单的流转节点时间轴（按 node_index 正序） */
 async function loadFlowNodes(ticket: Ticket | null): Promise<void> {
-  if (!ticket || !datasetId) { flowNodes.value = []; return; }
-  try { flowNodes.value = await API.ticket.flowNodes.list(datasetId, ticket.id); }
+  if (!ticket) { flowNodes.value = []; return; }
+  try { flowNodes.value = await API.ticket.flowNodes.list(ticket.id); }
   catch { flowNodes.value = []; }
 }
 

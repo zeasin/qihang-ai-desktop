@@ -113,9 +113,10 @@ const todoOpen = ref(0);
 const taskRunning = ref(0);
 
 async function loadBadges() {
+  // 事项徽标：未完结工单数（2026-11-21 待办并入工单，事项页只有一个工单体系）
   try {
-    const todos = await API.todo.list();
-    todoOpen.value = (todos || []).filter((t: any) => t.status !== 'done').length;
+    const all = await API.ticket.data.list();
+    todoOpen.value = (all || []).filter((t: any) => !['已完成', '已关闭'].includes(String(t['状态'] || ''))).length;
   } catch { todoOpen.value = 0; }
   try {
     const tasks = await API.task.list();

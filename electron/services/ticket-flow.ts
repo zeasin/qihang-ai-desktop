@@ -1,8 +1,8 @@
 /**
  * 工单流转引擎（ticket-flow）
  *
- * 挂在 db.ds.onRecordSave 钩子链上（ticket-link → ticket-tracker → ticket-flow），
- * 因此页面 / AI / 飞书 所有写入路径都覆盖。
+ * 挂在 tickets.onSave 钩子链上（link → tracker → flow），
+ * 因此页面 / AI / 飞书所有写入路径都覆盖。
  *
  * 两件事（docs/工单流转设计方案.md v3）：
  *
@@ -15,64 +15,14 @@
  *
  * 刻意不做：状态→默认处理人的规则表（v1/v2 曾想加，用户拍板砍掉——
  * 单人/小协作想不出「哪个状态固定归谁」，规则表会沦为摆设）。
+ *
+ * 2026-11-21 存储专表化：record_id 直接指 tickets.id，dataset_id 层级删除。
  */
 import * as db from './database';
+import * as tickets from './tickets';
 import logger from './logger';
 import * as feishu from './feishu';
 import * as appConfig from './app-config';
-
-/** 工单数据集名（与前端 useTickets 的 TICKET_DS_NAME 对齐） */
-const TICKET_DS_NAME = '工单';
-
-/** 工单数据集 id（启动时查一次缓存；数据集可能晚建，拿不到时每次重查） */
-let ticketDatasetId: string | null = null;
-
-function resolveTicketDatasetId(): string | null {
-  if (ticketDatasetId) return ticketDatasetId;
-  try {
-    const list = db.ds.list() as any[];
-    const found = (Array.isArray(list) ? list : []).find((d: any) => d && d.name === TICKET_DS_NAME);
-    ticketDatasetId = found ? String(found.id) : null;
-  } catch { ticketDatasetId = null; }
-  return ticketDatasetId;
-}
-
-/**
- * 找到或创建「工单」数据集（AI/飞书建单工具用）。
- * 用户可能还没进过事项页（数据集由 useTickets.ensureDataset 在渲染层兜底建），
- * 工具链路先走主进程兜底：schema 默认值与渲染层 buildSchemaJson 完全同参，
- * 谁先建都一样，后到的一方按名字找到直接复用。
- */
-export function ensureTicketDataset(): string | null {
-  const existing = resolveTicketDatasetId();
-  if (existing) return existing;
-  try {
-    const schema = {
-      fields: [
-        { name: '标题', type: 'string' }, { name: '类型', type: 'string' }, { name: '来源', type: 'string' },
-        { name: '新建人', type: 'string' }, { name: '处理人', type: 'string' }, { name: '内容', type: 'text' },
-        { name: '备注', type: 'text' }, { name: '承诺时间', type: 'datetime' }, { name: '处理时间', type: 'datetime' },
-        { name: '完结时间', type: 'datetime' },
-      ],
-      statusOptions: ['待处理', '处理中', '已完成', '已关闭'],
-      terminalStatuses: ['已完成', '已关闭'],
-      typeOptions: ['需求', '问题', '咨询', '跟进'],
-      sourceOptions: ['微信', '电话', '官网', '邮件', '会议', '其他'],
-    };
-    db.ds.add({
-      name: TICKET_DS_NAME,
-      description: '通用事项：核心字段固定，自定义字段按需添加。填承诺时间到点自动提醒。',
-      schemaJson: JSON.stringify(schema),
-    });
-    ticketDatasetId = null;   // 解除空缓存，重查一次拿新 id
-    const made = resolveTicketDatasetId();
-    if (made) logger.info('[TicketFlow] 已兜底创建「工单」数据集 (id=%s)', made);
-    return made;
-  } catch (e: any) {
-    logger.warn('[TicketFlow] 兜底创建「工单」数据集失败: ' + (e && e.message));
-    return null;
-  }
-}
 
 /** 本地时间串（与库内 datetime('now','+8 hours') 同口径） */
 function nowLocal(): string {
@@ -127,26 +77,26 @@ function findHandlerByName(name: string): any | null {
 // ==================== 流转节点账 ====================
 
 /** 某工单的节点时间轴（按 node_index 正序） */
-export function listFlowNodes(datasetId: string, recordId: number): any[] {
+export function listFlowNodes(recordId: number): any[] {
   try {
     return db.q(
-      'SELECT * FROM ticket_flow_nodes WHERE dataset_id = ? AND record_id = ? ORDER BY node_index ASC LIMIT 200',
-      String(datasetId), recordId
+      'SELECT * FROM ticket_flow_nodes WHERE record_id = ? ORDER BY node_index ASC LIMIT 200',
+      recordId
     );
   } catch (e) { logger.warn('[TicketFlow] 读流转节点失败: ' + (e && e.message)); return []; }
 }
 
 /** 当前开放节点（exited_at IS NULL 的最新一条） */
-function openNode(datasetId: string, recordId: number): any | null {
+function openNode(recordId: number): any | null {
   return db.qOne(
-    'SELECT * FROM ticket_flow_nodes WHERE dataset_id = ? AND record_id = ? AND exited_at IS NULL ORDER BY node_index DESC LIMIT 1',
-    String(datasetId), recordId
+    'SELECT * FROM ticket_flow_nodes WHERE record_id = ? AND exited_at IS NULL ORDER BY node_index DESC LIMIT 1',
+    recordId
   ) || null;
 }
 
 /** 关闭当前开放节点：写 exited_at + duration_minutes + result */
-function closeOpenNode(datasetId: string, recordId: number, opts: { result?: string; resultKind?: string }): void {
-  const open = openNode(datasetId, recordId);
+function closeOpenNode(recordId: number, opts: { result?: string; resultKind?: string }): void {
+  const open = openNode(recordId);
   if (!open) return;
   const now = nowLocal();
   let minutes = 0;
@@ -161,16 +111,16 @@ function closeOpenNode(datasetId: string, recordId: number, opts: { result?: str
 }
 
 /** 开启新节点：node_index 按该工单已有最大值 +1 */
-function openNextNode(datasetId: string, recordId: number, data: { status: string; handlerName: string; handlerId: number | null; trigger: string }): void {
+function openNextNode(recordId: number, data: { status: string; handlerName: string; handlerId: number | null; trigger: string }): void {
   const maxRow = db.qOne<{ m: number }>(
-    'SELECT COALESCE(MAX(node_index), 0) AS m FROM ticket_flow_nodes WHERE dataset_id = ? AND record_id = ?',
-    String(datasetId), recordId
+    'SELECT COALESCE(MAX(node_index), 0) AS m FROM ticket_flow_nodes WHERE record_id = ?',
+    recordId
   );
   const nextIndex = ((maxRow && maxRow.m) || 0) + 1;
   db.run(
-    `INSERT INTO ticket_flow_nodes (dataset_id, record_id, node_index, status, handler_name, handler_id, entered_at, trigger)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    String(datasetId), recordId, nextIndex,
+    `INSERT INTO ticket_flow_nodes (record_id, node_index, status, handler_name, handler_id, entered_at, trigger)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    recordId, nextIndex,
     String(data.status || ''), String(data.handlerName || ''),
     data.handlerId == null ? null : data.handlerId,
     nowLocal(), String(data.trigger || 'ui')
@@ -178,8 +128,8 @@ function openNextNode(datasetId: string, recordId: number, data: { status: strin
 }
 
 /** 回写当前开放节点的通知结果 */
-function markNotify(datasetId: string, recordId: number, ok: boolean, error: string): void {
-  const open = openNode(datasetId, recordId);
+function markNotify(recordId: number, ok: boolean, error: string): void {
+  const open = openNode(recordId);
   if (!open) return;
   db.run('UPDATE ticket_flow_nodes SET notified = ?, notify_error = ? WHERE id = ?', ok ? 1 : -1, String(error || ''), open.id);
 }
@@ -226,9 +176,7 @@ function dedupOk(key: string): boolean {
  * 触发口径：状态 或 处理人 任一变更即进钩子（v3 定稿）。
  * 状态变 → 开关节点；处理人变 → 通知。两件独立的事，能同时发生。
  */
-function onRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, recordId: number | null, data: any, prev?: any): void {
-  const dsId = resolveTicketDatasetId();
-  if (!dsId || String(datasetId) !== dsId) return;   // 只管工单数据集
+function onRecordSave(kind: 'insert' | 'update' | 'delete', recordId: number | null, data: any, prev?: any): void {
   if (recordId == null) return;
 
   try {
@@ -236,26 +184,26 @@ function onRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, r
       const status = String((data && data['状态']) || '待处理');
       const handlerName = String((data && data['处理人']) || '').trim();
       const handler = findHandlerByName(handlerName);
-      openNextNode(dsId, recordId, {
+      openNextNode(recordId, {
         status, handlerName,
         handlerId: handler ? handler.id : null,
         trigger: 'insert',
       });
       // 建单即指派了处理人 → 同样命中通知（AI/飞书建单常见）
-      if (handlerName && dedupOk(`handler:${dsId}:${recordId}:${handlerName}`)) {
+      if (handlerName && dedupOk(`handler:${recordId}:${handlerName}`)) {
         void notifyHandlerChanged({
           title: String((data && data['标题']) || ''),
           fromStatus: '', toStatus: status,
           handlerName,
           result: '新建工单',
           promise: String((data && data['承诺时间']) || ''),
-        }).then(r => { if (r.ok) markNotify(dsId, recordId, true, ''); else markNotify(dsId, recordId, false, r.error || ''); });
+        }).then(r => { if (r.ok) markNotify(recordId, true, ''); else markNotify(recordId, false, r.error || ''); });
       }
       return;
     }
 
     if (kind === 'delete') {
-      closeOpenNode(dsId, recordId, { result: '工单已删除', resultKind: 'auto' });
+      closeOpenNode(recordId, { result: '工单已删除', resultKind: 'auto' });
       return;
     }
 
@@ -271,11 +219,11 @@ function onRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, r
     if (!statusChanged && !handlerChanged) return;
 
     // ① 状态变了 → 关旧节点 + 开新节点
-    if (statusChanged && dedupOk(`status:${dsId}:${recordId}:${toStatus}`)) {
+    if (statusChanged && dedupOk(`status:${recordId}:${toStatus}`)) {
       const result = String(after['备注'] || '').trim().slice(0, 200);   // 处理结果：暂取备注尾部
-      closeOpenNode(dsId, recordId, { result, resultKind: 'ok' });
+      closeOpenNode(recordId, { result, resultKind: 'ok' });
       const handler = findHandlerByName(toHandler);
-      openNextNode(dsId, recordId, {
+      openNextNode(recordId, {
         status: toStatus, handlerName: toHandler,
         handlerId: handler ? handler.id : null,
         trigger: 'ui',
@@ -286,7 +234,7 @@ function onRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, r
     //    状态没变 → 开放节点就地换人——节点账要能回答「这单现在在谁手里」；
     //    节点仍按状态分段，段内交接的细节流水在 ticket_logs，不新开节点（v3 拍板）。
     if (handlerChanged && !statusChanged) {
-      const open = openNode(dsId, recordId);
+      const open = openNode(recordId);
       if (open) {
         const handler = findHandlerByName(toHandler);
         db.run('UPDATE ticket_flow_nodes SET handler_name = ?, handler_id = ? WHERE id = ?',
@@ -294,14 +242,14 @@ function onRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, r
       }
     }
     // 填了新处理人 → 通知（节点 webhook，或全局兜底）
-    if (handlerChanged && toHandler && dedupOk(`handler:${dsId}:${recordId}:${toHandler}`)) {
+    if (handlerChanged && toHandler && dedupOk(`handler:${recordId}:${toHandler}`)) {
       void notifyHandlerChanged({
         title: String(after['标题'] || ''),
         fromStatus, toStatus,
         handlerName: toHandler,
         result: String(after['备注'] || '').trim().slice(0, 200),
         promise: String(after['承诺时间'] || ''),
-      }).then(r => { if (r.ok) markNotify(dsId, recordId, true, ''); else markNotify(dsId, recordId, false, r.error || ''); });
+      }).then(r => { if (r.ok) markNotify(recordId, true, ''); else markNotify(recordId, false, r.error || ''); });
     }
   } catch (e: any) {
     logger.warn('[TicketFlow] 钩子处理失败（不影响工单落库）: ' + (e && e.message));
@@ -313,7 +261,6 @@ let registered = false;
 export function registerTicketFlow(): void {
   if (registered) return;
   registered = true;
-  resolveTicketDatasetId();
-  db.ds.onRecordSave(onRecordSave);
+  tickets.onSave(onRecordSave);
   logger.info('[TicketFlow] 已注册：流转节点账 + 处理人变更通知');
 }

@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as appConfig from '../services/app-config';
 import * as db from '../services/database';
+import * as ticketStore from '../services/tickets';
 import * as feishu from '../services/feishu';
 import * as projectScan from '../services/project-scan';
 import { agentRadar } from '../services/agent-radar';
@@ -137,7 +138,8 @@ function readDocExcerpt(full: string, allotment: number): string {
  */
 function collectTodayTodos(digest: any, contextDocs: TodoContextDoc[], activeSince: number): { items: PickedTodo[]; dropped: number } {
   let localTasks: any[] = [];
-  try { localTasks = db.todo.list() as any[]; } catch { localTasks = []; }
+  // 2026-11-21 待办并入工单：类型='待办' 的 tickets 行，映射回旧待办形状（title/status/created_at）
+  try { localTasks = ticketStore.list({ type: '待办' }).map((t: any) => ({ id: t.id, title: t['标题'], status: ticketStore.isClosed(t['状态']) ? 'done' : 'pending', created_at: t.created_at })); } catch { localTasks = []; }
   // 时效窗口默认 14 天，可在 config.json 里用 briefTodoWindowDays 调整
   let windowDays = 0;
   try { windowDays = Number(appConfig.getConfig('briefTodoWindowDays') || 0); } catch { windowDays = 0; }

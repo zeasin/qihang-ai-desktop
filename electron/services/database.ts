@@ -1,9 +1,10 @@
 /**
  * 数据库服务（database.ts）
  *
- * 本地 SQLite（better-sqlite3）单存储：会话、项目、待办、提醒、数据中心、
- * AI 分析、工具历史、知识库索引 kb_documents / kb_chunks 全部保存在
- * 用户主目录 .qihang-ai-desktop 下。
+ * 本地 SQLite（better-sqlite3）单存储：会话、项目、提醒、任务、工单（tickets）、
+ * AI 分析、工具历史、知识库索引全部保存在用户主目录 .qihang-ai-desktop 下。
+ * （2026-11-21：data_center 三层与 plan_todos 退役——工单迁入 tickets 专表、
+ * 待办并入 tickets（类型='待办'），见 migrateDataCenterToTickets / migrateTodosIntoTickets）
  */
 import * as path from 'path';
 import * as fs from 'fs';
@@ -24,12 +25,9 @@ function getDb(): Database.Database {
   return db;
 }
 
-/** 记录保存回调注册点（工单联动用，由 main.ts 在启动时注册） */
-const dsRecordHooks: Array<(kind: 'insert' | 'update' | 'delete', datasetId: string, recordId: number | null, data: any, prev?: any) => void> = [];
-
 /** 本地 SQLite 表结构 */
 function initSchema() {
-  // 表改名迁移：统一任务域表名前缀为 plan_（与 prj_ / kb_ / data_center_ 对齐）。
+  // 表改名迁移：统一任务域表名前缀为 plan_（与 prj_ / kb_ 对齐）。
   // 源名兼容历史版本：老库是 plan_tasks/plan_reminders（目标名相同，自然跳过），
   // 中间版本可能是 tasks/reminders，task_executions 则一直没有前缀。
   // 幂等：仅当旧表存在且新表不存在时执行；必须在下面 CREATE TABLE 之前跑，
@@ -96,42 +94,32 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
-    CREATE TABLE IF NOT EXISTS data_center_datasets (
+    -- 工单（事项体系唯一实体表，2026-11-21 从 data_center_datasets/records 迁入）：
+    -- 10 个核心字段用中文列名（SELECT * 出来即消费方熟悉的中文键对象，零映射层），
+    -- 用户自定义字段统一进 extra_json（读路径合并、写路径拆分，见 services/tickets.ts）
+    CREATE TABLE IF NOT EXISTS tickets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      dataset_id TEXT,
-      name TEXT,
-      description TEXT,
-      type TEXT,
-      status TEXT,
-      schema_json TEXT,
-      import_configs_json TEXT,
-      module_id TEXT,
+      "标题" TEXT DEFAULT '',
+      "类型" TEXT DEFAULT '',
+      "来源" TEXT DEFAULT '',
+      "新建人" TEXT DEFAULT '',
+      "处理人" TEXT DEFAULT '',
+      "内容" TEXT DEFAULT '',
+      "备注" TEXT DEFAULT '',
+      "状态" TEXT DEFAULT '待处理',
+      "承诺时间" TEXT DEFAULT '',
+      "处理时间" TEXT DEFAULT '',
+      "完结时间" TEXT DEFAULT '',
+      extra_json TEXT DEFAULT '{}',
       created_at TEXT DEFAULT (datetime('now', '+8 hours')),
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
-    CREATE TABLE IF NOT EXISTS data_center_records (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      record_id TEXT,
-      dataset_id TEXT,
-      data_json TEXT,
-      source TEXT,
-      content_hash TEXT,
-      record_num TEXT,
-      record_type TEXT,
-      record_status TEXT,
-      created_at TEXT DEFAULT (datetime('now', '+8 hours')),
-      updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
-    );
-
-    CREATE TABLE IF NOT EXISTS data_center_modules (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      module_id TEXT,
-      name TEXT,
-      description TEXT,
-      icon TEXT,
-      sort_order INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now', '+8 hours')),
+    -- 工单枚举/字段定义（单行）：schema_json 结构与迁移前的 datasets.schema_json 完全相同
+    -- （fields/statusOptions/terminalStatuses/typeOptions/sourceOptions），事项页工单设置读写它
+    CREATE TABLE IF NOT EXISTS ticket_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      schema_json TEXT DEFAULT '{}',
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
@@ -194,23 +182,9 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
-    CREATE TABLE IF NOT EXISTS plan_todos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      priority TEXT DEFAULT 'mid',
-      status TEXT DEFAULT 'pending',
-      scheduled_start TEXT DEFAULT '',
-      project_id INTEGER DEFAULT NULL,
-      source TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now', '+8 hours')),
-      updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
-    );
-
-    -- 工单处理记录：新建/状态变化/流转的流水（工单数据集的记录级日志）
+    -- 工单处理记录：新建/状态变化/流转的流水（工单的记录级日志）
     CREATE TABLE IF NOT EXISTS ticket_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      dataset_id TEXT DEFAULT '',
       record_id INTEGER,
       action TEXT DEFAULT '',
       field TEXT DEFAULT '',
@@ -219,17 +193,16 @@ function initSchema() {
       note TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
-    CREATE INDEX IF NOT EXISTS idx_ticket_logs_record ON ticket_logs(dataset_id, record_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_logs_record ON ticket_logs(record_id);
 
-    -- 工单 ↔ 待办 关联（一单可拆多条待办；待办在 plan_todos）
+    -- 工单 ↔ 待办工单 关联（一单可拆多条待办；待办本身是 tickets 表里 类型='待办' 的行）
     CREATE TABLE IF NOT EXISTS ticket_todos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      dataset_id TEXT DEFAULT '',
       record_id INTEGER,
       todo_id INTEGER,
       created_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
-    CREATE INDEX IF NOT EXISTS idx_ticket_todos_record ON ticket_todos(dataset_id, record_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_todos_record ON ticket_todos(record_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_todos_todo ON ticket_todos(todo_id);
 
     -- 处理人节点：人=名字+webhook一体；流转/指派到该节点时触发通知到其 url
@@ -246,7 +219,6 @@ function initSchema() {
     -- 流转节点实例：一次状态变更一行，工单的完整生命周期账本（可回放/审计）
     CREATE TABLE IF NOT EXISTS ticket_flow_nodes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      dataset_id TEXT DEFAULT '',
       record_id INTEGER NOT NULL,
       node_index INTEGER NOT NULL DEFAULT 1,
       status TEXT DEFAULT '',
@@ -262,7 +234,7 @@ function initSchema() {
       notify_error TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
-    CREATE INDEX IF NOT EXISTS idx_flow_nodes_record ON ticket_flow_nodes(dataset_id, record_id, node_index);
+    CREATE INDEX IF NOT EXISTS idx_flow_nodes_record ON ticket_flow_nodes(record_id, node_index);
 
     CREATE TABLE IF NOT EXISTS plan_executions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,75 +330,16 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_status TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN session_id TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN source TEXT DEFAULT ''"); } catch (e) {}
-  // 待办拆表迁移：历史上待办和定时任务同存 plan_tasks（待办 = trigger_type='manual' 的行）。
-  // 现待办独立成 plan_todos。幂等：仅当 plan_todos 为空且 plan_tasks 里存在 manual 行时迁一次，
-  // 避免每次启动重复插入。迁完不删 plan_tasks 里的旧行（留作回滚余地，且它们已不再被 listTodos 读取）。
-  try { migrateTodosOut(); } catch (e) { logger.warn('[DB] 待办拆表迁移失败: ' + (e && e.message)); }
-  // 工单联动：一次性提醒可关联到来源数据集与记录（record_id 为 TEXT，因为 record_id 本身是数字主键存字符串）
+  // 工单联动：一次性提醒可关联到来源工单（ticket_dataset_id 2026-11-21 起恒为 'tickets'）
   try { getDb().exec("ALTER TABLE plan_reminders ADD COLUMN ticket_dataset_id TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_reminders ADD COLUMN source_record_id TEXT DEFAULT ''"); } catch (e) {}
-  // 记录表 dataset_id 归一化：历史上把 JS 数字直接绑进 TEXT 列，存成了 '14.0'，
-  // 与 '14' 的记录混在一起，按 '14' 精确匹配的查询查不到 → 工单建了却看不见。统一改回整数文本。
-  try {
-    const fixed = getDb().prepare("UPDATE data_center_records SET dataset_id = CAST(CAST(dataset_id AS REAL) AS INTEGER) WHERE dataset_id GLOB '[0-9]*.0'").run();
-    if (fixed.changes) logger.info('[DB] 归一化记录 dataset_id：' + fixed.changes + ' 条');
-  } catch (e) { logger.warn('[DB] dataset_id 归一化失败: ' + (e && e.message)); }
-  // 记录表镜像列回填：source/record_type/record_status 建表时预留但从未写入，
-  // 语义即 来源/类型/状态（用户明确要求这几列必须有值，状态处理依赖它们）。
-  // 从 data_json 里的中文核心字段（兼容英文键）回填；字段本身缺失时存 NULL。
-  // WHERE 只挑「列空 且 data_json 里有对应值」的行——列空但字段也缺的行不动，
-  // 否则每次启动都会把 NULL 重写成 NULL，回填日志永远刷屏。
-  try {
-    const backfill = getDb().prepare(`
-      UPDATE data_center_records SET
-        record_type   = COALESCE(json_extract(data_json, '$."类型"'), json_extract(data_json, '$.type')),
-        record_status = COALESCE(json_extract(data_json, '$."状态"'), json_extract(data_json, '$.status')),
-        source        = COALESCE(json_extract(data_json, '$."来源"'), json_extract(data_json, '$.source'))
-      WHERE ((record_type IS NULL OR record_type = '')
-              AND (json_extract(data_json, '$."类型"') IS NOT NULL OR json_extract(data_json, '$.type') IS NOT NULL))
-         OR ((record_status IS NULL OR record_status = '')
-              AND (json_extract(data_json, '$."状态"') IS NOT NULL OR json_extract(data_json, '$.status') IS NOT NULL))
-         OR ((source IS NULL OR source = '')
-              AND (json_extract(data_json, '$."来源"') IS NOT NULL OR json_extract(data_json, '$.source') IS NOT NULL))
-    `).run();
-    if (backfill.changes) logger.info('[DB] 记录镜像列回填：' + backfill.changes + ' 条');
-  } catch (e) { logger.warn('[DB] 记录镜像列回填失败: ' + (e && e.message)); }
-  // 流转节点账初始回填：给「工单」数据集的存量记录各补一条初始节点（当前状态），
-  // 让账本从启用那天起完整。幂等：已有节点行的工单跳过。
-  try {
-    const dsRow = getDb().prepare("SELECT id FROM data_center_datasets WHERE name = '工单'").get() as any;
-    if (dsRow) {
-      const rows = getDb().prepare(`
-        SELECT r.id, r.data_json, r.updated_at
-          FROM data_center_records r
-         WHERE r.dataset_id = ?
-           AND NOT EXISTS (SELECT 1 FROM ticket_flow_nodes n WHERE n.dataset_id = ? AND n.record_id = r.id)
-      `).all(String(dsRow.id), String(dsRow.id)) as any[];
-      const ins = getDb().prepare(`
-        INSERT INTO ticket_flow_nodes (dataset_id, record_id, node_index, status, handler_name, handler_id, entered_at, result, result_kind, trigger, notified)
-        VALUES (?, ?, 1, ?, ?, NULL, ?, '', 'auto', 'backfill', 0)
-      `);
-      let n = 0;
-      for (const r of rows) {
-        let d: any = {};
-        try { d = JSON.parse(r.data_json || '{}'); } catch {}
-        ins.run(String(dsRow.id), r.id, String(d['状态'] || '待处理'), String(d['处理人'] || ''), r.updated_at || null);
-        n++;
-      }
-      if (n) logger.info('[DB] 流转节点账初始回填：' + n + ' 单');
-    }
-  } catch (e) { logger.warn('[DB] 流转节点账回填失败: ' + (e && e.message)); }
-  // 待办表补列：线上 plan_todos 是旧结构（缺 scheduled_start / project_id / source），
-  // 而代码往这三列写 → 「新建待办」直接报 no such column。缺哪补哪，已有列不动。
-  try {
-    const tcols = getDb().prepare('PRAGMA table_info(plan_todos)').all() as any[];
-    const tHas = (n: string) => tcols.some((c: any) => c.name === n);
-    for (const [name, ddl] of [['scheduled_start', "TEXT DEFAULT ''"], ['project_id', 'INTEGER DEFAULT NULL'], ['source', "TEXT DEFAULT ''"]] as Array<[string, string]>) {
-      if (tHas(name)) continue;
-      getDb().exec(`ALTER TABLE plan_todos ADD COLUMN ${name} ${ddl}`);
-      logger.info('[DB] plan_todos 补列：' + name);
-    }
-  } catch (e) { logger.warn('[DB] plan_todos 补列失败: ' + (e && e.message)); }
+  // 工单存储迁移（2026-11-21 去 data_center 通用层，全部幂等，失败只告警不阻断启动）：
+  //   ① side 表去 dataset_id；② 「工单」数据集记录迁入 tickets（保留原 id）；
+  //   ③ plan_todos 待办并入 tickets（类型='待办'，迁完删旧表）；④ 无节点账的工单补初始节点
+  try { rebuildTicketSideTables(); } catch (e) { logger.warn('[DB] 工单 side 表重建失败: ' + (e && e.message)); }
+  try { migrateDataCenterToTickets(); } catch (e) { logger.warn('[DB] 工单迁移失败: ' + (e && e.message)); }
+  try { migrateTodosIntoTickets(); } catch (e) { logger.warn('[DB] 待办并入工单迁移失败: ' + (e && e.message)); }
+  try { backfillTicketNodes(); } catch (e) { logger.warn('[DB] 节点账回填失败: ' + (e && e.message)); }
   // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
   try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
   // 飞书来源会话的锚点（chat_id）：供「继续」按群/私聊定位最近对话，也为回推飞书留映射
@@ -443,23 +356,175 @@ function initSchema() {
 }
 
 /**
- * 待办拆表迁移：把 plan_tasks 里 trigger_type='manual' 的待办行搬到 plan_todos。
- * 幂等——仅当 plan_todos 为空时执行（首次升级），迁过就跳过。
- * 字段映射：待办只带走它用得到的列（title/description/priority/status/scheduled_start/project_id/source/时间戳），
- * 定时任务专属列（cycle_*、output_*、session_id、last_* 等）对待办无意义，丢弃。
+ * 工单 side 表结构升级：去掉 dataset_id 列（2026-11-21 起 record_id 直接指 tickets.id）。
+ * 旧结构（含 dataset_id）按 _new 重建拷贝；新结构或全新库自然跳过。
+ * 记录 id 在工单迁移中保留原值，side 表按 record_id 的关联不受重建影响。
  */
-function migrateTodosOut(): void {
+function rebuildTicketSideTables(): void {
   const dbi = getDb();
-  const todoCount = (dbi.prepare('SELECT COUNT(*) AS c FROM plan_todos').get() as any).c;
-  if (todoCount > 0) return; // 已迁过或已有数据，不重复迁
-  const manualRows = dbi.prepare("SELECT * FROM plan_tasks WHERE IFNULL(trigger_type, '') = 'manual'").all() as any[];
-  if (!manualRows.length) return;
-  const ins = dbi.prepare('INSERT INTO plan_todos (title, description, priority, status, scheduled_start, project_id, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-  const tx = dbi.transaction((rows: any[]) => {
-    for (const r of rows) ins.run(r.title, r.description || '', r.priority || 'mid', r.status || 'pending', r.scheduled_start || '', r.project_id ?? null, r.source || '', r.created_at || null, r.updated_at || null);
+  const defs = [
+    {
+      table: 'ticket_logs',
+      ddl: `CREATE TABLE ticket_logs_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        record_id INTEGER,
+        action TEXT DEFAULT '', field TEXT DEFAULT '', from_value TEXT DEFAULT '',
+        to_value TEXT DEFAULT '', note TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+      )`,
+      copyCols: 'id, record_id, action, field, from_value, to_value, note, created_at',
+      indexSql: ['CREATE INDEX IF NOT EXISTS idx_ticket_logs_record ON ticket_logs(record_id)'],
+    },
+    {
+      table: 'ticket_todos',
+      ddl: `CREATE TABLE ticket_todos_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        record_id INTEGER,
+        todo_id INTEGER,
+        created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+      )`,
+      copyCols: 'id, record_id, todo_id, created_at',
+      indexSql: [
+        'CREATE INDEX IF NOT EXISTS idx_ticket_todos_record ON ticket_todos(record_id)',
+        'CREATE INDEX IF NOT EXISTS idx_ticket_todos_todo ON ticket_todos(todo_id)',
+      ],
+    },
+    {
+      table: 'ticket_flow_nodes',
+      ddl: `CREATE TABLE ticket_flow_nodes_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        record_id INTEGER NOT NULL,
+        node_index INTEGER NOT NULL DEFAULT 1,
+        status TEXT DEFAULT '', handler_name TEXT DEFAULT '', handler_id INTEGER,
+        entered_at TEXT DEFAULT (datetime('now', '+8 hours')), exited_at TEXT,
+        duration_minutes INTEGER, result TEXT DEFAULT '', result_kind TEXT DEFAULT '',
+        trigger TEXT DEFAULT '', notified INTEGER DEFAULT 0, notify_error TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+      )`,
+      copyCols: `id, record_id, node_index, status, handler_name, handler_id, entered_at,
+        exited_at, duration_minutes, result, result_kind, trigger, notified, notify_error, created_at`,
+      indexSql: ['CREATE INDEX IF NOT EXISTS idx_flow_nodes_record ON ticket_flow_nodes(record_id, node_index)'],
+    },
+  ];
+  for (const d of defs) {
+    const cols = dbi.prepare(`PRAGMA table_info(${d.table})`).all() as any[];
+    if (!cols.length) continue;                                              // 全新库：initSchema 已建新结构
+    if (!cols.some((c: any) => c.name === 'dataset_id')) continue;           // 已是新结构
+    dbi.transaction(() => {
+      dbi.exec(`DROP TABLE IF EXISTS ${d.table}_new`);
+      dbi.exec(d.ddl);
+      dbi.exec(`INSERT INTO ${d.table}_new (${d.copyCols}) SELECT ${d.copyCols} FROM ${d.table}`);
+      dbi.exec(`DROP TABLE ${d.table}`);
+      dbi.exec(`ALTER TABLE ${d.table}_new RENAME TO ${d.table}`);
+      for (const idx of d.indexSql) dbi.exec(idx);
+    })();
+    logger.info('[DB] 工单 side 表重建（去 dataset_id）：' + d.table);
+  }
+}
+
+/**
+ * 「工单」数据集 → tickets 表迁移（2026-11-21）。
+ * 幂等：tickets 已有行即跳过。原记录 id 原样保留（AUTOINCREMENT 序列自动抬到 max），
+ * side 表（logs/todos/flow_nodes）与提醒绑定按 record_id 的关联因此无需重映射。
+ * 同名「工单」数据集可能不止一个（套件模板 builtin_ticket_tickets 同名）→ 取记录数最多者。
+ * 枚举/字段定义（schema_json）携带进 ticket_settings；核心字段进列，其余键进 extra_json；
+ * 英文镜像键（type/status/source）不入 extra_json（列里已有中文正名）。
+ * 旧 data_center_* 表与数据原地保留（隐藏不删，休眠无入口）。
+ */
+function migrateDataCenterToTickets(): void {
+  const dbi = getDb();
+  const hasLegacy = dbi.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='data_center_records'").get();
+  if (!hasLegacy) return;
+  const cnt = (dbi.prepare('SELECT COUNT(*) AS c FROM tickets').get() as any).c;
+  if (cnt > 0) return;
+  const dsRows = dbi.prepare("SELECT id, schema_json FROM data_center_datasets WHERE name = '工单'").all() as any[];
+  if (!dsRows.length) return;
+  // 提醒绑定改写：旧 dataset key → 'tickets'（record id 在迁移中保留，source_record_id 不动）
+  for (const ds of dsRows) {
+    const upd = dbi.prepare("UPDATE plan_reminders SET ticket_dataset_id = 'tickets' WHERE ticket_dataset_id = ?").run(String(ds.id));
+    if (upd.changes) logger.info(`[DB] 提醒绑定改写：${upd.changes} 条（dataset=${ds.id} → tickets）`);
+  }
+  let best: any = null; let bestCount = -1;
+  for (const ds of dsRows) {
+    const c = (dbi.prepare('SELECT COUNT(*) AS c FROM data_center_records WHERE dataset_id = ?').get(String(ds.id)) as any).c;
+    if (c > bestCount) { bestCount = c; best = ds; }
+  }
+  if (best && best.schema_json) {
+    dbi.prepare('INSERT OR REPLACE INTO ticket_settings (id, schema_json) VALUES (1, ?)').run(String(best.schema_json));
+  }
+  if (!best || bestCount === 0) { logger.info('[DB] 工单迁移：无存量工单记录，跳过'); return; }
+  const CORE = ['标题', '类型', '来源', '新建人', '处理人', '内容', '备注', '状态', '承诺时间', '处理时间', '完结时间'];
+  const rows = dbi.prepare('SELECT id, data_json, created_at FROM data_center_records WHERE dataset_id = ? ORDER BY id ASC').all(String(best.id)) as any[];
+  const ins = dbi.prepare(`INSERT INTO tickets (id, "标题", "类型", "来源", "新建人", "处理人", "内容", "备注", "状态", "承诺时间", "处理时间", "完结时间", extra_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const tx = dbi.transaction((rs: any[]) => {
+    for (const r of rs) {
+      let d: any = {};
+      try { d = JSON.parse(r.data_json || '{}'); } catch {}
+      const extra: any = {};
+      for (const [k, v] of Object.entries(d)) {
+        if (CORE.includes(k) || k === 'type' || k === 'status' || k === 'source') continue;
+        extra[k] = v;
+      }
+      ins.run(r.id,
+        String(d['标题'] || ''), String(d['类型'] || ''), String(d['来源'] || ''),
+        String(d['新建人'] || ''), String(d['处理人'] || ''), String(d['内容'] || ''), String(d['备注'] || ''),
+        String(d['状态'] || '待处理'), String(d['承诺时间'] || ''), String(d['处理时间'] || ''), String(d['完结时间'] || ''),
+        JSON.stringify(extra), r.created_at || null);
+    }
   });
-  tx(manualRows);
-  logger.info(`[DB] 待办拆表迁移：${manualRows.length} 条待办从 plan_tasks 迁入 plan_todos`);
+  tx(rows);
+  logger.info(`[DB] 工单迁移：${rows.length} 条从 data_center_records 迁入 tickets（id 保留，源数据集=${best.id}）`);
+}
+
+/**
+ * plan_todos 待办并入 tickets（2026-11-21「所有事项都放进工单」）。
+ * 类型='待办'；status done→已完成、pending→待处理；scheduled_start 纯日期补 18:00。
+ * 待办拿到新 id（旧 plan_todos.id 与工单 id 是两个序列，保留会撞），ticket_todos.todo_id 重映射。
+ * 迁移成功后删除旧表（数据已全部搬走）；失败保持原样下次再试。
+ */
+function migrateTodosIntoTickets(): void {
+  const dbi = getDb();
+  const hasOld = dbi.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='plan_todos'").get();
+  if (!hasOld) return;
+  const rows = dbi.prepare('SELECT * FROM plan_todos ORDER BY id ASC').all() as any[];
+  if (!rows.length) {
+    dbi.exec('DROP TABLE plan_todos');
+    logger.info('[DB] 待办并入：plan_todos 为空，旧表已删');
+    return;
+  }
+  const idMap = new Map<number, number>();
+  const ins = dbi.prepare(`INSERT INTO tickets ("标题", "内容", "类型", "状态", "承诺时间", created_at) VALUES (?, ?, '待办', ?, ?, ?)`);
+  dbi.transaction(() => {
+    for (const t of rows) {
+      const st = String(t.status || 'pending') === 'done' ? '已完成' : '待处理';
+      const sched = String(t.scheduled_start || '').trim();
+      const promise = /^\d{4}-\d{2}-\d{2}$/.test(sched) ? sched + ' 18:00' : sched;
+      const info = ins.run(String(t.title || ''), String(t.description || ''), st, promise, t.created_at || null);
+      idMap.set(Number(t.id), Number(info.lastInsertRowid));
+    }
+    const upd = dbi.prepare('UPDATE ticket_todos SET todo_id = ? WHERE todo_id = ?');
+    for (const [oldId, newId] of idMap) upd.run(newId, oldId);
+    dbi.exec('DROP TABLE plan_todos');
+  })();
+  logger.info(`[DB] 待办并入工单：${rows.length} 条迁入 tickets（类型='待办'），ticket_todos 关联已重映射，旧表已删`);
+}
+
+/** 节点账回填：给没有节点行的工单补「当前状态」初始节点，账本从启用那天起完整（幂等） */
+function backfillTicketNodes(): void {
+  const dbi = getDb();
+  const rows = dbi.prepare(`
+    SELECT t.id, t."状态" AS st, t."处理人" AS hd, t.updated_at
+      FROM tickets t
+     WHERE NOT EXISTS (SELECT 1 FROM ticket_flow_nodes n WHERE n.record_id = t.id)
+  `).all() as any[];
+  if (!rows.length) return;
+  const ins = dbi.prepare(`INSERT INTO ticket_flow_nodes (record_id, node_index, status, handler_name, handler_id, entered_at, result, result_kind, trigger, notified)
+    VALUES (?, 1, ?, ?, NULL, ?, '', 'auto', 'backfill', 0)`);
+  dbi.transaction((rs: any[]) => {
+    for (const r of rs) ins.run(r.id, String(r.st || '待处理'), String(r.hd || ''), r.updated_at || null);
+  })(rows);
+  logger.info('[DB] 节点账回填：' + rows.length + ' 单');
 }
 
 function ensureMessageExtraColumns(): void {
@@ -723,218 +788,6 @@ const chat = {
   },
 };
 
-// ========== Modules ==========
-
-/** id 可能是自增数字 id，也可能是 module_id UUID 字符串；按类型生成 WHERE 子句 */
-function dmWhere(id: any): { where: string; params: any[] } {
-  const s = String(id == null ? '' : id).trim();
-  const isNumeric = /^\d+$/.test(s);
-  return isNumeric
-    ? { where: 'id = ? OR module_id = ?', params: [s, s] }
-    : { where: 'module_id = ?', params: [s] };
-}
-
-const dm = {
-  list: () => q('SELECT * FROM data_center_modules ORDER BY sort_order ASC, created_at DESC'),
-  get: (id) => {
-    const w = dmWhere(id);
-    return qOne(`SELECT * FROM data_center_modules WHERE ${w.where}`, ...w.params);
-  },
-  add: (name, description, icon) => {
-    const id = 'm_' + Date.now();
-    run('INSERT INTO data_center_modules (module_id, name, description, icon) VALUES (?, ?, ?, ?)', id, name, description || '', icon || '📁');
-    return { id };
-  },
-  update: (id, data) => {
-    const fields: any[] = []; const params: any[] = [];
-    if (data.name !== undefined) { fields.push('name = ?'); params.push(data.name); }
-    if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description); }
-    if (data.icon !== undefined) { fields.push('icon = ?'); params.push(data.icon); }
-    if (data.sort_order !== undefined) { fields.push('sort_order = ?'); params.push(data.sort_order); }
-    if (fields.length) {
-      const w = dmWhere(id);
-      fields.push("updated_at = datetime('now', '+8 hours')");
-      params.push(...w.params);
-      run(`UPDATE data_center_modules SET ${fields.join(', ')} WHERE ${w.where}`, ...params);
-    }
-  },
-  remove: (id) => {
-    const mod = dm.get(id);
-    const moduleId = mod && mod.module_id ? String(mod.module_id) : String(id);
-    const dsList = q<{id: number}>('SELECT id FROM data_center_datasets WHERE module_id = ?', moduleId);
-    for (const d of dsList) {
-      const rw = dsRecordWhere(d.id);
-      run(`DELETE FROM data_center_records WHERE ${rw.sql}`, ...rw.params);
-    }
-    run('DELETE FROM data_center_datasets WHERE module_id = ?', moduleId);
-    const w = dmWhere(id);
-    run(`DELETE FROM data_center_modules WHERE ${w.where}`, ...w.params);
-  },
-};
-
-// ========== Datasets ==========
-
-/** id 可能是自增数字 id，也可能是 dataset_id UUID 字符串；按类型生成 WHERE 子句 */
-function dsWhere(id: any): { where: string; params: any[] } {
-  const s = String(id == null ? '' : id).trim();
-  const isNumeric = /^\d+$/.test(s);
-  return isNumeric
-    ? { where: 'id = ? OR dataset_id = ?', params: [s, s] }
-    : { where: 'dataset_id = ?', params: [s] };
-}
-
-/**
- * 记录表 dataset_id 的规范写法（写入用）：统一存字符串。
- * 必须转字符串 —— better-sqlite3 会把 JS 数字按 REAL 绑定，
- * 存进 TEXT 列就变成 '14.0'，与历史 '14' 的记录混在一起，按 '14' 精确匹配就查不到了。
- */
-function dsRecordKey(id: any): string {
-  return String(id == null ? '' : id).trim();
-}
-
-/**
- * 记录表 dataset_id 的查询条件。
- *
- * 亲和性坑：dataset_id 是 TEXT 列，拿「数字」参数比对时 SQLite 会给参数套上 TEXT 亲和性，
- * 把 14 变成 '14.0' 文本再比，跟存着的 '14' 对不上 —— 所以一律用文本精确匹配。
- * 另给历史的 'N.0' 写法留一个口子（迁移没兜住的旧记录也能查出来），
- * 用 GLOB 限定只处理纯数字开头的值，UUID 型 dataset_id 不受影响。
- */
-function dsRecordWhere(id: any): { sql: string; params: any[] } {
-  const key = dsRecordKey(id);
-  if (!/^\d+$/.test(key)) return { sql: 'dataset_id = ?', params: [key] };
-  return {
-    sql: "(dataset_id = ? OR (dataset_id GLOB '[0-9]*.0' AND CAST(dataset_id AS REAL) = CAST(? AS REAL)))",
-    params: [key, key],
-  };
-}
-
-/**
- * 回填记录表的镜像列：record_type（类型）/ record_status（状态）/ source（来源）。
- *
- * 这几列建表时预留但一直没写入，真实内容全在 data_json 里（更新日志 v0.18 有说明）。
- * 语义上它们就是 类型/状态/来源，现在按 data_json 里的中文字段回填，
- * 让数据库直接 SELECT 也能看到；找不到对应字段就存 NULL，不影响任何查询路径。
- * 列表与筛选依旧读 data_json —— 镜像列只是给人看和给 SQL 用的。
- */
-function fillRecordMirrorColumns(dataObj: any): { record_type: string | null; record_status: string | null; source: string | null } {
-  const d = (dataObj && typeof dataObj === 'object') ? dataObj : {};
-  const pick = (k: string): string | null => {
-    const v = d[k];
-    const s = v == null ? '' : String(v).trim();
-    return s || null;   // 空值存 NULL：与回填迁移的口径一致（NULL = 该字段没填）
-  };
-  // 中文核心字段优先，兼容英文键（type/status/source）
-  return {
-    record_type: pick('类型') || pick('type'),
-    record_status: pick('状态') || pick('status'),
-    source: pick('来源') || pick('source'),
-  };
-}
-
-const ds = {
-  list: () => {
-    const rows = q('SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.id) as record_count FROM data_center_datasets d ORDER BY d.created_at DESC');
-    return rows.map(r => ({ ...r, recordCount: r.record_count, schema: r.schema_json ? JSON.parse(r.schema_json) : null }));
-  },
-  get: (id) => {
-    const w = dsWhere(id);
-    const r = qOne(`SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.id) as record_count FROM data_center_datasets d WHERE ${w.where}`, ...w.params);
-    return r ? { ...r, recordCount: r.record_count, schema: r.schema_json ? JSON.parse(r.schema_json) : null } : null;
-  },
-  add: (params) => {
-    const id = params.dataset_id || 'ds_' + Date.now();
-    run('INSERT INTO data_center_datasets (dataset_id, name, description, type, status, schema_json, module_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      id, params.name, params.description || '', params.type || '', params.status || '', params.schemaJson || '{}', params.module_id || '');
-    // 返回真正的自增行 id（记录表按它关联），别把 dataset_id 字符串当成 id 用
-    const row = qOne<{ id: number }>('SELECT id FROM data_center_datasets WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', id);
-    return { id: row ? row.id : id, dataset_id: id };
-  },
-  updateMeta: (id, data) => {
-    const fields: any[] = []; const params: any[] = [];
-    if (data.name !== undefined) { fields.push('name = ?'); params.push(data.name); }
-    if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description); }
-    if (data.type !== undefined) { fields.push('type = ?'); params.push(data.type); }
-    if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
-    // schema_json 同时兼容 camelCase 传法（渲染层两套写法都出现过，漏一个就静默不生效）
-    const schemaJson = data.schema_json !== undefined ? data.schema_json : data.schemaJson;
-    if (schemaJson !== undefined) { fields.push('schema_json = ?'); params.push(schemaJson); }
-    if (data.module_id !== undefined) { fields.push('module_id = ?'); params.push(data.module_id); }
-    if (fields.length) {
-      const w = dsWhere(id);
-      fields.push("updated_at = datetime('now', '+8 hours')");
-      params.push(...w.params);
-      run(`UPDATE data_center_datasets SET ${fields.join(', ')} WHERE ${w.where}`, ...params);
-    }
-  },
-  remove: (id) => {
-    const w = dsWhere(id);
-    const dsRow = qOne<{id: number}>(`SELECT id FROM data_center_datasets WHERE ${w.where}`, ...w.params);
-    if (dsRow) {
-      const rw = dsRecordWhere(dsRow.id);
-      run(`DELETE FROM data_center_records WHERE ${rw.sql}`, ...rw.params);
-    }
-    run(`DELETE FROM data_center_datasets WHERE ${w.where}`, ...w.params);
-  },
-  query: (datasetId, conditions) => {
-    const w = dsRecordWhere(datasetId);
-    let sql = "SELECT * FROM data_center_records WHERE " + w.sql;
-    const params: any[] = [...w.params];
-    if (conditions) { sql += ' AND data_json LIKE ?'; params.push(`%${conditions}%`); }
-    sql += ' ORDER BY created_at DESC LIMIT 50';
-    return q(sql, ...params).map(r => ({ id: r.id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
-  },
-  /** 工单视图用：分页返回某数据集全部记录（含 id 与 created_at），可按关键词过滤标题 */
-  listRecords: (datasetId, opts?: { search?: string; limit?: number; offset?: number }) => {
-    const limit = Math.max(1, Math.min(200, (opts && opts.limit) || 100));
-    const offset = Math.max(0, (opts && opts.offset) || 0);
-    const w = dsRecordWhere(datasetId);
-    let sql = "SELECT * FROM data_center_records WHERE " + w.sql;
-    const params: any[] = [...w.params];
-    if (opts && opts.search) { sql += ' AND data_json LIKE ?'; params.push(`%${opts.search}%`); }
-    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'; params.push(limit, offset);
-    const rows = q(sql, ...params).map(r => ({ id: r.id, record_id: r.record_id, ...JSON.parse(r.data_json || '{}'), _created_at: r.created_at }));
-    const w2 = dsRecordWhere(datasetId);
-    let totalSql = "SELECT COUNT(*) AS c FROM data_center_records WHERE " + w2.sql; const totalParams: any[] = [...w2.params];
-    if (opts && opts.search) { totalSql += ' AND data_json LIKE ?'; totalParams.push(`%${opts.search}%`); }
-    const total = (qOne<{ c: number }>(totalSql, ...totalParams) || { c: 0 }).c;
-    return { rows, total };
-  },
-  insert: (datasetId, dataObj) => {
-    // dataset_id 必须按字符串写入（见 dsRecordKey 注释）
-    const key = dsRecordKey(datasetId);
-    const m = fillRecordMirrorColumns(dataObj);
-    run("INSERT INTO data_center_records (dataset_id, data_json, record_type, record_status, source) VALUES (?, ?, ?, ?, ?)",
-      key, JSON.stringify(dataObj), m.record_type, m.record_status, m.source);
-    // 工单联动 hook：通知外部（main.ts 注册）记录已保存，便于按承诺时间派生提醒等
-    const rec = qOne<{ id: number }>('SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', key);
-    try { for (const h of dsRecordHooks) h('insert', key, rec ? rec.id : null, dataObj); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
-    return rec ? rec.id : null;
-  },
-  updateRecord: (id, dataObj) => {
-    // 取旧值：记录钩子要靠它比对出「状态从 A 变 B」这类流转
-    const prevRow = qOne<{ data_json: string }>('SELECT data_json FROM data_center_records WHERE id = ?', id);
-    let prev: any = null;
-    try { prev = prevRow ? JSON.parse(prevRow.data_json || '{}') : null; } catch { prev = null; }
-    const m = fillRecordMirrorColumns(dataObj);
-    run('UPDATE data_center_records SET data_json = ?, record_type = ?, record_status = ?, source = ? WHERE id = ?',
-      JSON.stringify(dataObj), m.record_type, m.record_status, m.source, id);
-    const rec = qOne<{ dataset_id: string | number }>('SELECT dataset_id FROM data_center_records WHERE id = ?', id);
-    try { for (const h of dsRecordHooks) h('update', rec ? String(rec.dataset_id) : '', id, dataObj, prev); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
-  },
-  /** 工单联动等外部逻辑注册的记录保存回调（kind: 'insert' | 'update' | 'delete'） */
-  onRecordSave: (fn: (kind: 'insert' | 'update' | 'delete', datasetId: string, recordId: number | null, data: any, prev?: any) => void) => {
-    dsRecordHooks.push(fn);
-  },
-  deleteRecord: (id) => {
-    const rec = qOne<{ dataset_id: string | number; data_json: string }>('SELECT dataset_id, data_json FROM data_center_records WHERE id = ?', id);
-    let prev: any = null;
-    try { prev = rec ? JSON.parse(rec.data_json || '{}') : null; } catch { prev = null; }
-    run('DELETE FROM data_center_records WHERE id = ?', id);
-    try { for (const h of dsRecordHooks) h('delete', rec ? String(rec.dataset_id) : '', id, prev); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
-  },
-};
-
 // ========== AI Analysis ==========
 const aa = {
   listByModule: (moduleId) => q("SELECT * FROM ai_analysis WHERE module_id = ? AND type = 'module_analysis' ORDER BY created_at DESC LIMIT 5", moduleId),
@@ -1046,70 +899,6 @@ const task = {
   listByProject: (projectId: number) => q('SELECT * FROM plan_tasks WHERE project_id = ? ORDER BY created_at DESC', projectId),
 };
 
-// ========== 待办（独立表 plan_todos，2026-11-20 从 plan_tasks 拆出） ==========
-// 待办是「要动手做的一件事」，只用 title/description/priority/status/scheduled_start/project_id/source；
-// 定时任务（plan_tasks）那套 cycle_*/output_*/session_id/last_* 列对待办无意义，故独立成表。
-const todo = {
-  list: () => q('SELECT * FROM plan_todos ORDER BY created_at DESC'),
-  get: (id: number) => qOne('SELECT * FROM plan_todos WHERE id = ?', id),
-  add: (data: any) => {
-    const pid = (data.project_id !== null && data.project_id !== undefined && data.project_id !== '') ? (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null) : null;
-    run('INSERT INTO plan_todos (title, description, priority, status, scheduled_start, project_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      data.title, data.description || '', data.priority || 'mid', data.status || 'pending', data.scheduled_start || '', pid, data.source || '');
-    const r = qOne<{ id: number }>('SELECT id FROM plan_todos ORDER BY id DESC LIMIT 1');
-    return { id: r!.id };
-  },
-  update: (id: number, data: any) => {
-    const fields: any[] = []; const params: any[] = [];
-    if (data.title !== undefined) { fields.push('title = ?'); params.push(data.title); }
-    if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description); }
-    if (data.priority !== undefined) { fields.push('priority = ?'); params.push(data.priority); }
-    if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
-    if (data.scheduled_start !== undefined) { fields.push('scheduled_start = ?'); params.push(data.scheduled_start); }
-    if (data.project_id !== undefined) {
-      const v = (data.project_id === null || data.project_id === undefined || data.project_id === '') ? null : (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null);
-      fields.push('project_id = ?'); params.push(v);
-    }
-    if (data.source !== undefined) { fields.push('source = ?'); params.push(data.source); }
-    if (fields.length) { fields.push("updated_at = datetime('now', '+8 hours')"); params.push(id); run(`UPDATE plan_todos SET ${fields.join(', ')} WHERE id = ?`, ...params); }
-  },
-  remove: (id: number) => {
-    run('DELETE FROM plan_todos WHERE id = ?', id);
-    // 顺带解除工单关联，别留下指向已删待办的悬空关联
-    try { run('DELETE FROM ticket_todos WHERE todo_id = ?', id); } catch (e) {}
-  },
-  // 未完成数（今天页/侧栏徽标用）
-  openCount: () => (qOne<{ c: number }>("SELECT COUNT(*) AS c FROM plan_todos WHERE status != 'done'") || { c: 0 }).c,
-};
-
-const taskExecution = {
-  add: (data: any) => {
-    run('INSERT INTO plan_executions (task_id, task_title, status, trigger_type, start_time, end_time, log_text, result_text, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      data.task_id || null, data.task_title || '', data.status || 'QUEUED', data.trigger_type || '',
-      data.start_time || '', data.end_time || '', data.log_text || '', data.result_text || '', data.error_message || '');
-    const r = qOne<{id: number}>('SELECT id FROM plan_executions ORDER BY id DESC LIMIT 1');
-    return r ? r.id : null;
-  },
-  update: (id: number, data: any) => {
-    const fields: any[] = []; const params: any[] = [];
-    if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
-    if (data.start_time !== undefined) { fields.push('start_time = ?'); params.push(data.start_time); }
-    if (data.end_time !== undefined) { fields.push('end_time = ?'); params.push(data.end_time); }
-    if (data.log_text !== undefined) { fields.push('log_text = ?'); params.push(data.log_text); }
-    if (data.result_text !== undefined) { fields.push('result_text = ?'); params.push(data.result_text); }
-    if (data.error_message !== undefined) { fields.push('error_message = ?'); params.push(data.error_message); }
-    if (fields.length) { params.push(id); run(`UPDATE plan_executions SET ${fields.join(', ')} WHERE id = ?`, ...params); }
-  },
-  list: (page = 1, pageSize = 20) => {
-    const offset = Math.max(0, (page - 1) * pageSize);
-    const total = (qOne<{c: number}>('SELECT COUNT(*) as c FROM plan_executions') || {}).c || 0;
-    const rows = q('SELECT * FROM plan_executions ORDER BY id DESC LIMIT ? OFFSET ?', pageSize, offset);
-    return { total, rows };
-  },
-  listByTask: (taskId: number, limit = 20) => q('SELECT * FROM plan_executions WHERE task_id = ? ORDER BY id DESC LIMIT ?', taskId, limit),
-  get: (id: number) => qOne('SELECT * FROM plan_executions WHERE id = ?', id),
-};
-
 // ========== AI 工具箱历史 ==========
 const aitoolHistory = {
   add: (tool, name, params, result, resultType = 'text') => {
@@ -1149,4 +938,33 @@ const feishuContext = {
   list: () => q('SELECT * FROM feishu_contexts ORDER BY updated_at DESC'),
 };
 
-export { getDb, close, q, qOne, run, runRaw, save, project, chat, dm, ds, aa, reminder, task, todo, taskExecution, aitoolHistory, feishuContext };
+// ========== 任务执行记录 ==========
+const taskExecution = {
+  add: (data: any) => {
+    run('INSERT INTO plan_executions (task_id, task_title, status, trigger_type, start_time, end_time, log_text, result_text, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      data.task_id || null, data.task_title || '', data.status || 'QUEUED', data.trigger_type || '',
+      data.start_time || '', data.end_time || '', data.log_text || '', data.result_text || '', data.error_message || '');
+    const r = qOne<{id: number}>('SELECT id FROM plan_executions ORDER BY id DESC LIMIT 1');
+    return r ? r.id : null;
+  },
+  update: (id: number, data: any) => {
+    const fields: any[] = []; const params: any[] = [];
+    if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
+    if (data.start_time !== undefined) { fields.push('start_time = ?'); params.push(data.start_time); }
+    if (data.end_time !== undefined) { fields.push('end_time = ?'); params.push(data.end_time); }
+    if (data.log_text !== undefined) { fields.push('log_text = ?'); params.push(data.log_text); }
+    if (data.result_text !== undefined) { fields.push('result_text = ?'); params.push(data.result_text); }
+    if (data.error_message !== undefined) { fields.push('error_message = ?'); params.push(data.error_message); }
+    if (fields.length) { params.push(id); run(`UPDATE plan_executions SET ${fields.join(', ')} WHERE id = ?`, ...params); }
+  },
+  list: (page = 1, pageSize = 20) => {
+    const offset = Math.max(0, (page - 1) * pageSize);
+    const total = (qOne<{c: number}>('SELECT COUNT(*) as c FROM plan_executions') || {}).c || 0;
+    const rows = q('SELECT * FROM plan_executions ORDER BY id DESC LIMIT ? OFFSET ?', pageSize, offset);
+    return { total, rows };
+  },
+  listByTask: (taskId: number, limit = 20) => q('SELECT * FROM plan_executions WHERE task_id = ? ORDER BY id DESC LIMIT ?', taskId, limit),
+  get: (id: number) => qOne('SELECT * FROM plan_executions WHERE id = ?', id),
+};
+
+export { getDb, close, q, qOne, run, runInsertId, runRaw, save, project, chat, aa, reminder, task, taskExecution, aitoolHistory, feishuContext };

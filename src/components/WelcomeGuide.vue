@@ -79,7 +79,6 @@ const llmReady = ref(false);
 const pages = [
   { path: '/chat', icon: '💬', label: 'AI 对话' },
   { path: '/planner', icon: '📋', label: '任务' },
-  { path: '/data', icon: '🗃️', label: '数据' },
   { path: '/items', icon: '🔔', label: '事项' },
   { path: '/tools', icon: '🔧', label: '工具箱' },
   { path: '/config', icon: '⚙️', label: '设置' },

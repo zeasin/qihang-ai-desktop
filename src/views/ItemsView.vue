@@ -329,18 +329,32 @@ function todoDue(t: Todo): string {
 }
 
 async function loadTodos() {
-  try { todos.value = await API.todo.list(); } catch { todos.value = []; }
+  // 2026-11-21 待办并入工单：待办 = 类型'待办'的 tickets，映射回待办形状（status: done/pending）
+  try {
+    const rows = await API.ticket.data.list();
+    todos.value = (rows || [])
+      .filter((t: any) => t['类型'] === '待办')
+      .map((t: any) => ({
+        id: t.id,
+        title: t['标题'] || '',
+        status: isClosed(t['状态']) ? 'done' : 'pending',
+        priority: 'mid',
+        scheduled_start: t['承诺时间'] || '',
+        description: t['内容'] || '',
+        created_at: t.created_at,
+      }));
+  } catch { todos.value = []; }
 }
 
 async function addTodo() {
   const title = newTodoTitle.value.trim();
   if (!title) return;
   try {
-    await API.todo.add({
-      title,
-      status: 'pending',
-      priority: 'mid',
-      scheduled_start: newTodoDate.value ? newTodoDate.value + ' 09:00' : '',
+    await API.ticket.data.create({
+      '标题': title,
+      '类型': '待办',
+      '状态': '待处理',
+      '承诺时间': newTodoDate.value ? newTodoDate.value + ' 09:00' : '',
     });
     newTodoTitle.value = '';
     newTodoDate.value = '';
@@ -349,17 +363,18 @@ async function addTodo() {
 }
 
 async function toggleTodo(t: Todo) {
-  const next = t.status === 'done' ? 'pending' : 'done';
+  const done = t.status === 'done';
+  const nextStatus = done ? '待处理' : '已完成';
   try {
-    await API.todo.update(t.id, { status: next });
-    t.status = next;
+    await API.ticket.data.update(t.id, { '状态': nextStatus });
+    t.status = done ? 'pending' : 'done';
   } catch {}
 }
 
 async function removeTodo(t: Todo) {
-  if (!confirm('删除待办「' + t.title + '」？')) return;
+  if (!confirm('删除待办「' + t.title + '」？（待办本身也是一条工单）')) return;
   try {
-    await API.todo.remove(t.id);
+    await API.ticket.data.remove(t.id);
     await loadTodos();
   } catch {}
 }

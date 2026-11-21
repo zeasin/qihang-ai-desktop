@@ -12,6 +12,7 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { app } from 'electron';
 import * as db from '../services/database';
+import * as ticketStore from '../services/tickets';
 import { listPiModels } from '../services/pi-agent';
 import { askRadar } from '../radar/radar-ask';
 import { getBrief } from '../radar/radar-brief';
@@ -570,7 +571,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       } else {
         const id = Number(body?.id);
         if (!Number.isFinite(id)) return sendJson(res, 400, { ok: false, error: '缺少待办 id' });
-        db.todo.update(id, { status: done ? 'done' : 'pending' });
+        // 2026-11-21 待办并入工单：勾选 = 待办工单 状态流转（已完成/待处理）
+        ticketStore.update(id, { '状态': done ? '已完成' : '待处理' });
       }
       return sendJson(res, 200, { ok: true });
     } catch (e: any) {
@@ -581,7 +583,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   // ---------- 首页（今天页聚合）：待办 + 笔记提炼 + 雷达动态 + 最近会话 + 工作日志 ----------
   if (req.method === 'GET' && pathname === '/api/today') {
     const out: any = { ok: true };
-    try { out.todos = (db.todo.list() || []).filter((t: any) => t.status !== 'done').slice(0, 8); } catch { out.todos = []; }
+    // 2026-11-21 待办并入工单：今天页待办 = 类型'待办'的未完结 tickets，映射回旧形状供移动端渲染
+    try {
+      out.todos = ticketStore.list({ type: '待办' })
+        .map((t: any) => ({ id: t.id, title: t['标题'], description: t['内容'], status: ticketStore.isClosed(t['状态']) ? 'done' : 'pending', scheduled_start: t['承诺时间'] }))
+        .filter((t: any) => t.status !== 'done').slice(0, 8);
+    } catch { out.todos = []; }
     try {
       const d: any = await extractDigest();
       out.digestTodos = (d?.todos || []).filter((t: any) => !t.done).slice(0, 20);

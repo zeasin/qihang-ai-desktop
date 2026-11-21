@@ -27,7 +27,7 @@ const routes = [
     component: () => import('@/views/SourcesView.vue')
   },
   {
-    // 旧数据页已退役（本地数据集隐藏不删），旧入口一律重定向
+    // 旧数据页已退役（2026-11-21 data_center 通用层整体移除），旧入口一律重定向
     path: '/data',
     redirect: '/sources'
   },

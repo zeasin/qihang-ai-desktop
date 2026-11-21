@@ -79,15 +79,6 @@
               </div>
             </div>
 
-            <!-- 网络抓取：目标数据集 -->
-            <div v-if="activeTool.id === 'fetch'" class="form-row">
-              <label class="form-label">存到数据集（可选）</label>
-              <select v-model="form.datasetId" class="form-input">
-                <option value="">不存储，仅预览</option>
-                <option v-for="d in datasets" :key="d.id" :value="d.id">{{ d.name }}</option>
-              </select>
-            </div>
-
             <div class="form-actions">
               <!-- AI 生成类技能：运行中按钮变“取消生成” -->
               <button
@@ -277,7 +268,6 @@ let streamId = '';
 let runToken = 0; // 竞态守卫：切换工具/重置后，旧请求的结果一律丢弃
 let sessionSeqN = 0;
 
-const datasets = ref<any[]>([]);
 const imgDataUrl = ref('');
 const imgConfig = reactive({ baseUrl: '', apiKey: '', model: '' });
 const imgConfigOpen = ref(false);
@@ -489,7 +479,6 @@ const onDelta = (e: any) => {
 onMounted(() => {
   resetForm();
   window.electronAPI?.on('aitool:delta', onDelta);
-  window.electronAPI?.ds.list().then((list: any[]) => { datasets.value = list || []; }).catch(() => {});
   window.electronAPI?.aitool.imageConfig().then((cfg: any) => {
     imgConfig.baseUrl = cfg?.baseUrl || 'https://api.openai.com/v1';
     imgConfig.apiKey = cfg?.apiKey || '';
@@ -572,28 +561,7 @@ const doFetch = async () => {
       return;
     }
     outputText.value = `URL: ${res.url}\n标题: ${res.title || ''}\n类型: ${res.contentType || ''}\n\n${res.text || ''}`;
-    if (form.datasetId) {
-      const obj: any = { url: res.url, title: res.title || '', content_type: res.contentType || '' };
-      if (res.contentType && res.contentType.includes('json')) {
-        try {
-          const parsed = JSON.parse(res.text || '[]');
-          if (Array.isArray(parsed)) {
-            for (const item of parsed.slice(0, 200)) {
-              await window.electronAPI.ds.insert(Number(form.datasetId), { ...obj, ...item });
-            }
-            if (token !== runToken) return;
-            outputText.value += `\n\n已导入 ${Math.min(parsed.length, 200)} 条记录到数据集。`;
-            return;
-          }
-          obj.data = res.text;
-        } catch {}
-      } else {
-        obj.text = (res.text || '').slice(0, 3000);
-      }
-      await window.electronAPI.ds.insert(Number(form.datasetId), obj);
-      if (token !== runToken) return;
-      outputText.value += '\n\n已存入数据集。';
-    }
+    // 2026-11-21 数据中心退役：抓取结果改为纯预览（不再落库数据集）
   } catch (e: any) {
     if (token !== runToken) return;
     error.value = e.message || String(e);

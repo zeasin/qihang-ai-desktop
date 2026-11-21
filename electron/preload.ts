@@ -61,35 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDefault: () => ipcRenderer.invoke('kb:getDefault'),
   },
 
-  // Module
-  dm: {
-    list: () => ipcRenderer.invoke('module:list'),
-    get: (id: number) => ipcRenderer.invoke('module:get', { id }),
-    add: (name: string, description: string, icon: string) => ipcRenderer.invoke('module:add', { name, description, icon }),
-    update: (id: number, data: unknown) => ipcRenderer.invoke('module:update', { id, data }),
-    remove: (id: number) => ipcRenderer.invoke('module:remove', { id }),
-  },
-
-  // Dataset
-  ds: {
-    list: () => ipcRenderer.invoke('ds:list'),
-    get: (id: number) => ipcRenderer.invoke('ds:get', { id }),
-    query: (datasetId: number, conditions: string) => ipcRenderer.invoke('ds:query', { datasetId, conditions }),
-    add: (params: unknown) => ipcRenderer.invoke('ds:add', params),
-    updateMeta: (id: number, data: unknown) => ipcRenderer.invoke('ds:updateMeta', { id, data }),
-    insert: (datasetId: number, data: unknown) => ipcRenderer.invoke('ds:insert', { datasetId, data }),
-    updateRecord: (id: number, data: unknown) => ipcRenderer.invoke('ds:updateRecord', { id, data }),
-    deleteRecord: (id: number) => ipcRenderer.invoke('ds:deleteRecord', { id }),
-    remove: (id: number) => ipcRenderer.invoke('ds:remove', { datasetId: id }),
-    listRecords: (datasetId: number, opts?: { search?: string; limit?: number; offset?: number }) => ipcRenderer.invoke('ds:listRecords', { datasetId, ...opts }),
-    pendingRecords: () => ipcRenderer.invoke('ds:pendingRecords'),
-  },
-
-  // Builtin dataset suites
-  suites: {
-    list: () => ipcRenderer.invoke('ds:suites:list'),
-    apply: (ids: string[]) => ipcRenderer.invoke('ds:suites:apply', { ids }),
-  },
+  // （2026-11-21：dm / ds / suites 已随 data_center 通用层退役，工单改走 ticket.*）
 
   // Backup / Restore
   backup: {
@@ -221,24 +193,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     test: (id: string) => ipcRenderer.invoke('reminder:test', id),
   },
 
-  // Todos
-  todo: {
-    list: () => ipcRenderer.invoke('todo:list'),
-    add: (data: unknown) => ipcRenderer.invoke('todo:add', data),
-    update: (id: number, data: unknown) => ipcRenderer.invoke('todo:update', id, data),
-    remove: (id: number) => ipcRenderer.invoke('todo:remove', id),
-  },
-
-  // 工单追踪：处理记录流水 + 工单↔待办联动
+  // 工单（tickets 专表，2026-11-21 起待办并入：类型='待办' 的工单）
   ticket: {
-    logList: (datasetId: number, recordId: number) => ipcRenderer.invoke('ticket:log:list', { datasetId, recordId }),
-    logAdd: (datasetId: number, recordId: number, note: string) => ipcRenderer.invoke('ticket:log:add', { datasetId, recordId, note }),
-    todoList: (datasetId: number, recordId: number) => ipcRenderer.invoke('ticket:todo:list', { datasetId, recordId }),
-    todoCounts: (datasetId: number) => ipcRenderer.invoke('ticket:todo:counts', { datasetId }),
-    todoLink: (datasetId: number, recordId: number, todoId: number) => ipcRenderer.invoke('ticket:todo:link', { datasetId, recordId, todoId }),
-    todoUnlink: (datasetId: number, recordId: number, todoId: number) => ipcRenderer.invoke('ticket:todo:unlink', { datasetId, recordId, todoId }),
-    todoCreate: (datasetId: number, recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) =>
-      ipcRenderer.invoke('ticket:todo:create', { datasetId, recordId, ...data }),
+    data: {
+      list: () => ipcRenderer.invoke('ticket:data:list'),
+      create: (form: Record<string, any>) => ipcRenderer.invoke('ticket:data:create', form),
+      update: (id: number, form: Record<string, any>) => ipcRenderer.invoke('ticket:data:update', { id, form }),
+      remove: (id: number) => ipcRenderer.invoke('ticket:data:remove', { id }),
+    },
+    settings: {
+      get: () => ipcRenderer.invoke('ticket:settings:get'),
+      save: (schema: unknown) => ipcRenderer.invoke('ticket:settings:save', schema),
+    },
+    // 追踪：处理记录流水 + 工单↔待办联动
+    logList: (recordId: number) => ipcRenderer.invoke('ticket:log:list', { recordId }),
+    logAdd: (recordId: number, note: string) => ipcRenderer.invoke('ticket:log:add', { recordId, note }),
+    todoList: (recordId: number) => ipcRenderer.invoke('ticket:todo:list', { recordId }),
+    todoCounts: () => ipcRenderer.invoke('ticket:todo:counts'),
+    todoLink: (recordId: number, todoId: number) => ipcRenderer.invoke('ticket:todo:link', { recordId, todoId }),
+    todoUnlink: (recordId: number, todoId: number) => ipcRenderer.invoke('ticket:todo:unlink', { recordId, todoId }),
+    todoCreate: (recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) =>
+      ipcRenderer.invoke('ticket:todo:create', { recordId, ...data }),
     todoToggle: (todoId: number, done: boolean) => ipcRenderer.invoke('ticket:todo:toggle', { todoId, done }),
     // 流转：处理人节点 + 节点时间轴
     handler: {
@@ -249,7 +224,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       remove: (id: number) => ipcRenderer.invoke('ticket:handler:remove', { id }),
     },
     flowNodes: {
-      list: (datasetId: number, recordId: number) => ipcRenderer.invoke('ticket:flowNodes:list', { datasetId, recordId }),
+      list: (recordId: number) => ipcRenderer.invoke('ticket:flowNodes:list', { recordId }),
     },
   },
 

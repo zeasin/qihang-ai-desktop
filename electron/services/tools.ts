@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as db from './database';
 import * as projectScan from './project-scan';
-import { normalizeDatasetRecord } from './dataset-normalize';
+import * as tickets from './tickets';
 import { agentRadar } from './agent-radar';
 import logger from './logger';
 
@@ -131,63 +131,7 @@ function appendTodoNote(projectId: any, title: string): { ok: boolean; rel?: str
 }
 
 // ========== 本地数据工具 ==========
-
-async function queryDatasetTool({ datasetName, conditions, limit }, projectDir) {
-  const all = db.ds.list();
-  const ds = all.find(d => d.name === datasetName || d.id === datasetName);
-  if (!ds) {
-    const names = all.map(d => d.name).join(', ');
-    return `数据集 "${datasetName}" 不存在。可用数据集: ${names || '无'}`;
-  }
-  const rows = db.ds.query(ds.id, conditions || '');
-  const limited = rows.slice(0, limit || 20);
-  logger.info('[Tools] query_dataset: %s → %d records', datasetName, limited.length);
-  return JSON.stringify(limited, null, 2);
-}
-
-async function listDatasetsTool() {
-  const all = db.ds.list();
-  return all.length ? all.map(d => `- ${d.name} (${d.id}): ${d.schema_json}`).join('\n') : '暂无数据集';
-}
-
-function resolveDataset(datasetName) {
-  const all = db.ds.list();
-  return all.find(d => d.name === datasetName || d.id === datasetName) || null;
-}
-
-function parseJsonArg(raw, label) {
-  try { return JSON.parse(raw); } catch { return { error: `${label} 不是合法 JSON 对象` }; }
-}
-
-async function createDatasetTool({ name, description, schemaJson }) {
-  if (!name || !name.trim()) return '请提供数据集名称（name）';
-  db.ds.add({ name: name.trim(), description: description || '', schemaJson: schemaJson || '{}' });
-  const ds = resolveDataset(name.trim());
-  return `已创建数据集 "${name.trim()}" (id: ${ds ? ds.id : '?'})。可用 insert_dataset_record 写入记录。`;
-}
-
-async function insertDatasetRecordTool({ datasetName, data }) {
-  const ds = resolveDataset(datasetName);
-  if (!ds) {
-    const names = db.ds.list().map(d => d.name).join(', ');
-    return `数据集 "${datasetName}" 不存在。可用数据集: ${names || '无'}。`;
-  }
-  const obj = parseJsonArg(data, 'data');
-  if (obj.error) return obj.error;
-  db.ds.insert(ds.id, normalizeDatasetRecord(ds.id, obj));
-  const r = db.qOne("SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1", String(ds.id));
-  logger.info('[Tools] insert_dataset_record: %s → id %s', datasetName, r ? r.id : '?');
-  return `已向数据集 "${ds.name}" 插入一条记录 (id: ${r ? r.id : '?'})`;
-}
-
-async function updateDatasetRecordTool({ id, data }) {
-  const exists = db.qOne("SELECT dataset_id FROM data_center_records WHERE id = ?", id);
-  if (!exists) return `记录 id=${id} 不存在。可先用 query_dataset 查询记录 id。`;
-  const obj = parseJsonArg(data, 'data');
-  if (obj.error) return obj.error;
-  db.ds.updateRecord(id, normalizeDatasetRecord(exists.dataset_id, obj));
-  return `已更新数据集记录 id=${id}`;
-}
+// （通用数据集工具已随 data_center 通用层退役：结构化数据由工单三件套 + MCP 数据源承担）
 
 async function readProjectFileTool({ filePath }, projectDir) {
   const root = projectRoot(projectDir);
@@ -255,20 +199,7 @@ async function queryMessagesTool({ date_from, date_to, role, limit }) {
   return rows.length ? JSON.stringify(rows, null, 2) : '暂无对话数据';
 }
 
-async function queryDataRecordsTool({ dataset_name, date_from, date_to, limit }) {
-  let sql = "SELECT r.*, d.name as dataset_name FROM data_center_records r LEFT JOIN data_center_datasets d ON r.dataset_id = d.id WHERE 1=1";
-  const p: any[] = [];
-  if (dataset_name) {
-    sql += ' AND (d.name LIKE ? OR r.dataset_id IN (SELECT id FROM data_center_datasets WHERE name LIKE ?))';
-    p.push('%' + dataset_name + '%', '%' + dataset_name + '%');
-  }
-  if (date_from) { sql += ' AND r.created_at >= ?'; p.push(date_from); }
-  if (date_to) { sql += ' AND r.created_at <= ?'; p.push(date_to); }
-  sql += ' ORDER BY r.created_at DESC LIMIT ?';
-  p.push(limit || 20);
-  const rows = db.q(sql, ...p);
-  return rows.length ? JSON.stringify(rows, null, 2) : '暂无数据中心记录';
-}
+// query_data_records 已随 data_center 通用层退役：结构化查询由 query_tickets 承担
 
 async function queryRemindersTool() {
   const rows = db.q("SELECT * FROM plan_reminders WHERE enabled = 1 ORDER BY created_at DESC");
@@ -394,78 +325,59 @@ async function updateTaskTool({ id, title, prompt, status, trigger_type, schedul
 }
 
 // ========== 工单工具（对话 / 飞书 / 定时任务共用） ==========
-// 写入走 db.ds.insert / updateRecord → 钩子链（ticket-link → ticket-tracker → ticket-flow）
+// 写入走 tickets 服务 → onSave 钩子链（ticket-link → ticket-tracker → ticket-flow）
 // 自动接住：承诺时间提醒、流水日志、流转节点账、处理人指派通知。工具层只管把字段给对。
+// （2026-11-21 存储专表化：数据不再经 data_center，枚举从 ticket_settings 来）
 
-const TICKET_DS_NAME = '工单';
-
-/** 读工单数据集的枚举（schema 由事项页维护；没建过数据集时给默认值） */
-function ticketSchemaOptions(ds: any): { statusOptions: string[]; typeOptions: string[]; sourceOptions: string[] } {
-  const schema = ds && ds.schema ? ds.schema : null;
-  return {
-    statusOptions: (schema && schema.statusOptions) || ['待处理', '处理中', '已完成', '已关闭'],
-    typeOptions: (schema && schema.typeOptions) || ['需求', '问题', '咨询', '跟进'],
-    sourceOptions: (schema && schema.sourceOptions) || ['微信', '电话', '官网', '邮件', '会议', '其他'],
-  };
-}
-
-/** 承诺时间统一成联动层认的 "YYYY-MM-DD HH:MM"（只给日期时补当天 18:00） */
-function normalizePromiseTime(v: any): string {
-  const s = String(v || '').trim();
-  if (!s) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s + ' 18:00';
-  return s.slice(0, 16);
+/** 工单状态枚举（ticket_settings；给默认值兜底） */
+function ticketStatusOptions(): string[] {
+  const s = tickets.getSettings();
+  return Array.isArray(s && s.statusOptions) && s.statusOptions.length ? s.statusOptions : ['待处理', '处理中', '已完成', '已关闭'];
 }
 
 async function createTicketTool({ title, content, handler, type, source, status, promise_time, remark, creator }) {
   const t = String(title || '').trim();
   if (!t) return '请提供工单标题（title）';
-  // 懒加载防循环依赖；数据集可能还没建过（用户没进过事项页）→ 主进程兜底建
-  const ticketFlow = require('./ticket-flow');
-  const dsId = ticketFlow.ensureTicketDataset();
-  if (!dsId) return '无法定位或创建「工单」数据集';
-  const ds = db.ds.get(dsId);
-  const { statusOptions } = ticketSchemaOptions(ds);
+  const statusOptions = ticketStatusOptions();
   const st = String(status || '').trim();
   if (st && !statusOptions.includes(st)) return `状态「${st}」不在工单状态枚举里，可用：${statusOptions.join(' / ')}`;
-  const rec: any = { 标题: t, 状态: st || '待处理' };
-  if (content) rec['内容'] = String(content).trim();
-  if (handler) rec['处理人'] = String(handler).trim();
-  if (type) rec['类型'] = String(type).trim();
-  if (source) rec['来源'] = String(source).trim();
-  if (creator) rec['新建人'] = String(creator).trim();
-  const pt = normalizePromiseTime(promise_time);
-  if (pt) rec['承诺时间'] = pt;
-  if (remark) rec['备注'] = String(remark).trim();
-  const id = db.ds.insert(dsId, normalizeDatasetRecord(dsId, rec));
-  logger.info('[Tools] create_ticket: %s → id %s', t, id);
+  const form: any = { '标题': t, '状态': st || '待处理' };
+  if (content) form['内容'] = String(content).trim();
+  if (handler) form['处理人'] = String(handler).trim();
+  if (type) form['类型'] = String(type).trim();
+  if (source) form['来源'] = String(source).trim();
+  if (creator) form['新建人'] = String(creator).trim();
+  if (promise_time) form['承诺时间'] = String(promise_time).trim();   // 纯日期由服务层补 18:00
+  if (remark) form['备注'] = String(remark).trim();
+  const id = tickets.create(form);
+  const saved = tickets.get(id) || form;
   // 通知口径与 ticket-flow 一致：处理人匹配到节点档案且有 webhook 才定向通知
   let notify = '承诺时间到点会自动提醒。';
-  if (rec['处理人']) {
-    const node = db.qOne('SELECT webhook_url FROM ticket_handlers WHERE name = ? AND enabled = 1', rec['处理人']);
+  if (form['处理人']) {
+    const node = db.qOne('SELECT webhook_url FROM ticket_handlers WHERE name = ? AND enabled = 1', form['处理人']);
     notify = node && node.webhook_url
       ? '已按处理人触发飞书指派通知。'
       : '处理人没匹配到节点档案/webhook，走全局兜底 webhook（未配置则不通知）。';
   }
-  return `已创建工单 #${id}「${t}」（状态：${rec['状态']}`
-    + (rec['处理人'] ? `，处理人：${rec['处理人']}` : '')
-    + (rec['类型'] ? `，类型：${rec['类型']}` : '')
-    + (pt ? `，承诺时间：${pt}` : '') + `）。${notify}`;
+  return `已创建工单 #${id}「${t}」（状态：${saved['状态']}`
+    + (saved['处理人'] ? `，处理人：${saved['处理人']}` : '')
+    + (saved['类型'] ? `，类型：${saved['类型']}` : '')
+    + (saved['承诺时间'] ? `，承诺时间：${saved['承诺时间']}` : '') + `）。${notify}`;
 }
 
 async function queryTicketsTool({ status, handler, keyword, limit }) {
-  const all = db.ds.list();
-  const ds = all.find(d => d.name === TICKET_DS_NAME);
-  if (!ds) return '还没有「工单」数据集（在事项页新建工单或直接建单时会自动创建）';
   const lim = Math.max(1, Math.min(50, toNumber(limit, 20)));
-  const { rows, total } = db.ds.listRecords(ds.id, { search: String(keyword || '').trim(), limit: lim });
+  const all = tickets.list({ limit: 500 });
   const st = String(status || '').trim();
   const hd = String(handler || '').trim();
-  let hit = rows;
+  const kw = String(keyword || '').trim().toLowerCase();
+  let hit = all;
   if (st) hit = hit.filter(r => String(r['状态'] || '').trim() === st);
   if (hd) hit = hit.filter(r => String(r['处理人'] || '').includes(hd));
-  if (!hit.length) return `没有匹配的工单（当前共 ${total} 条在库）。`;
-  return `${total} 条在库，命中 ${hit.length} 条：\n` + hit.map(r =>
+  if (kw) hit = hit.filter(r =>
+    String(r['标题'] || '').toLowerCase().includes(kw) || String(r['内容'] || '').toLowerCase().includes(kw) || String(r['备注'] || '').toLowerCase().includes(kw));
+  if (!hit.length) return `没有匹配的工单（当前共 ${all.length} 条在库）。`;
+  return `${all.length} 条在库，命中 ${hit.length} 条：\n` + hit.slice(0, lim).map(r =>
     `#${r.id} 「${r['标题'] || '(无标题)'}」[${r['状态'] || '待处理'}]`
     + ` 处理人:${r['处理人'] || '未指派'}`
     + ` 承诺:${r['承诺时间'] || '无'}`
@@ -475,13 +387,9 @@ async function queryTicketsTool({ status, handler, keyword, limit }) {
 
 async function updateTicketTool({ id, status, handler, remark, promise_time }) {
   const recId = toNumber(id, 0);
-  const row = db.qOne<{ id: number; dataset_id: string; data_json: string }>(
-    'SELECT id, dataset_id, data_json FROM data_center_records WHERE id = ?', recId);
-  if (!row) return `工单 #${id} 不存在。可先用 query_tickets 查询工单 id。`;
-  let cur: any = {};
-  try { cur = JSON.parse(row.data_json || '{}'); } catch { cur = {}; }
-  const ds = db.ds.get(row.dataset_id);
-  const { statusOptions } = ticketSchemaOptions(ds);
+  const cur = tickets.get(recId);
+  if (!cur) return `工单 #${id} 不存在。可先用 query_tickets 查询工单 id。`;
+  const statusOptions = ticketStatusOptions();
   const patch: any = {};
   const st = String(status || '').trim();
   if (st) {
@@ -490,16 +398,16 @@ async function updateTicketTool({ id, status, handler, remark, promise_time }) {
   }
   const hd = String(handler || '').trim();
   if (hd && hd !== String(cur['处理人'] || '').trim()) patch['处理人'] = hd;
-  const pt = normalizePromiseTime(promise_time);
-  if (pt && pt !== String(cur['承诺时间'] || '').trim()) patch['承诺时间'] = pt;
+  const pt = String(promise_time || '').trim();
+  if (pt && pt !== String(cur['承诺时间'] || '').trim()) patch['承诺时间'] = pt;   // 归一由服务层做
   const rk = String(remark || '').trim();
   if (rk) {
     // 追加而非覆盖（对齐编辑弹窗「处理结果并入备注尾部」的口径）；状态变更时钩子会拿它当节点处理结果
     patch['备注'] = cur['备注'] ? `${String(cur['备注']).trim()}\n${rk}` : rk;
   }
   if (!Object.keys(patch).length) return `工单 #${recId}「${cur['标题'] || ''}」没有需要变更的字段`;
-  // updateRecord 触发钩子链：状态变 → 关旧节点+开新节点；处理人变 → 指派通知
-  db.ds.updateRecord(recId, { ...cur, ...patch });
+  // tickets.update 触发钩子链：状态变 → 关旧节点+开新节点；处理人变 → 指派通知
+  tickets.update(recId, { ...cur, ...patch });
   logger.info('[Tools] update_ticket: #%s %j', recId, Object.keys(patch));
   const changed = Object.keys(patch).map(k => `${k} → ${patch[k]}`).join('，');
   let tail = '';
@@ -585,7 +493,6 @@ async function buildReportToolDefs(kbId) {
   const optNum = (description?: string) => Type.Optional(Type.Union([Type.Number({ description }), Type.String(), Type.Null()]));
   return [
     { name: 'query_messages', label: 'query_messages', description: '查询聊天/对话记录（prj_messages）。可过滤日期范围、角色( user / assistant )。', parameters: Type.Object({ date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), role: optStr('角色: user / assistant'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryMessagesTool({ ...args, limit: toNumber(args.limit, 20) })) },
-    { name: 'query_data_records', label: 'query_data_records', description: '查询数据中心记录（data_center_records）。可过滤数据集名称、日期范围。', parameters: Type.Object({ dataset_name: optStr('数据集名称关键词（模糊匹配）'), date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryDataRecordsTool({ ...args, limit: toNumber(args.limit, 20) })) },
     { name: 'query_reminders', label: 'query_reminders', description: '查询已启用的提醒事项（plan_reminders）。', parameters: Type.Object({}), execute: exec(() => queryRemindersTool()) },
     { name: 'add_reminder', label: 'add_reminder', description: '创建一条定时提醒。类型: daily(每天)/weekly(每周，需 day_of_week 0=周日)/monthly(每月，需 day_of_month)/once(一次性，需 date YYYY-MM-DD)。', parameters: Type.Object({ name: Type.String({ description: '提醒名称，如 "喝水"' }), message: optStr('提醒内容'), type: optStr('类型: daily / weekly / monthly / once，默认 daily'), time: optStr('时间 HH:MM，默认 09:00'), day_of_week: optNum('weekly 用: 0-6，0=周日'), day_of_month: optNum('monthly 用: 1-31'), date: optStr('once 用: 日期 YYYY-MM-DD') }), execute: exec(addReminderTool) },
     { name: 'update_reminder', label: 'update_reminder', description: '更新提醒（名称、内容、时间、启用状态等）。先调用 query_reminders 获取提醒 id。', parameters: Type.Object({ id: Type.String({ description: '提醒 id（如 R1712345678901）' }), name: optStr('新名称'), message: optStr('新内容'), time: optStr('时间 HH:MM'), enabled: optStr('是否启用: true / false'), type: optStr('类型: daily / weekly / monthly / once'), day_of_week: optNum('weekly 用: 0-6'), day_of_month: optNum('monthly 用: 1-31'), date: optStr('once 用: YYYY-MM-DD') }), execute: exec(updateReminderTool) },

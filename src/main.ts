@@ -156,10 +156,10 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
       };
     })(),
     project: { list: async () => [{ id: 1, name: '旗舰店运营', dir: 'C:/demo/notes', is_default: 1 }] },
-    ds: {
-      pendingRecords: async () => [
-        { datasetId: 3, datasetName: '项目工单', records: [{ id: 1, _created_at: iso(0) }, { id: 2, _created_at: iso(0) }, { id: 3, _created_at: iso(1) }] },
-      ],
+    ticket: {
+      data: { list: async () => [], create: async () => 0, update: async () => true, remove: async () => true },
+      settings: { get: async () => ({}), save: async () => true },
+      todoCounts: async () => ({}),
     },
     reminder: {
       list: async () => [
