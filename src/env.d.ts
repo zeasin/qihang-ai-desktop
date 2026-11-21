@@ -280,6 +280,17 @@ interface ElectronAPI {
     update: (id: number, data: any) => Promise<void>;
     remove: (id: number) => Promise<void>;
   };
+  /** 工单追踪：处理记录流水 + 工单↔待办联动 */
+  ticket: {
+    logList: (datasetId: number, recordId: number) => Promise<any[]>;
+    logAdd: (datasetId: number, recordId: number, note: string) => Promise<boolean>;
+    todoList: (datasetId: number, recordId: number) => Promise<any[]>;
+    todoCounts: (datasetId: number) => Promise<Record<string, number>>;
+    todoLink: (datasetId: number, recordId: number, todoId: number) => Promise<boolean>;
+    todoUnlink: (datasetId: number, recordId: number, todoId: number) => Promise<boolean>;
+    todoCreate: (datasetId: number, recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) => Promise<any>;
+    todoToggle: (todoId: number, done: boolean) => Promise<boolean>;
+  };
   noteDigest: {
     extract: () => Promise<{ todos: any[]; followups: any[]; logs: any[]; scannedFiles: number; generated_at: string }>;
     syncDone: () => Promise<{ touched: number }>;

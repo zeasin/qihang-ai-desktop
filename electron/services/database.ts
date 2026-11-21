@@ -25,7 +25,7 @@ function getDb(): Database.Database {
 }
 
 /** 记录保存回调注册点（工单联动用，由 main.ts 在启动时注册） */
-const dsRecordHooks: Array<(kind: 'insert' | 'update', datasetId: string, recordId: number | null, data: any) => void> = [];
+const dsRecordHooks: Array<(kind: 'insert' | 'update' | 'delete', datasetId: string, recordId: number | null, data: any, prev?: any) => void> = [];
 
 /** 本地 SQLite 表结构 */
 function initSchema() {
@@ -207,6 +207,31 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
     );
 
+    -- 工单处理记录：新建/状态变化/流转的流水（工单数据集的记录级日志）
+    CREATE TABLE IF NOT EXISTS ticket_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      dataset_id TEXT DEFAULT '',
+      record_id INTEGER,
+      action TEXT DEFAULT '',
+      field TEXT DEFAULT '',
+      from_value TEXT DEFAULT '',
+      to_value TEXT DEFAULT '',
+      note TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_logs_record ON ticket_logs(dataset_id, record_id);
+
+    -- 工单 ↔ 待办 关联（一单可拆多条待办；待办在 plan_todos）
+    CREATE TABLE IF NOT EXISTS ticket_todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      dataset_id TEXT DEFAULT '',
+      record_id INTEGER,
+      todo_id INTEGER,
+      created_at TEXT DEFAULT (datetime('now', '+8 hours'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_todos_record ON ticket_todos(dataset_id, record_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_todos_todo ON ticket_todos(todo_id);
+
     CREATE TABLE IF NOT EXISTS plan_executions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id INTEGER,
@@ -314,6 +339,37 @@ function initSchema() {
     const fixed = getDb().prepare("UPDATE data_center_records SET dataset_id = CAST(CAST(dataset_id AS REAL) AS INTEGER) WHERE dataset_id GLOB '[0-9]*.0'").run();
     if (fixed.changes) logger.info('[DB] 归一化记录 dataset_id：' + fixed.changes + ' 条');
   } catch (e) { logger.warn('[DB] dataset_id 归一化失败: ' + (e && e.message)); }
+  // 记录表镜像列回填：source/record_type/record_status 建表时预留但从未写入，
+  // 语义即 来源/类型/状态（用户明确要求这几列必须有值，状态处理依赖它们）。
+  // 从 data_json 里的中文核心字段（兼容英文键）回填；字段本身缺失时存 NULL。
+  // WHERE 只挑「列空 且 data_json 里有对应值」的行——列空但字段也缺的行不动，
+  // 否则每次启动都会把 NULL 重写成 NULL，回填日志永远刷屏。
+  try {
+    const backfill = getDb().prepare(`
+      UPDATE data_center_records SET
+        record_type   = COALESCE(json_extract(data_json, '$."类型"'), json_extract(data_json, '$.type')),
+        record_status = COALESCE(json_extract(data_json, '$."状态"'), json_extract(data_json, '$.status')),
+        source        = COALESCE(json_extract(data_json, '$."来源"'), json_extract(data_json, '$.source'))
+      WHERE ((record_type IS NULL OR record_type = '')
+              AND (json_extract(data_json, '$."类型"') IS NOT NULL OR json_extract(data_json, '$.type') IS NOT NULL))
+         OR ((record_status IS NULL OR record_status = '')
+              AND (json_extract(data_json, '$."状态"') IS NOT NULL OR json_extract(data_json, '$.status') IS NOT NULL))
+         OR ((source IS NULL OR source = '')
+              AND (json_extract(data_json, '$."来源"') IS NOT NULL OR json_extract(data_json, '$.source') IS NOT NULL))
+    `).run();
+    if (backfill.changes) logger.info('[DB] 记录镜像列回填：' + backfill.changes + ' 条');
+  } catch (e) { logger.warn('[DB] 记录镜像列回填失败: ' + (e && e.message)); }
+  // 待办表补列：线上 plan_todos 是旧结构（缺 scheduled_start / project_id / source），
+  // 而代码往这三列写 → 「新建待办」直接报 no such column。缺哪补哪，已有列不动。
+  try {
+    const tcols = getDb().prepare('PRAGMA table_info(plan_todos)').all() as any[];
+    const tHas = (n: string) => tcols.some((c: any) => c.name === n);
+    for (const [name, ddl] of [['scheduled_start', "TEXT DEFAULT ''"], ['project_id', 'INTEGER DEFAULT NULL'], ['source', "TEXT DEFAULT ''"]] as Array<[string, string]>) {
+      if (tHas(name)) continue;
+      getDb().exec(`ALTER TABLE plan_todos ADD COLUMN ${name} ${ddl}`);
+      logger.info('[DB] plan_todos 补列：' + name);
+    }
+  } catch (e) { logger.warn('[DB] plan_todos 补列失败: ' + (e && e.message)); }
   // 移动端可逐会话指定模型；桌面 UI 仍用全局默认，空串即跟随全局
   try { getDb().exec("ALTER TABLE prj_sessions ADD COLUMN model_id TEXT DEFAULT ''"); } catch (e) {}
   // 飞书来源会话的锚点（chat_id）：供「继续」按群/私聊定位最近对话，也为回推飞书留映射
@@ -696,6 +752,29 @@ function dsRecordWhere(id: any): { sql: string; params: any[] } {
   };
 }
 
+/**
+ * 回填记录表的镜像列：record_type（类型）/ record_status（状态）/ source（来源）。
+ *
+ * 这几列建表时预留但一直没写入，真实内容全在 data_json 里（更新日志 v0.18 有说明）。
+ * 语义上它们就是 类型/状态/来源，现在按 data_json 里的中文字段回填，
+ * 让数据库直接 SELECT 也能看到；找不到对应字段就存 NULL，不影响任何查询路径。
+ * 列表与筛选依旧读 data_json —— 镜像列只是给人看和给 SQL 用的。
+ */
+function fillRecordMirrorColumns(dataObj: any): { record_type: string | null; record_status: string | null; source: string | null } {
+  const d = (dataObj && typeof dataObj === 'object') ? dataObj : {};
+  const pick = (k: string): string | null => {
+    const v = d[k];
+    const s = v == null ? '' : String(v).trim();
+    return s || null;   // 空值存 NULL：与回填迁移的口径一致（NULL = 该字段没填）
+  };
+  // 中文核心字段优先，兼容英文键（type/status/source）
+  return {
+    record_type: pick('类型') || pick('type'),
+    record_status: pick('状态') || pick('status'),
+    source: pick('来源') || pick('source'),
+  };
+}
+
 const ds = {
   list: () => {
     const rows = q('SELECT d.*, (SELECT COUNT(*) FROM data_center_records WHERE dataset_id = d.id) as record_count FROM data_center_datasets d ORDER BY d.created_at DESC');
@@ -767,22 +846,36 @@ const ds = {
   insert: (datasetId, dataObj) => {
     // dataset_id 必须按字符串写入（见 dsRecordKey 注释）
     const key = dsRecordKey(datasetId);
-    run("INSERT INTO data_center_records (dataset_id, data_json) VALUES (?, ?)", key, JSON.stringify(dataObj));
+    const m = fillRecordMirrorColumns(dataObj);
+    run("INSERT INTO data_center_records (dataset_id, data_json, record_type, record_status, source) VALUES (?, ?, ?, ?, ?)",
+      key, JSON.stringify(dataObj), m.record_type, m.record_status, m.source);
     // 工单联动 hook：通知外部（main.ts 注册）记录已保存，便于按承诺时间派生提醒等
     const rec = qOne<{ id: number }>('SELECT id FROM data_center_records WHERE dataset_id = ? ORDER BY id DESC LIMIT 1', key);
     try { for (const h of dsRecordHooks) h('insert', key, rec ? rec.id : null, dataObj); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
     return rec ? rec.id : null;
   },
   updateRecord: (id, dataObj) => {
-    run('UPDATE data_center_records SET data_json = ? WHERE id = ?', JSON.stringify(dataObj), id);
+    // 取旧值：记录钩子要靠它比对出「状态从 A 变 B」这类流转
+    const prevRow = qOne<{ data_json: string }>('SELECT data_json FROM data_center_records WHERE id = ?', id);
+    let prev: any = null;
+    try { prev = prevRow ? JSON.parse(prevRow.data_json || '{}') : null; } catch { prev = null; }
+    const m = fillRecordMirrorColumns(dataObj);
+    run('UPDATE data_center_records SET data_json = ?, record_type = ?, record_status = ?, source = ? WHERE id = ?',
+      JSON.stringify(dataObj), m.record_type, m.record_status, m.source, id);
     const rec = qOne<{ dataset_id: string | number }>('SELECT dataset_id FROM data_center_records WHERE id = ?', id);
-    try { for (const h of dsRecordHooks) h('update', rec ? String(rec.dataset_id) : '', id, dataObj); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
+    try { for (const h of dsRecordHooks) h('update', rec ? String(rec.dataset_id) : '', id, dataObj, prev); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
   },
-  /** 工单联动等外部逻辑注册的记录保存回调（kind: 'insert' | 'update'） */
-  onRecordSave: (fn: (kind: 'insert' | 'update', datasetId: string, recordId: number | null, data: any) => void) => {
+  /** 工单联动等外部逻辑注册的记录保存回调（kind: 'insert' | 'update' | 'delete'） */
+  onRecordSave: (fn: (kind: 'insert' | 'update' | 'delete', datasetId: string, recordId: number | null, data: any, prev?: any) => void) => {
     dsRecordHooks.push(fn);
   },
-  deleteRecord: (id) => run('DELETE FROM data_center_records WHERE id = ?', id),
+  deleteRecord: (id) => {
+    const rec = qOne<{ dataset_id: string | number; data_json: string }>('SELECT dataset_id, data_json FROM data_center_records WHERE id = ?', id);
+    let prev: any = null;
+    try { prev = rec ? JSON.parse(rec.data_json || '{}') : null; } catch { prev = null; }
+    run('DELETE FROM data_center_records WHERE id = ?', id);
+    try { for (const h of dsRecordHooks) h('delete', rec ? String(rec.dataset_id) : '', id, prev); } catch (e) { logger.warn('[DB] ds record hook error: ' + (e && e.message)); }
+  },
 };
 
 // ========== AI Analysis ==========
@@ -923,7 +1016,11 @@ const todo = {
     if (data.source !== undefined) { fields.push('source = ?'); params.push(data.source); }
     if (fields.length) { fields.push("updated_at = datetime('now', '+8 hours')"); params.push(id); run(`UPDATE plan_todos SET ${fields.join(', ')} WHERE id = ?`, ...params); }
   },
-  remove: (id: number) => run('DELETE FROM plan_todos WHERE id = ?', id),
+  remove: (id: number) => {
+    run('DELETE FROM plan_todos WHERE id = ?', id);
+    // 顺带解除工单关联，别留下指向已删待办的悬空关联
+    try { run('DELETE FROM ticket_todos WHERE todo_id = ?', id); } catch (e) {}
+  },
   // 未完成数（今天页/侧栏徽标用）
   openCount: () => (qOne<{ c: number }>("SELECT COUNT(*) AS c FROM plan_todos WHERE status != 'done'") || { c: 0 }).c,
 };

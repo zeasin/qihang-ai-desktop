@@ -170,8 +170,10 @@ function clearReminder(datasetId: string, recordId: number): void {
   }
 }
 
-/** 记录保存回调：主流程入口，绝不抛错（联动失败不能影响工单本身落库） */
-function onTicketRecordSave(kind: 'insert' | 'update', datasetId: string, recordId: number | null, data: any): void {
+/** 记录保存回调：主流程入口，绝不抛错（联动失败不能影响工单本身落库）
+ *  签名与 db.ds.onRecordSave 对齐（含 delete / prev；本钩子只关心 insert/update）。 */
+function onTicketRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, recordId: number | null, data: any, _prev?: any): void {
+  if (kind === 'delete') return; // 删除不联动：工单没了，提醒留着无害（历史留痕）
   try {
     if (!datasetId || recordId == null || !data || typeof data !== 'object') return;
     const schema = parseSchema(datasetId);

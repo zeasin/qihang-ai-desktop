@@ -229,6 +229,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     remove: (id: number) => ipcRenderer.invoke('todo:remove', id),
   },
 
+  // 工单追踪：处理记录流水 + 工单↔待办联动
+  ticket: {
+    logList: (datasetId: number, recordId: number) => ipcRenderer.invoke('ticket:log:list', { datasetId, recordId }),
+    logAdd: (datasetId: number, recordId: number, note: string) => ipcRenderer.invoke('ticket:log:add', { datasetId, recordId, note }),
+    todoList: (datasetId: number, recordId: number) => ipcRenderer.invoke('ticket:todo:list', { datasetId, recordId }),
+    todoCounts: (datasetId: number) => ipcRenderer.invoke('ticket:todo:counts', { datasetId }),
+    todoLink: (datasetId: number, recordId: number, todoId: number) => ipcRenderer.invoke('ticket:todo:link', { datasetId, recordId, todoId }),
+    todoUnlink: (datasetId: number, recordId: number, todoId: number) => ipcRenderer.invoke('ticket:todo:unlink', { datasetId, recordId, todoId }),
+    todoCreate: (datasetId: number, recordId: number, data: { title: string; priority?: string; scheduled_start?: string }) =>
+      ipcRenderer.invoke('ticket:todo:create', { datasetId, recordId, ...data }),
+    todoToggle: (todoId: number, done: boolean) => ipcRenderer.invoke('ticket:todo:toggle', { todoId, done }),
+  },
+
   // 笔记提炼（概览「来自笔记」）
   noteDigest: {
     extract: () => ipcRenderer.invoke('noteDigest:extract'),

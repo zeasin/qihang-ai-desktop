@@ -48,6 +48,7 @@ import * as feishu from './services/feishu';
 import { resolveFeishuTarget, bindChatToProject, buildProjectChoiceText, stashPendingBody, takePendingBody, markAskedChoice, isAwaitingChoice, clearAskedChoice, buildProjectButtons, boundProjectId, needsProjectChoice, stashPendingFollowup, peekPendingFollowup, clearPendingFollowup } from './services/feishu-router';
 import * as scheduler from './services/scheduler';
 import { registerTicketLink } from './services/ticket-link';
+import * as tracker from './services/ticket-tracker';
 import * as projectScan from './services/project-scan';
 import { agentRadar } from './services/agent-radar';
 import { askRadar } from './radar/radar-ask';
@@ -972,6 +973,16 @@ ipcMain.handle('ds:deleteRecord', (_, { id }) => db.ds.deleteRecord(id));
 ipcMain.handle('ds:remove', (_, { datasetId }) => db.ds.remove(datasetId));
 // 工单视图用：分页读取某数据集记录（含承诺时间→提醒联动结果的展示）
 ipcMain.handle('ds:listRecords', (_, { datasetId, search, limit, offset }) => db.ds.listRecords(datasetId, { search, limit, offset }));
+// ---- 工单追踪：处理记录 + 工单↔待办联动 ----
+ipcMain.handle('ticket:log:list', (_, { datasetId, recordId }) => tracker.listLogs(String(datasetId), Number(recordId)));
+ipcMain.handle('ticket:log:add', (_, { datasetId, recordId, note }) => tracker.addManualLog(String(datasetId), Number(recordId), String(note || '')));
+ipcMain.handle('ticket:todo:list', (_, { datasetId, recordId }) => tracker.listLinkedTodos(String(datasetId), Number(recordId)));
+ipcMain.handle('ticket:todo:counts', (_, { datasetId }) => tracker.linkedCounts(String(datasetId)));
+ipcMain.handle('ticket:todo:link', (_, { datasetId, recordId, todoId }) => tracker.linkTodo(String(datasetId), Number(recordId), Number(todoId)));
+ipcMain.handle('ticket:todo:unlink', (_, { datasetId, recordId, todoId }) => tracker.unlinkTodo(String(datasetId), Number(recordId), Number(todoId)));
+ipcMain.handle('ticket:todo:create', (_, { datasetId, recordId, title, priority, scheduled_start }) =>
+  tracker.createTodoForTicket(String(datasetId), Number(recordId), { title, priority, scheduled_start }));
+ipcMain.handle('ticket:todo:toggle', (_, { todoId, done }) => tracker.toggleLinkedTodo(Number(todoId), !!done));
 ipcMain.handle('ds:suites:list', () => listBuiltinSuites());
 ipcMain.handle('ds:suites:apply', (_, { ids }) => {
   try {
@@ -2337,6 +2348,8 @@ app.whenReady().then(async () => {
   startupElapsed('db loaded');
   // 工单联动：数据集记录的承诺时间 → 一次性提醒（挂在 db.ds 保存回调上，覆盖所有写入路径）
   try { registerTicketLink(); } catch (e: any) { logger.warn('[TicketLink] 注册失败: %s', e?.message || e); }
+  // 工单追踪：处理记录流水 + 工单↔待办终态联动（同样挂在记录保存回调上）
+  try { tracker.registerTicketTracker(); } catch (e: any) { logger.warn('[TicketTracker] 注册失败: %s', e?.message || e); }
   createTray();
 
   // 旧版内置数据集 schema 升级：补齐字段类型/必填/选项（幂等）

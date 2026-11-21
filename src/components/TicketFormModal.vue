@@ -58,6 +58,60 @@
           <textarea v-model="form.备注" class="form-control" rows="2" placeholder="处理进展、跟进记录（可追加）"></textarea>
         </div>
 
+        <!-- 关联待办（工单 ↔ 待办联动） -->
+        <div class="form-group" v-if="editingId">
+          <label>关联待办 <em class="hint">工单进入终态时自动收尾；退回流转态自动复活</em></label>
+          <div class="linked-list" v-if="linkedTodos.length">
+            <div class="linked-item" v-for="td in linkedTodos" :key="td.id">
+              <button
+                class="todo-box"
+                :class="{ done: td.status === 'done' }"
+                :title="td.status === 'done' ? '标记为未完成' : '标记完成'"
+                @click="toggleLinkedTodo(td)"
+              >
+                <AppIcon v-if="td.status === 'done'" name="check" :size="11" />
+              </button>
+              <span class="linked-title" :class="{ through: td.status === 'done' }">{{ td.title }}</span>
+              <button class="linked-x" title="解除关联" @click="unlinkLinkedTodo(td)"><AppIcon name="x" :size="11" /></button>
+            </div>
+          </div>
+          <div class="linked-add">
+            <input
+              v-model="newTodoTitle"
+              class="form-control"
+              type="text"
+              placeholder="拆一条待办（回车新增）…"
+              @keyup.enter="addLinkedTodo"
+            >
+            <button class="btn btn-secondary btn-sm" :disabled="!newTodoTitle.trim()" @click="addLinkedTodo">新增待办</button>
+          </div>
+        </div>
+
+        <!-- 处理记录（新建/状态变化/流转自动留痕） -->
+        <div class="form-group" v-if="editingId">
+          <label>处理记录 <em class="hint">新建、状态变化、流转自动留痕</em></label>
+          <div class="log-add">
+            <input
+              v-model="newLogNote"
+              class="form-control"
+              type="text"
+              placeholder="补一条处理说明（回车记录）…"
+              @keyup.enter="addLogNote"
+            >
+            <button class="btn btn-secondary btn-sm" :disabled="!newLogNote.trim()" @click="addLogNote">记录</button>
+          </div>
+          <div class="log-list" v-if="ticketLogs.length">
+            <div class="log-item" v-for="lg in ticketLogs" :key="lg.id">
+              <span class="log-dot" :class="'log-' + lg.action"></span>
+              <div class="log-main">
+                <div class="log-title">{{ logText(lg) }}</div>
+                <div class="log-time">{{ lg.created_at }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="log-empty" v-else>还没有处理记录</div>
+        </div>
+
         <!-- 自定义字段（在「工单设置」里增删，这里只填写） -->
         <div class="custom-fields" v-if="customFields.length">
           <div class="cf-label">自定义字段 <em class="hint">在右上角「工单设置」里管理</em></div>
@@ -90,11 +144,38 @@ import { useTickets } from '@/composables/useTickets';
 const props = defineProps<{ show: boolean; editingId: number | null; initial?: Record<string, any> | null }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
-const { customFields, statusOptions, typeOptions, sourceOptions, save: saveTicket, blankForm } = useTickets();
+const {
+  customFields, statusOptions, typeOptions, sourceOptions,
+  save: saveTicket, blankForm,
+  ticketLogs, linkedTodos, loadLogs, loadLinkedTodos,
+  addLogNote: addLogNoteApi, createTodo, unlinkTodo, toggleTodo,
+} = useTickets();
 
 const form = ref<Record<string, any>>(blankForm());
+const newLogNote = ref('');
+const newTodoTitle = ref('');
 
-// 打开时同步表单：editingId 为空 → 空白新建；有 initial → 复制编辑
+/** 当前编辑的工单（日志/关联待办都挂在它身上） */
+function currentTicket(): any {
+  return props.initial ? { id: props.editingId, ...props.initial } : null;
+}
+
+/** 处理记录一行文案（与主进程 ticket-tracker 的 action 对齐） */
+function logText(lg: any): string {
+  const from = String(lg.from_value || '');
+  const to = String(lg.to_value || '');
+  switch (lg.action) {
+    case 'create': return to ? `新建工单「${to}」` : '新建工单';
+    case 'delete': return from ? `删除工单（原「${from}」）` : '删除工单';
+    case 'status': return `状态变化：${from || '（空）'} → ${to}`;
+    case 'note': return String(lg.note || '备注');
+    case 'link_todo': return `关联待办：${to}`;
+    case 'unlink_todo': return `解除关联待办：${from}`;
+    default: return lg.field ? `${lg.field}变更：${from || '（空）'} → ${to}` : String(lg.note || '更新');
+  }
+}
+
+// 打开时同步表单：editingId 为空 → 空白新建；有 initial → 复制编辑 + 载入日志/关联待办
 watch(() => props.show, (v) => {
   if (!v) return;
   const base = blankForm();
@@ -102,6 +183,13 @@ watch(() => props.show, (v) => {
     for (const k of Object.keys(base)) base[k] = props.initial[k] != null ? String(props.initial[k]) : '';
   }
   form.value = base;
+  newLogNote.value = '';
+  newTodoTitle.value = '';
+  if (props.editingId) {
+    const t = currentTicket();
+    void loadLogs(t);
+    void loadLinkedTodos(t);
+  }
 });
 
 function close(): void { emit('close'); }
@@ -110,6 +198,31 @@ async function save(): Promise<void> {
   if (!form.value.标题?.trim()) return;
   await saveTicket(form.value, props.editingId);
   close();
+}
+
+async function addLogNote(): Promise<void> {
+  const t = currentTicket();
+  const note = newLogNote.value.trim();
+  if (!t || !note) return;
+  const ok = await addLogNoteApi(t, note);
+  if (!ok) { alert('记录失败'); return; }
+  newLogNote.value = '';
+}
+
+async function addLinkedTodo(): Promise<void> {
+  const t = currentTicket();
+  const title = newTodoTitle.value.trim();
+  if (!t || !title) return;
+  await createTodo(t, title, { priority: 'mid' });
+  newTodoTitle.value = '';
+}
+
+async function unlinkLinkedTodo(td: any): Promise<void> {
+  await unlinkTodo(currentTicket(), td.id);
+}
+
+async function toggleLinkedTodo(td: any): Promise<void> {
+  await toggleTodo(currentTicket(), td.id, td.status !== 'done');
 }
 </script>
 
@@ -163,4 +276,53 @@ textarea.form-control { resize: vertical; }
 
 .custom-fields { border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 6px; }
 .cf-label { font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px; }
+
+/* ========== 关联待办 ========== */
+.linked-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.linked-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.linked-title { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-title.through { color: var(--text-muted); text-decoration: line-through; }
+.linked-x { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; flex-shrink: 0; }
+.linked-x:hover { color: var(--danger); }
+.linked-add { display: flex; gap: 8px; }
+.linked-add .form-control { flex: 1; }
+.todo-box {
+  width: 15px; height: 15px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; flex-shrink: 0; padding: 0;
+}
+.todo-box:hover { border-color: var(--primary); }
+.todo-box.done { background: var(--primary); border-color: var(--primary); }
+
+/* ========== 处理记录（日志流） ========== */
+.log-add { display: flex; gap: 8px; margin-bottom: 8px; }
+.log-add .form-control { flex: 1; }
+.log-list {
+  display: flex; flex-direction: column;
+  max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.log-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.log-item:last-child { border-bottom: none; }
+.log-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  margin-top: 5px; flex-shrink: 0;
+  background: var(--text-muted);
+}
+.log-dot.log-create { background: var(--primary); }
+.log-dot.log-status { background: var(--warning); }
+.log-dot.log-note { background: var(--success, #16a34a); }
+.log-dot.log-link_todo { background: var(--primary); }
+.log-dot.log-unlink_todo { background: var(--text-muted); }
+.log-dot.log-delete { background: var(--danger); }
+.log-main { flex: 1; min-width: 0; }
+.log-title { font-size: 12px; color: var(--text-primary); line-height: 1.45; word-break: break-all; }
+.log-time { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px; }
+.log-empty { font-size: 12px; color: var(--text-muted); padding: 10px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
 </style>

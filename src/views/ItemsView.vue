@@ -1,5 +1,5 @@
 <template>
-  <div class="page items-page">
+  <div class="page items-page" @click="closeStatusMenu">
     <header class="page-head">
       <div>
         <h1 class="page-title">事项</h1>
@@ -71,10 +71,33 @@
             <button class="row-del" title="删除工单" @click.stop="removeTicket(t)"><AppIcon name="trash-2" :size="13" /></button>
           </div>
           <div class="item-badges">
-            <span class="badge" :class="'badge-' + statusTone(t.状态)">{{ t.状态 || '待处理' }}</span>
+            <button class="badge badge-btn" :class="'badge-' + statusTone(t.状态)" title="点击切换状态" @click.stop="openStatusMenu($event, t)">
+              {{ t.状态 || '待处理' }}<AppIcon name="chevron-down" :size="10" />
+            </button>
+            <button class="advance-btn" :title="isClosed(t['状态']) ? '打回处理中' : '推进到 ' + nextStatusOf(t)" @click.stop="advanceStatus(t)">
+              {{ advanceLabel(t) }}
+            </button>
             <span class="kind-tag" v-if="t.类型">{{ t.类型 }}</span>
             <span class="kind-tag kind-tag-dim" v-if="t.来源">{{ t.来源 }}</span>
             <span class="kind-tag kind-tag-dim" v-if="t.处理人"><AppIcon name="user" :size="10" />{{ t.处理人 }}</span>
+            <button
+              v-if="linkedCount(t.id)"
+              class="kind-tag kind-tag-dim link-btn"
+              title="查看关联待办"
+              @click.stop="toggleExpand(t.id)"
+            ><AppIcon name="link" :size="10" />{{ linkedCount(t.id) }}</button>
+          </div>
+          <!-- 关联待办（点 🔗 展开） -->
+          <div class="card-todos" v-if="linkedCount(t.id) && expandedTodos.has(t.id)">
+            <div class="card-todo" v-for="td in linkedTodos" :key="'ct-' + td.id">
+              <button
+                class="mini-box"
+                :class="{ done: td.status === 'done' }"
+                :title="td.status === 'done' ? '恢复待办' : '标记完成'"
+                @click.stop="flipLinkedTodo(ticketRef(t.id), td)"
+              ><AppIcon v-if="td.status === 'done'" name="check" :size="10" /></button>
+              <span :class="{ through: td.status === 'done' }">{{ td.title }}</span>
+            </div>
           </div>
           <div class="item-desc" v-if="t.内容 || t.备注">{{ truncate(t.内容 || t.备注, 90) }}</div>
           <div class="item-foot">
@@ -213,6 +236,27 @@
 
     <!-- 工单设置弹窗（类型/来源/状态枚举与自定义字段管理） -->
     <TicketSettingsModal :show="showTicketSettings" @close="showTicketSettings = false" />
+
+    <!-- 状态快捷切换菜单 -->
+    <div
+      v-if="statusMenu.open"
+      class="status-pop"
+      :style="{ left: statusMenu.x + 'px', top: statusMenu.y + 'px' }"
+      @click.stop
+    >
+      <div class="status-pop-head">切换状态</div>
+      <button
+        v-for="s in statusOptions"
+        :key="s"
+        class="status-pop-item"
+        :class="{ current: s === (statusMenu.ticket && statusMenu.ticket['状态']) }"
+        @click="pickStatus(s)"
+      >
+        <span class="ticket-dot" :class="statusTone(s)"></span>
+        <span class="status-pop-label">{{ s }}</span>
+        <AppIcon v-if="s === (statusMenu.ticket && statusMenu.ticket['状态'])" name="check" :size="12" />
+      </button>
+    </div>
   </div>
 </template>
 
@@ -224,7 +268,7 @@
  * 按逾期/今天/稍后分组——分组只看各自的到期日（待办 scheduled_start，工单承诺时间），
  * 同组内待办在前、工单在后。定时提醒保持卡片网格收在页尾。
  */
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import AppIcon from '@/components/AppIcon.vue';
 import TicketFormModal from '@/components/TicketFormModal.vue';
 import TicketSettingsModal from '@/components/TicketSettingsModal.vue';
@@ -288,7 +332,7 @@ async function removeTodo(t: Todo) {
 }
 
 // ========== 工单（数据在 useTickets 单例里） ==========
-const { tickets, init: initTickets, remove: removeTicketById } = useTickets();
+const { tickets, init: initTickets, remove: removeTicketById, setStatus, statusOptions, linkedCountsMap, linkedTodos, loadLinkedTodos, toggleTodo: toggleLinkedTodo } = useTickets();
 
 const showTicketModal = ref(false);
 const showTicketSettings = ref(false);
@@ -308,6 +352,80 @@ function openTicketEdit(t: any): void {
   showTicketModal.value = true;
 }
 function removeTicket(t: any): void { void removeTicketById(t); }
+
+/** 工单关联的待办数（卡片上显示 🔗 N） */
+function linkedCount(id: number): number {
+  return Number(linkedCountsMap.value[String(id)] || 0);
+}
+
+// ========== 状态快捷切换 ==========
+const statusMenu = ref<{ open: boolean; ticket: any; x: number; y: number }>({ open: false, ticket: null, x: 0, y: 0 });
+
+/** 在徽章下方弹出状态菜单（贴边时改为向上弹） */
+function openStatusMenu(e: MouseEvent, t: any): void {
+  const el = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const h = statusOptions.value.length * 28 + 40;
+  const below = el.bottom + 4;
+  const flip = below + h > window.innerHeight - 8;
+  statusMenu.value = {
+    open: true,
+    ticket: t,
+    x: Math.max(8, Math.min(el.left, window.innerWidth - 190)),
+    y: flip ? Math.max(8, el.top - h - 4) : below,
+  };
+}
+function closeStatusMenu(): void {
+  if (statusMenu.value.open) statusMenu.value = { ...statusMenu.value, open: false };
+}
+/** 选中状态 → 走统一保存通道（主进程记流水 + 触发终态联动） */
+async function pickStatus(s: string): Promise<void> {
+  const t = statusMenu.value.ticket;
+  closeStatusMenu();
+  if (t) await setStatus(t, s);
+}
+
+/**
+ * 快捷推进：一键把工单推到流转链上的下一个状态。
+ * 待处理 → 处理中 →（自定义流转态…）→ 已完成；终态按钮变成 ↩ 打回处理中。
+ */
+const NEXT_FALLBACK: Record<string, string> = { '待处理': '处理中' };
+function nextStatusOf(t: any): string {
+  const cur = String(t['状态'] || '待处理').trim();
+  const list = statusOptions.value;               // 已按流转顺序排好
+  const i = list.indexOf(cur);
+  for (let j = i + 1; j < list.length; j++) {
+    const s = list[j];
+    if (!isClosed(s)) return s;                    // 顺序里第一个非终态
+  }
+  return NEXT_FALLBACK[cur] || '处理中';
+}
+function advanceLabel(t: any): string {
+  const cur = String(t['状态'] || '待处理').trim();
+  if (isClosed(cur)) return '↩ 重新打开';
+  return `→ ${nextStatusOf(t)}`;
+}
+async function advanceStatus(t: any): Promise<void> {
+  const cur = String(t['状态'] || '待处理').trim();
+  const target = isClosed(cur) ? '处理中' : nextStatusOf(t);
+  await setStatus(t, target);
+}
+
+/** 卡片上的关联待办（点 🔗 展开勾选） */
+const expandedTodos = ref<Set<number>>(new Set());
+function toggleExpand(id: number): void {
+  const s = new Set(expandedTodos.value);
+  if (s.has(id)) s.delete(id); else s.add(id);
+  expandedTodos.value = s;
+  if (s.has(id)) void loadLinkedTodos({ id } as any);
+}
+/** 模板里给 expand 用的对象包装（避免每行拼对象） */
+function ticketRef(id: number): any { return { id }; }
+async function flipLinkedTodo(t: any, td: any): Promise<void> {
+  await toggleLinkedTodo(t, td.id, td.status !== 'done');
+}
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') closeStatusMenu();
+}
 
 function isDueSoon(t: any): boolean {
   const v = promiseOf(t);
@@ -466,6 +584,10 @@ onMounted(() => {
   loadTodos();
   loadReminders();
   initTickets();
+  window.addEventListener('keydown', onKeydown);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown);
 });
 </script>
 
@@ -571,6 +693,102 @@ onMounted(() => {
 .badge-blue { background: var(--primary-soft); color: var(--primary); }
 .badge-amber { background: var(--warning-soft, #fef3c7); color: var(--warning); }
 .badge-green { background: var(--success-soft, #dcfce7); color: var(--success, #16a34a); }
+/* 状态徽章可点 → 快捷切换状态 */
+.badge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.badge-btn:hover { border-color: var(--text-muted); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.12)); }
+/* 快捷推进按钮：一键推到下一个状态 */
+.advance-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px dashed var(--border);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.advance-btn:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
+/* 🔗 关联数可点 → 展开卡片上的关联待办 */
+.link-btn { cursor: pointer; border: none; font-family: inherit; }
+.link-btn:hover { color: var(--primary); }
+.card-todos {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.card-todo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.card-todo > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-todo .through { color: var(--text-muted); text-decoration: line-through; }
+.mini-box {
+  width: 13px; height: 13px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; flex-shrink: 0; padding: 0;
+}
+.mini-box:hover { border-color: var(--primary); }
+.mini-box.done { background: var(--primary); border-color: var(--primary); }
+.status-pop {
+  position: fixed;
+  z-index: 1200;
+  min-width: 168px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.status-pop-head {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.status-pop-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.status-pop-item:hover { background: var(--primary-soft); }
+.status-pop-item.current { color: var(--primary); font-weight: 600; }
+.status-pop-label { flex: 1; min-width: 0; }
 .ticket-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ticket-dot.gray { background: var(--text-muted); opacity: 0.5; }
 .ticket-dot.blue { background: var(--primary); }

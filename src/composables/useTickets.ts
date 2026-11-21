@@ -68,7 +68,16 @@ const statusOptions = ref<string[]>([...DEFAULT_STATUS]);
 const terminalStatuses = ref<string[]>([...RESERVED_TERMINAL]);
 const typeOptions = ref<string[]>([...DEFAULT_TYPES]);
 const sourceOptions = ref<string[]>([...DEFAULT_SOURCES]);
+/** 关联待办（ticket_todos 联查出来的） */
+const linkedTodos = ref<any[]>([]);
+/** 各工单关联的待办数量（卡片上显示 🔗 N） */
+const linkedCountsMap = ref<Record<string, number>>({});
+/** 处理记录流水 */
+const ticketLogs = ref<any[]>([]);
 let datasetId: number | null = null;
+
+/** 当前工单数据集 id（处理记录 / 关联待办的 API 要用） */
+export function ticketDatasetId(): number | null { return datasetId; }
 
 // ========== 工具 ==========
 /** 状态名是否命中终态关键字（自定义「已作废」这类状态也能被认出来） */
@@ -198,6 +207,7 @@ async function reload(): Promise<void> {
     tickets.value = (res && res.rows) || [];
   } catch { tickets.value = []; }
   loading.value = false;
+  await loadLinkedCounts();
 }
 
 /** 初始化（幂等）：确保数据集存在并加载记录。事项页 onMounted 调用一次。 */
@@ -336,11 +346,96 @@ export function todayStr(): string {
 /** 未关闭且未完成数量（侧栏徽标等） */
 export const openCount = computed(() => tickets.value.filter(t => !isClosed(t['状态'])).length);
 
+/** 只取工单自身的字段（去掉列表附加的 id / _created_at，避免写回时污染 data_json） */
+function ticketFields(t: Ticket): Record<string, any> {
+  const out: Record<string, any> = {};
+  const names = [...CORE_FIELDS.map(f => f.name), ...customFields.value.map(f => f.name)];
+  for (const n of names) out[n] = t[n] == null ? '' : String(t[n]);
+  return out;
+}
+
+/**
+ * 快捷改状态（卡片上的状态徽章点一下就用它）。
+ * 走同一条 save 通道 → 主进程记录流水 + 触发终态联动，逻辑不分叉。
+ */
+async function setStatus(ticket: Ticket, status: string): Promise<void> {
+  if (!ticket || !status) return;
+  if (String(ticket['状态'] || '') === status) return;
+  const f = ticketFields(ticket);
+  f['状态'] = status;
+  await save(f, ticket.id);
+}
+
+// ========== 处理记录 / 关联待办 ==========
+
+/** 载入关联数量（卡片上显示 🔗 N） */
+async function loadLinkedCounts(): Promise<void> {
+  if (!datasetId) { linkedCountsMap.value = {}; return; }
+  try { linkedCountsMap.value = (await API.ticket.todoCounts(datasetId)) || {}; }
+  catch { linkedCountsMap.value = {}; }
+}
+
+/** 载入某工单的处理记录 */
+async function loadLogs(ticket: Ticket | null): Promise<void> {
+  if (!ticket || !datasetId) { ticketLogs.value = []; return; }
+  try { ticketLogs.value = await API.ticket.logList(datasetId, ticket.id); }
+  catch { ticketLogs.value = []; }
+}
+
+/** 载入某工单关联的待办 */
+async function loadLinkedTodos(ticket: Ticket | null): Promise<void> {
+  if (!ticket || !datasetId) { linkedTodos.value = []; return; }
+  try { linkedTodos.value = await API.ticket.todoList(datasetId, ticket.id); }
+  catch { linkedTodos.value = []; }
+}
+
+/** 手工补一条处理记录 */
+async function addLogNote(ticket: Ticket | null, note: string): Promise<boolean> {
+  if (!ticket || !datasetId) return false;
+  const ok = await API.ticket.logAdd(datasetId, ticket.id, note);
+  await loadLogs(ticket);
+  return !!ok;
+}
+
+/** 由工单拆一条待办并关联 */
+async function createTodo(ticket: Ticket | null, title: string, opts?: { priority?: string; scheduled_start?: string }): Promise<any> {
+  if (!ticket || !datasetId) return null;
+  const created = await API.ticket.todoCreate(datasetId, ticket.id, { title, ...(opts || {}) });
+  await loadLinkedTodos(ticket);
+  await loadLinkedCounts();
+  return created;
+}
+
+/** 关联一条已有待办 */
+async function linkTodo(ticket: Ticket | null, todoId: number): Promise<void> {
+  if (!ticket || !datasetId) return;
+  await API.ticket.todoLink(datasetId, ticket.id, todoId);
+  await loadLinkedTodos(ticket);
+  await loadLinkedCounts();
+}
+
+/** 解除关联 */
+async function unlinkTodo(ticket: Ticket | null, todoId: number): Promise<void> {
+  if (!ticket || !datasetId) return;
+  await API.ticket.todoUnlink(datasetId, ticket.id, todoId);
+  await loadLinkedTodos(ticket);
+  await loadLinkedCounts();
+}
+
+/** 勾掉 / 恢复关联待办 */
+async function toggleTodo(ticket: Ticket | null, todoId: number, done: boolean): Promise<void> {
+  if (!datasetId) return;
+  await API.ticket.todoToggle(todoId, done);
+  await loadLinkedTodos(ticket);
+}
+
 /** 导出共享状态与操作 */
 export function useTickets() {
   return {
     tickets, loading, customFields, statusOptions, terminalStatuses, typeOptions, sourceOptions,
-    init, reload, save, remove, blankForm,
+    linkedTodos, ticketLogs, linkedCountsMap,
+    init, reload, save, remove, blankForm, setStatus,
+    loadLogs, loadLinkedTodos, loadLinkedCounts, addLogNote, createTodo, linkTodo, unlinkTodo, toggleTodo,
     addCustomField, removeCustomField, addEnumOption, removeEnumOption,
     toggleTerminalStatus, isTerminalStatus,
   };
