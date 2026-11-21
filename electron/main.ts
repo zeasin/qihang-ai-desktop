@@ -1153,6 +1153,12 @@ async function runChatTurn(
     if (projectDir) {
       toolDefs.push(...(await buildDataToolDefs(projectDir)));
     }
+    // 工单工具：桌面对话也能建/查/改工单（与飞书通道同一套，写入都走钩子链）。
+    // MCP 专属对话除外——那里只允许所选 MCP 服务暴露的工具。
+    if (!scopedServer) {
+      const { buildTicketToolDefs } = require('./services/tools');
+      toolDefs.push(...(await buildTicketToolDefs()));
+    }
 
     // 项目库会话（mode='kb'，飞书来源）在软件内续聊时，与飞书侧同一份提示词骨架：
     // pi 会话文件每轮只带本轮 prompt，上一轮的项目路径/AGENTS.md 约束不会自动延续

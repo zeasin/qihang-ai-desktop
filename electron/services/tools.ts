@@ -393,6 +393,168 @@ async function updateTaskTool({ id, title, prompt, status, trigger_type, schedul
   return `已更新任务 id=${id}：${Object.keys(patch).join(', ')}`;
 }
 
+// ========== 工单工具（对话 / 飞书 / 定时任务共用） ==========
+// 写入走 db.ds.insert / updateRecord → 钩子链（ticket-link → ticket-tracker → ticket-flow）
+// 自动接住：承诺时间提醒、流水日志、流转节点账、处理人指派通知。工具层只管把字段给对。
+
+const TICKET_DS_NAME = '工单';
+
+/** 读工单数据集的枚举（schema 由事项页维护；没建过数据集时给默认值） */
+function ticketSchemaOptions(ds: any): { statusOptions: string[]; typeOptions: string[]; sourceOptions: string[] } {
+  const schema = ds && ds.schema ? ds.schema : null;
+  return {
+    statusOptions: (schema && schema.statusOptions) || ['待处理', '处理中', '已完成', '已关闭'],
+    typeOptions: (schema && schema.typeOptions) || ['需求', '问题', '咨询', '跟进'],
+    sourceOptions: (schema && schema.sourceOptions) || ['微信', '电话', '官网', '邮件', '会议', '其他'],
+  };
+}
+
+/** 承诺时间统一成联动层认的 "YYYY-MM-DD HH:MM"（只给日期时补当天 18:00） */
+function normalizePromiseTime(v: any): string {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s + ' 18:00';
+  return s.slice(0, 16);
+}
+
+async function createTicketTool({ title, content, handler, type, source, status, promise_time, remark, creator }) {
+  const t = String(title || '').trim();
+  if (!t) return '请提供工单标题（title）';
+  // 懒加载防循环依赖；数据集可能还没建过（用户没进过事项页）→ 主进程兜底建
+  const ticketFlow = require('./ticket-flow');
+  const dsId = ticketFlow.ensureTicketDataset();
+  if (!dsId) return '无法定位或创建「工单」数据集';
+  const ds = db.ds.get(dsId);
+  const { statusOptions } = ticketSchemaOptions(ds);
+  const st = String(status || '').trim();
+  if (st && !statusOptions.includes(st)) return `状态「${st}」不在工单状态枚举里，可用：${statusOptions.join(' / ')}`;
+  const rec: any = { 标题: t, 状态: st || '待处理' };
+  if (content) rec['内容'] = String(content).trim();
+  if (handler) rec['处理人'] = String(handler).trim();
+  if (type) rec['类型'] = String(type).trim();
+  if (source) rec['来源'] = String(source).trim();
+  if (creator) rec['新建人'] = String(creator).trim();
+  const pt = normalizePromiseTime(promise_time);
+  if (pt) rec['承诺时间'] = pt;
+  if (remark) rec['备注'] = String(remark).trim();
+  const id = db.ds.insert(dsId, normalizeDatasetRecord(dsId, rec));
+  logger.info('[Tools] create_ticket: %s → id %s', t, id);
+  // 通知口径与 ticket-flow 一致：处理人匹配到节点档案且有 webhook 才定向通知
+  let notify = '承诺时间到点会自动提醒。';
+  if (rec['处理人']) {
+    const node = db.qOne('SELECT webhook_url FROM ticket_handlers WHERE name = ? AND enabled = 1', rec['处理人']);
+    notify = node && node.webhook_url
+      ? '已按处理人触发飞书指派通知。'
+      : '处理人没匹配到节点档案/webhook，走全局兜底 webhook（未配置则不通知）。';
+  }
+  return `已创建工单 #${id}「${t}」（状态：${rec['状态']}`
+    + (rec['处理人'] ? `，处理人：${rec['处理人']}` : '')
+    + (rec['类型'] ? `，类型：${rec['类型']}` : '')
+    + (pt ? `，承诺时间：${pt}` : '') + `）。${notify}`;
+}
+
+async function queryTicketsTool({ status, handler, keyword, limit }) {
+  const all = db.ds.list();
+  const ds = all.find(d => d.name === TICKET_DS_NAME);
+  if (!ds) return '还没有「工单」数据集（在事项页新建工单或直接建单时会自动创建）';
+  const lim = Math.max(1, Math.min(50, toNumber(limit, 20)));
+  const { rows, total } = db.ds.listRecords(ds.id, { search: String(keyword || '').trim(), limit: lim });
+  const st = String(status || '').trim();
+  const hd = String(handler || '').trim();
+  let hit = rows;
+  if (st) hit = hit.filter(r => String(r['状态'] || '').trim() === st);
+  if (hd) hit = hit.filter(r => String(r['处理人'] || '').includes(hd));
+  if (!hit.length) return `没有匹配的工单（当前共 ${total} 条在库）。`;
+  return `${total} 条在库，命中 ${hit.length} 条：\n` + hit.map(r =>
+    `#${r.id} 「${r['标题'] || '(无标题)'}」[${r['状态'] || '待处理'}]`
+    + ` 处理人:${r['处理人'] || '未指派'}`
+    + ` 承诺:${r['承诺时间'] || '无'}`
+    + (r['备注'] ? ` 备注:${String(r['备注']).slice(0, 60)}` : '')
+  ).join('\n');
+}
+
+async function updateTicketTool({ id, status, handler, remark, promise_time }) {
+  const recId = toNumber(id, 0);
+  const row = db.qOne<{ id: number; dataset_id: string; data_json: string }>(
+    'SELECT id, dataset_id, data_json FROM data_center_records WHERE id = ?', recId);
+  if (!row) return `工单 #${id} 不存在。可先用 query_tickets 查询工单 id。`;
+  let cur: any = {};
+  try { cur = JSON.parse(row.data_json || '{}'); } catch { cur = {}; }
+  const ds = db.ds.get(row.dataset_id);
+  const { statusOptions } = ticketSchemaOptions(ds);
+  const patch: any = {};
+  const st = String(status || '').trim();
+  if (st) {
+    if (!statusOptions.includes(st)) return `状态「${st}」不在工单状态枚举里，可用：${statusOptions.join(' / ')}`;
+    if (st !== String(cur['状态'] || '').trim()) patch['状态'] = st;
+  }
+  const hd = String(handler || '').trim();
+  if (hd && hd !== String(cur['处理人'] || '').trim()) patch['处理人'] = hd;
+  const pt = normalizePromiseTime(promise_time);
+  if (pt && pt !== String(cur['承诺时间'] || '').trim()) patch['承诺时间'] = pt;
+  const rk = String(remark || '').trim();
+  if (rk) {
+    // 追加而非覆盖（对齐编辑弹窗「处理结果并入备注尾部」的口径）；状态变更时钩子会拿它当节点处理结果
+    patch['备注'] = cur['备注'] ? `${String(cur['备注']).trim()}\n${rk}` : rk;
+  }
+  if (!Object.keys(patch).length) return `工单 #${recId}「${cur['标题'] || ''}」没有需要变更的字段`;
+  // updateRecord 触发钩子链：状态变 → 关旧节点+开新节点；处理人变 → 指派通知
+  db.ds.updateRecord(recId, { ...cur, ...patch });
+  logger.info('[Tools] update_ticket: #%s %j', recId, Object.keys(patch));
+  const changed = Object.keys(patch).map(k => `${k} → ${patch[k]}`).join('，');
+  let tail = '';
+  if (patch['处理人']) tail += ' 处理人变更将触发飞书指派通知（若已配置）。';
+  else if (patch['状态']) tail += ' 状态变更已记入流转节点账。';
+  return `已更新工单 #${recId}「${cur['标题'] || ''}」：${changed}。${tail}`;
+}
+
+async function buildTicketToolDefs() {
+  const { Type } = await ensureT();
+  const optStr = (description?: string) => Type.Optional(Type.Union([Type.String({ description }), Type.Null()]));
+  const optNum = (description?: string) => Type.Optional(Type.Union([Type.Number({ description }), Type.String(), Type.Null()]));
+  return [
+    {
+      name: 'create_ticket', label: 'create_ticket',
+      description: '创建一条工单/事项（挂在事项页时间线上）。当用户说"记个工单 / 加个需求 / 建个工单 / 这件事要跟进 / 帮我记一下要处理"等要求登记待跟进事项时应调用本工具。标题要短（一句话），详情放 content；填了 handler（处理人）会触发飞书指派通知，填了 promise_time 到点自动提醒。类型可选：需求/问题/咨询/跟进。',
+      parameters: Type.Object({
+        title: Type.String({ description: '工单标题，一句话概括，如 "金箔雲需求-按月统计销售员提成"' }),
+        content: optStr('详细描述：需求背景、具体要求等'),
+        handler: optStr('处理人名字（须与工单设置里的处理人节点对齐才能定向通知，如 "老齐"）'),
+        type: optStr('类型：需求 / 问题 / 咨询 / 跟进'),
+        source: optStr('来源：微信 / 电话 / 官网 / 邮件 / 会议 / 其他（飞书里说的一般填 "其他" 或 "会议"）'),
+        status: optStr('初始状态，默认 "待处理"'),
+        promise_time: optStr('承诺完成时间 YYYY-MM-DD HH:MM（只给日期则默认当天 18:00），到点自动提醒'),
+        remark: optStr('备注'),
+        creator: optStr('新建人（谁提的，如飞书消息里的发送人名字）'),
+      }),
+      execute: exec(createTicketTool),
+    },
+    {
+      name: 'query_tickets', label: 'query_tickets',
+      description: '查询工单列表（事项页时间线里的工单）。可按状态/处理人/关键词过滤。用户问"现在有哪些工单 / 某件事登记了没有 / 谁手里压着单"时调用；建单前也可先查一下避免重复登记。',
+      parameters: Type.Object({
+        status: optStr('按状态过滤：待处理 / 处理中 / 已完成 / 已关闭'),
+        handler: optStr('按处理人过滤（模糊匹配）'),
+        keyword: optStr('按标题/内容关键词过滤'),
+        limit: optNum('返回条数上限，默认20，最大50'),
+      }),
+      execute: exec(queryTicketsTool),
+    },
+    {
+      name: 'update_ticket', label: 'update_ticket',
+      description: '更新一条工单（改状态 / 换处理人 / 补承诺时间 / 追加备注）。先调用 query_tickets 拿到工单 id。状态变更（如推到"处理中"/"已完成"）会自动记入流转节点账；处理人变更会触发飞书指派通知。变更原因/处理结果建议写进 remark（会随通知发出、记入节点账）。',
+      parameters: Type.Object({
+        id: Type.Number({ description: '工单 id（query_tickets 返回的 #N）' }),
+        status: optStr('新状态：待处理 / 处理中 / 已完成 / 已关闭'),
+        handler: optStr('新处理人名字'),
+        promise_time: optStr('承诺完成时间 YYYY-MM-DD HH:MM'),
+        remark: optStr('要追加的备注/处理结果，如 "提成算法已上线"'),
+      }),
+      execute: exec(updateTicketTool),
+    },
+  ];
+}
+
 // ========== 组装 ==========
 // 输出格式与 pi SDK 的 ToolDefinition 兼容：{ name, label, description, parameters, execute }
 // execute 返回 AgentToolResult：{ content: [{ type: 'text', text }], details: {} }
@@ -432,8 +594,10 @@ async function buildReportToolDefs(kbId) {
     { name: 'update_task', label: 'update_task', description: '更新任务（标题、说明、触发配置、状态）。先调用 query_tasks 获取任务 id。', parameters: Type.Object({ id: Type.Number({ description: '任务 id' }), title: optStr('新标题'), prompt: optStr('新说明'), status: optStr('状态: pending / in_progress / done'), trigger_type: optStr('触发类型: now / once / cycle'), scheduled_start: optStr('once 用: YYYY-MM-DD HH:MM'), cycle_type: optStr('cycle 用: daily / weekly / monthly / cron'), cycle_value: optStr('cycle 用'), cycle_time: optStr('cycle 用: HH:MM') }), execute: exec(updateTaskTool) },
     { name: 'get_today_info', label: 'get_today_info', description: '获取当前日期信息（今天的中国日期、项目/知识库名称等）。', parameters: Type.Object({}), execute: exec((args) => getTodayInfoTool(args, kbId)) },
     { name: 'query_radar_sessions', label: 'query_radar_sessions', description: '查询智能体雷达采集的本机 AI 编码工具会话（Pi / Claude Code / Codex 等），带 AI 提炼的会话摘要与价值分。用于汇总「AI 工具今天/本周干了什么」。', parameters: Type.Object({ date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryRadarSessionsTool({ ...args, limit: toNumber(args.limit, 20) })) },
+    // 工单三件套：飞书 kb 会话 / 定时任务 / 日报生成 共用（桌面对话经 buildTicketToolDefs 单独注入）
+    ...(await buildTicketToolDefs()),
   ];
 }
 
-export { buildDataToolDefs, buildReportToolDefs, getChinaDate, appendTodoNote };
+export { buildDataToolDefs, buildReportToolDefs, buildTicketToolDefs, getChinaDate, appendTodoNote };
 

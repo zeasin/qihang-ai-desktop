@@ -37,6 +37,43 @@ function resolveTicketDatasetId(): string | null {
   return ticketDatasetId;
 }
 
+/**
+ * 找到或创建「工单」数据集（AI/飞书建单工具用）。
+ * 用户可能还没进过事项页（数据集由 useTickets.ensureDataset 在渲染层兜底建），
+ * 工具链路先走主进程兜底：schema 默认值与渲染层 buildSchemaJson 完全同参，
+ * 谁先建都一样，后到的一方按名字找到直接复用。
+ */
+export function ensureTicketDataset(): string | null {
+  const existing = resolveTicketDatasetId();
+  if (existing) return existing;
+  try {
+    const schema = {
+      fields: [
+        { name: '标题', type: 'string' }, { name: '类型', type: 'string' }, { name: '来源', type: 'string' },
+        { name: '新建人', type: 'string' }, { name: '处理人', type: 'string' }, { name: '内容', type: 'text' },
+        { name: '备注', type: 'text' }, { name: '承诺时间', type: 'datetime' }, { name: '处理时间', type: 'datetime' },
+        { name: '完结时间', type: 'datetime' },
+      ],
+      statusOptions: ['待处理', '处理中', '已完成', '已关闭'],
+      terminalStatuses: ['已完成', '已关闭'],
+      typeOptions: ['需求', '问题', '咨询', '跟进'],
+      sourceOptions: ['微信', '电话', '官网', '邮件', '会议', '其他'],
+    };
+    db.ds.add({
+      name: TICKET_DS_NAME,
+      description: '通用事项：核心字段固定，自定义字段按需添加。填承诺时间到点自动提醒。',
+      schemaJson: JSON.stringify(schema),
+    });
+    ticketDatasetId = null;   // 解除空缓存，重查一次拿新 id
+    const made = resolveTicketDatasetId();
+    if (made) logger.info('[TicketFlow] 已兜底创建「工单」数据集 (id=%s)', made);
+    return made;
+  } catch (e: any) {
+    logger.warn('[TicketFlow] 兜底创建「工单」数据集失败: ' + (e && e.message));
+    return null;
+  }
+}
+
 /** 本地时间串（与库内 datetime('now','+8 hours') 同口径） */
 function nowLocal(): string {
   const d = new Date(Date.now() + 8 * 3600 * 1000);
@@ -245,7 +282,18 @@ function onRecordSave(kind: 'insert' | 'update' | 'delete', datasetId: string, r
       });
     }
 
-    // ② 处理人变了（不管状态变没变）→ 通知新处理人
+    // ② 处理人变了（不管状态变没变）：
+    //    状态没变 → 开放节点就地换人——节点账要能回答「这单现在在谁手里」；
+    //    节点仍按状态分段，段内交接的细节流水在 ticket_logs，不新开节点（v3 拍板）。
+    if (handlerChanged && !statusChanged) {
+      const open = openNode(dsId, recordId);
+      if (open) {
+        const handler = findHandlerByName(toHandler);
+        db.run('UPDATE ticket_flow_nodes SET handler_name = ?, handler_id = ? WHERE id = ?',
+          toHandler, handler ? handler.id : null, open.id);
+      }
+    }
+    // 填了新处理人 → 通知（节点 webhook，或全局兜底）
     if (handlerChanged && toHandler && dedupOk(`handler:${dsId}:${recordId}:${toHandler}`)) {
       void notifyHandlerChanged({
         title: String(after['标题'] || ''),
