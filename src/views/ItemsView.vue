@@ -305,7 +305,7 @@
  * 待办=类型'待办'的工单（复选框卡），工单=其余类型（状态徽章卡），工单支持按项目筛选；
  * 逾期信息不再靠分组表达，改为卡片上的红色逾期标记。定时提醒保持卡片网格收在页尾。
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import AppIcon from '@/components/AppIcon.vue';
 import TicketFormModal from '@/components/TicketFormModal.vue';
 import TicketSettingsModal from '@/components/TicketSettingsModal.vue';
@@ -672,6 +672,8 @@ onMounted(() => {
   loadHandlers();   // 处理人必选弹窗的快选项
   window.addEventListener('keydown', onKeydown);
 });
+// 工单表一变（含外部写入：AI/飞书/移动端）→ 待办映射跟着重建
+watch(tickets, () => { void loadTodos(); });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
 });

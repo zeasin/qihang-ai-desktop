@@ -4,7 +4,7 @@ const VALID_CHANNELS = [
   'chat:delta', 'chat:status', 'chat:thinking', 'chat:tool', 'chat:done', 'chat:error',
   'chat:remote', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
-  'report:generated', 'aitool:delta', 'task:changed',
+  'report:generated', 'aitool:delta', 'task:changed', 'tickets:changed',
   'radar:event', 'win:maximized', 'approver:event',
 ];
 

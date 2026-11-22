@@ -1,9 +1,9 @@
 /**
  * 昨日简报：雷达 AI 简报（替代今天页原规则「引擎简报」）。
- * 内容三块：昨日 AI 工具动态（昨日采集会话聚合）+ 昨日笔记库动态（昨天更新的文档）+ 今日待办（实时）。
+ * 内容四块：昨日 AI 工具动态（昨日采集会话聚合）+ 昨日笔记库动态（昨天更新的文档）+ 昨日工单动态（新建/流转/完结）+ 今日待办（实时）。
  * 笔记库内容由笔记库子助手读原文摘录提炼，不进会话分片；子助手失败时原文摘录直接降级给主汇总。
  * 策略：按「昨日日期」缓存（内存 + 重启后从落盘文件恢复）；当天首次生成后落盘笔记库「日报/AI活动/<昨日日期>.md」并推送飞书一次；
- * 手动刷新重新生成并覆盖落盘文件（不重推，防刷屏）。昨日无任何 AI 会话与文档更新时不调 AI。
+ * 手动刷新重新生成并覆盖落盘文件（不重推，防刷屏）。昨日无任何 AI 会话、文档更新与工单动态时不调 AI。
  * 所有时间取本机本地时间（禁止 UTC 转换）。
  */
 import * as fs from 'node:fs';
@@ -13,6 +13,7 @@ import * as db from '../services/database';
 import * as ticketStore from '../services/tickets';
 import * as feishu from '../services/feishu';
 import * as projectScan from '../services/project-scan';
+import { q } from '../services/database';
 import { agentRadar } from '../services/agent-radar';
 import { extractDigest } from '../services/note-digest';
 import { generateWithPi } from '../services/ai-tools';
@@ -130,6 +131,67 @@ function readDocExcerpt(full: string, allotment: number): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * 昨日工单动态：昨天新建 / 流转 / 完结的工单 + 当前未完结工单（实时）。
+ * 排除「待办」类型（属今日待办口径），只汇总真正的工单。
+ */
+function collectTicketSide(range: { start: number; end: number }, dk: string): {
+  lines: string[]; created: number; flowed: number; closed: number; open: number;
+} {
+  const lines: string[] = [];
+  const startStr = dk + ' 00:00:00';
+  const endStr = dateKey(new Date(range.end)) + ' 00:00:00';
+  let created = 0;
+  let flowed = 0;
+  let closed = 0;
+  let open = 0;
+
+  try {
+    const rows = q<any>(`SELECT * FROM tickets WHERE created_at >= ? AND created_at < ? AND "类型" <> '待办' ORDER BY created_at`, startStr, endStr);
+    created = rows.length;
+    for (const t of rows.slice(0, 8)) {
+      const bits = [t['类型'], t['项目'], t['处理人'] ? '处理人 ' + t['处理人'] : '', t['状态']].filter(Boolean).join(' / ');
+      lines.push(`- 新建工单《${t['标题'] || '（无标题）'}》${bits ? '（' + bits + '）' : ''}`);
+    }
+    if (rows.length > 8) lines.push(`- 其余新建工单 ${rows.length - 8} 条`);
+  } catch { /* 工单表不可用时跳过 */ }
+
+  try {
+    const done = q<any>(`SELECT * FROM tickets WHERE "完结时间" >= ? AND "完结时间" < ? AND "类型" <> '待办' ORDER BY "完结时间"`, startStr, endStr);
+    closed = done.length;
+    for (const t of done.slice(0, 8)) {
+      const bits = [t['项目'], t['处理人'] ? '处理人 ' + t['处理人'] : ''].filter(Boolean).join(' / ');
+      lines.push(`- 完结工单《${t['标题'] || '（无标题）'}》${bits ? '（' + bits + '）' : ''}`);
+    }
+    if (done.length > 8) lines.push(`- 其余完结工单 ${done.length - 8} 条`);
+  } catch { /* 同上 */ }
+
+  try {
+    const nodes = q<any>(`SELECT n.status, n.handler_name, n.entered_at, t."标题" AS title
+      FROM ticket_flow_nodes n LEFT JOIN tickets t ON t.id = n.record_id
+      WHERE n.entered_at >= ? AND n.entered_at < ? AND IFNULL(t."类型", '') <> '待办'
+      ORDER BY n.entered_at`, startStr, endStr);
+    flowed = nodes.length;
+    for (const n of nodes.slice(0, 10)) {
+      lines.push(`- 工单流转《${n.title || '（无标题）'}》→ ${n.status || ''}${n.handler_name ? '（' + n.handler_name + '）' : ''}`);
+    }
+    if (nodes.length > 10) lines.push(`- 其余流转 ${nodes.length - 10} 次`);
+  } catch { /* 同上 */ }
+
+  try {
+    const opens = ticketStore.list({ openOnly: true }).filter((t: any) => String(t['类型'] || '') !== '待办');
+    open = opens.length;
+    const withPromise = opens.filter((t: any) => String(t['承诺时间'] || '').trim());
+    for (const t of (withPromise.length ? withPromise : opens).slice(0, 8)) {
+      const bits = [t['状态'], t['处理人'] ? '处理人 ' + t['处理人'] : '', t['承诺时间'] ? '承诺 ' + t['承诺时间'] : ''].filter(Boolean).join(' / ');
+      lines.push(`- 未完结工单《${t['标题'] || '（无标题）'}》${bits ? '（' + bits + '）' : ''}`);
+    }
+    if (opens.length > 8) lines.push(`- 其余未完结工单 ${opens.length - 8} 条`);
+  } catch { /* 同上 */ }
+
+  return { lines, created, flowed, closed, open };
 }
 
 /**
@@ -270,23 +332,30 @@ async function generateBrief(
   dk: string,
   ai: { lines: string[]; count: number; docs: TodoContextDoc[] },
   note: { lines: string[]; pendingTodos: number; followups: number; dayFiles: string[]; excerpts: Array<{ label: string; content: string }>; dayDocs: TodoContextDoc[] },
+  ticket: { lines: string[]; created: number; flowed: number; closed: number; open: number },
   todoItems: PickedTodo[],
   todoDropped: number,
 ): Promise<string> {
   const runId = Date.now();
   const noteList = [...note.lines, ...note.dayFiles.map((file) => `- ${file}`)];
   const noteHeading = '## 昨日笔记库动态（昨天更新文档 ' + note.dayFiles.length + ' 篇；今日待办候选 ' + todoItems.length + ' 项，已剔除过时或已完成 ' + todoDropped + ' 项）';
+  const ticketHeading = '## 昨日工单动态（新建 ' + ticket.created + ' / 流转 ' + ticket.flowed + ' / 完结 ' + ticket.closed + '；当前未完结 ' + ticket.open + '）';
   const requirements = [
     '## 要求',
-    '1. 只依据提供的内容，不要编造；某方面没有信息就不要写；所有会话与文档时间均为昨天（' + dk + '），标题和正文不得出现其他日期。',
-    '2. 结构：先一段 2-3 句的总体概述，再用「### 昨日动态」与「### 今日待办」两个小节分点陈述。',
-    '3. 「今日待办」只能取自下面的候选清单，最多 5 条，按「现在就需要处理」的程度排序；每条一行，写成 `- 事项 —— 为什么现在做：<一句话，25 字以内>`。',
-    '4. 「为什么现在做」只能依据候选清单给出的来源、时效、昨日关联，或事项原文里已有的表述；没有依据就只写事项本身，不要编造理由。候选清单为空时写「（暂无需要立即处理的待办）」。',
-    '5. 语言精炼（全文 600 字以内），突出做了什么、有什么值得注意的，不复述原始细节。',
+    '1. 只依据提供的内容，不要编造；某方面没有信息就不要写；所有会话、文档与工单时间均为昨天（' + dk + '），标题和正文不得出现其他日期。',
+    '2. 结构：先一段 2-3 句的总体概述，再用「### 昨日动态」「### 工单进展」「### 今日待办」三个小节分点陈述；若工单动态为空则省略「工单进展」小节。',
+    '3. 「工单进展」写昨日工单的新建、流转与完结，以及当前仍未完结的工单（带处理人与承诺时间）；没有工单信息时不要编造。',
+    '4. 「今日待办」只能取自下面的候选清单，最多 5 条，按「现在就需要处理」的程度排序；每条一行，写成 `- 事项 —— 为什么现在做：<一句话，25 字以内>`。',
+    '5. 「为什么现在做」只能依据候选清单给出的来源、时效、昨日关联，或事项原文里已有的表述；没有依据就只写事项本身，不要编造理由。候选清单为空时写「（暂无需要立即处理的待办）」。',
+    '6. 语言精炼（全文 600 字以内），突出做了什么、有什么值得注意的，不复述原始细节。',
   ].join('\n');
   const todoBlock = [
     '## 今日待办（候选清单，已剔除过时/已完成）',
     renderTodoCandidates(todoItems),
+  ].join('\n');
+  const ticketBlock = [
+    ticketHeading,
+    ticket.lines.join('\n') || '（昨日无工单动态）',
   ].join('\n');
 
   if (ai.lines.length <= SHARD_THRESHOLD) {
@@ -298,10 +367,12 @@ async function generateBrief(
       noteHeading,
       noteSummary || noteList.join('\n') || '（无）',
       '',
+      ticketBlock,
+      '',
       todoBlock,
     ].join('\n');
     const prompt = [
-      '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话与笔记库提炼的昨日动态，以及今日待办候选清单，请汇总成一份简洁的中文 markdown 简报。',
+      '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话、笔记库提炼与工单动态，以及今日待办候选清单，请汇总成一份简洁的中文 markdown 简报。',
       '', ctx, '', requirements,
     ].join('\n');
     return generateWithPi({ prompt, sessionId: 'brief_' + dk, timeoutMs: BRIEF_TIMEOUT_MS });
@@ -335,7 +406,7 @@ async function generateBrief(
   const degraded = shardResults.filter((r) => r.startsWith('【本分片提炼失败')).length;
 
   const prompt = [
-    '你是「昨日简报」主汇总助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。下面是覆盖昨日全部 ' + ai.count + ' 个会话的 ' + shards.length + ' 份分片结果，以及笔记库子助手对昨天更新文档的提炼。',
+    '你是「昨日简报」主汇总助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。下面是覆盖昨日全部 ' + ai.count + ' 个会话的 ' + shards.length + ' 份分片结果，以及笔记库子助手对昨天更新文档的提炼和昨日工单动态。',
     '综合全部分片：重复事项去重，不同项目、工具或文档的独立事项不得错误合并；失败分片附带的原文也必须纳入。不要只关注前几个分片。',
     '输出中不要提及分片、并行、数据来源或统计口径等过程性说明。',
     '',
@@ -344,6 +415,8 @@ async function generateBrief(
     '',
     noteHeading,
     noteSummary || noteList.join('\n') || '（无）',
+    '',
+    ticketBlock,
     '',
     todoBlock,
     '', requirements,
@@ -384,12 +457,13 @@ export async function getBrief(force = false): Promise<any> {
       let digest: any = null;
       try { digest = extractDigest(); } catch { digest = null; }
       const note = collectNoteSide(range, digest);
+      const tickets = collectTicketSide(range, dk);
       const todos = collectTodayTodos(digest, [...ai.docs, ...note.dayDocs], range.start);
-      if (!ai.count && !note.dayFiles.length) {
+      if (!ai.count && !note.dayFiles.length && !tickets.lines.length) {
         return { ok: true, empty: true, brief: '' };
       }
 
-      const brief = await generateBrief(dk, ai, note, todos.items, todos.dropped);
+      const brief = await generateBrief(dk, ai, note, tickets, todos.items, todos.dropped);
       const generatedAt = dateKey() + ' ' + timeLabel();
       cacheDate = dk;
       cacheBrief = brief;

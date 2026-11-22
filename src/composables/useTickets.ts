@@ -62,7 +62,6 @@ export interface FieldDef { name: string; type: string; displayName?: string; op
 // ========== 单例状态 ==========
 const tickets = ref<Ticket[]>([]);
 const loading = ref(true);
-const loaded = ref(false);
 const customFields = ref<FieldDef[]>([]);
 const statusOptions = ref<string[]>([...DEFAULT_STATUS]);
 /** 终态状态集合（保留终态 + 用户自定义终态），持久化在 ticket_settings.schema_json */
@@ -205,17 +204,30 @@ async function reload(): Promise<void> {
   await loadLinkedCounts();
 }
 
-/** 初始化（幂等）：同步枚举设置并加载工单。事项页 onMounted 调用一次。 */
+/** 初始化：同步枚举设置并加载工单。事项页 onMounted 调用，每次进入都拉最新数据。 */
 async function init(): Promise<void> {
-  const first = !loaded.value;
-  loaded.value = true;
   try {
     // 每次进入都回同步一次设置：枚举可能在「工单设置」里被改过（主进程侧已有默认值 bootstrap）
     await loadSettings();
-    if (first) await reload();
+    await reload();
+    bindTicketsChanged();
   } finally {
     loading.value = false;
   }
+}
+
+/** 外部写入（AI / 飞书 / 移动端）→ 主进程广播 tickets:changed → 防抖刷新本页数据 */
+let ticketsListenerBound = false;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+function bindTicketsChanged(): void {
+  if (ticketsListenerBound || typeof API.on !== 'function') return;
+  ticketsListenerBound = true;
+  try {
+    API.on('tickets:changed', () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => { void reload(); }, 300);
+    });
+  } catch {}
 }
 
 /** 保存（新建或编辑）。form 为完整字段对象；editingId 为空即新建。

@@ -2097,6 +2097,10 @@ app.whenReady().then(async () => {
   try { tracker.registerTicketTracker(); } catch (e: any) { logger.warn('[TicketTracker] 注册失败: %s', e?.message || e); }
   // 工单流转：节点账 + 处理人变更通知（挂在同一钩子链）
   try { ticketFlow.registerTicketFlow(); } catch (e: any) { logger.warn('[TicketFlow] 注册失败: %s', e?.message || e); }
+  // 工单数据变更广播：任何写入路径（页面 / AI / 飞书 / 移动端）落库后通知渲染层实时刷新
+  ticketStore.onSave(() => {
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('tickets:changed', Date.now()); } catch {}
+  });
   createTray();
 
   // 旧版飞书写入暂存区（~/.qihang-ai-desktop/pending）已随笔记工具下线而废弃：
