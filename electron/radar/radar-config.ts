@@ -24,7 +24,7 @@ export interface RadarConfig {
   idleTimeoutMs: number;
 }
 
-export const ALL_TOOLS = ['zcode', 'claude-code', 'codex', 'opencode', 'qoder', 'trae', 'dsh', 'pi'] as const;
+export const ALL_TOOLS = ['zcode', 'claude-code', 'codex', 'opencode', 'qoder', 'trae', 'dsh', 'pi', 'mcode'] as const;
 
 /** 雷达数据目录（正本库/指纹库/状态文件），全部本地、不出机器 */
 export function radarDataDir(): string {

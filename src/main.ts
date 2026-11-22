@@ -28,6 +28,7 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
         { tool: 'codex', label: 'Codex' }, { tool: 'opencode', label: 'OpenCode' },
         { tool: 'qoder', label: 'Qoder' }, { tool: 'trae', label: 'Trae' },
         { tool: 'dsh', label: 'DSH' }, { tool: 'pi', label: 'Pi' },
+        { tool: 'mcode', label: 'MiniMax Code' },
       ];
       const sessions = tools.flatMap((t, i) => Array.from({ length: 3 }, (_, j) => ({
         tool: t.tool, sessionId: `${t.tool}-s${j}`, title: `${t.label} 示例会话 ${j + 1}`,

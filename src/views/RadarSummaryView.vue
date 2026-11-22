@@ -72,7 +72,7 @@ const loading = ref(true);
 
 const TOOL_LABELS: Record<string, string> = {
   zcode: 'ZCode', 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode',
-  qoder: 'Qoder', trae: 'Trae', dsh: 'DSH', pi: 'Pi',
+  qoder: 'Qoder', trae: 'Trae', dsh: 'DSH', pi: 'Pi', mcode: 'MiniMax Code',
 };
 const toolLabel = (t: string) => TOOL_LABELS[t] || t;
 
