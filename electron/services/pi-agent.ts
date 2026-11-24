@@ -14,6 +14,7 @@ EventEmitter.defaultMaxListeners = 30;
 import * as fs from 'fs';
 import logger from './logger';
 import { buildLoadedMcpConfig } from './mcp-manager';
+import * as appConfig from './app-config';
 
 // ---- 桌面端会话放行 bash/edit/write（不经过 AgentHub 人工审批网关） ----
 // ~/.pi/agent/extensions/pi-agenthub-gate.ts 会在 bash/edit/write 的 tool_call 上阻塞等待
@@ -516,12 +517,15 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
 export async function generateDailyReport(sessionId: string, prompt: string): Promise<string> {
   const { buildReportToolDefs } = require('./tools');
   const customTools = await buildReportToolDefs(undefined);
+  // 后台任务默认模型（设置页「其他后台任务模型」），缺省跟随 pi 默认模型
+  const modelPattern = String(appConfig.getConfig('backgroundModel') || '').trim() || undefined;
   return new Promise((resolve, reject) => {
     let done = false;
     runPi({
       prompt,
       sessionId: sessionId + '_report',
       customTools,
+      modelPattern,
       onDone: (finalText) => {
         done = true;
         const result = (finalText || '').trim().split('\n').filter(l => !l.trim().startsWith('数据来源')).join('\n').trim();

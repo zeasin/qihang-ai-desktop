@@ -48,7 +48,17 @@
         <div v-else-if="briefEmpty" class="brief-body"><p>昨天没有 AI 会话与笔记更新。开始工作后，明天早上这里会生成昨日简报。</p></div>
         <div v-else class="brief-body">
           <p v-for="(line, i) in briefLines" :key="i" v-html="line"></p>
-          <p v-if="briefError" class="brief-err">{{ briefError }}</p>
+        </div>
+        <!-- 生成失败：完整显示错误，并允许切换大模型重试 -->
+        <div v-if="briefError" class="brief-error">
+          <div class="brief-error-msg">❌ 昨日简报生成失败：{{ briefError }}</div>
+          <div class="brief-error-actions">
+            <select v-model="briefModel" class="brief-model-select" :disabled="briefLoading" title="选择本次重试使用的大模型">
+              <option value="">默认模型{{ briefDefaultModelLabel }}</option>
+              <option v-for="m in briefModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
+            </select>
+            <button class="btn btn-sm btn-primary" :disabled="briefLoading" @click="regenBrief">{{ briefLoading ? '生成中…' : '用所选模型重试' }}</button>
+          </div>
         </div>
       </section>
 
@@ -208,12 +218,22 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ========== 今日简报（AI 生成：AI 工具动态 + 笔记库动态；失败/无数据回落规则简报） ==========
+// ========== 昨日简报（AI 生成：AI 工具动态 + 笔记库动态；失败时展示错误并可换模型重试） ==========
 const briefMd = ref('');
 const briefGeneratedAt = ref('');
 const briefLoading = ref(false);
 const briefEmpty = ref(false);
 const briefError = ref('');
+// 简报模型：空 = 设置页默认（昨日简报模型 → 后台任务模型 → pi 默认）
+const briefModel = ref('');
+const briefModels = ref<any[]>([]);
+const briefDefaultModel = ref('');
+const BRIEF_MODEL_KEY = 'brief_model_pi';
+const briefDefaultModelLabel = computed(() => {
+  if (!briefDefaultModel.value) return '';
+  const hit = briefModels.value.find((m: any) => m.pattern === briefDefaultModel.value);
+  return '（设置：' + (hit ? hit.providerLabel + ' · ' + hit.name : briefDefaultModel.value) + '）';
+});
 const briefHtml = computed(() => {
   try { return marked.parse(briefMd.value, { async: false }) as string; } catch { return briefMd.value; }
 });
@@ -222,31 +242,41 @@ const briefMetaText = computed(() => {
   if (briefGeneratedAt.value) return 'AI 生成 · ' + briefGeneratedAt.value;
   return 'AI 汇总昨日动态与今日待办';
 });
+
+async function loadBriefModels() {
+  try {
+    const [res, cfg] = await Promise.all([API.pi.models(), API.config.get()]);
+    briefModels.value = (res?.models || []).filter((m: any) => m.pattern);
+    briefDefaultModel.value = cfg?.briefModel || cfg?.backgroundModel || '';
+    const saved = localStorage.getItem(BRIEF_MODEL_KEY) || '';
+    if (saved && briefModels.value.some((m: any) => m.pattern === saved)) briefModel.value = saved;
+  } catch { briefModels.value = []; }
+}
+
 async function loadBrief(force = false) {
   if (briefLoading.value) return;
   briefLoading.value = true;
+  briefError.value = '';
   try {
-    const r: any = await API.radar.brief(force);
+    const r: any = await API.radar.brief(force, briefModel.value || undefined);
     if (r?.ok && r.brief) {
       briefMd.value = r.brief;
       briefGeneratedAt.value = r.generatedAt || '';
       briefEmpty.value = false;
       briefError.value = '';
+      if (briefModel.value) localStorage.setItem(BRIEF_MODEL_KEY, briefModel.value);
+      else localStorage.removeItem(BRIEF_MODEL_KEY);
     } else if (r?.ok && r.empty) {
       briefMd.value = '';
       briefGeneratedAt.value = '';
       briefEmpty.value = true;
       briefError.value = '';
     } else {
-      briefMd.value = '';
-      briefGeneratedAt.value = '';
-      briefEmpty.value = false;
-      briefError.value = r?.error ? 'AI 简报生成失败：' + r.error + '（下方为规则简报）' : '';
+      // 生成失败：保留已有内容，错误单独醒目展示（可换模型重试）
+      briefError.value = r?.error || '未知错误';
     }
   } catch (e: any) {
-    briefMd.value = '';
-    briefEmpty.value = false;
-    briefError.value = 'AI 简报生成失败：' + (e?.message || e) + '（下方为规则简报）';
+    briefError.value = e?.message || String(e);
   } finally {
     briefLoading.value = false;
   }
@@ -485,10 +515,12 @@ async function onGateReady() {
   loadNoteDigest();
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadOverviewData();
   loadKbCount();
   loadNoteDigest();
+  // 先恢复上次选择的简报模型，再生成（失败时可在错误提示处换模型重试）
+  await loadBriefModels();
   loadBrief();
   API.on('report:generated', () => {
     loadOverviewData();
@@ -548,7 +580,30 @@ onUnmounted(() => {
 .brief-md :deep(h3) { font-size: 13.5px; margin: 10px 0 6px; }
 .brief-md :deep(ul), .brief-md :deep(ol) { margin: 0 0 8px; padding-left: 18px; }
 .brief-md :deep(code) { font-size: 12px; background: var(--hover); border-radius: 4px; padding: 1px 5px; }
-.brief-err { color: var(--danger, #dc2626); font-size: 12px; margin-top: 6px; }
+/* 生成失败：错误醒目展示 + 换模型重试 */
+.brief-error {
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--danger, #dc2626);
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.07);
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.brief-error-msg { font-size: 12.5px; line-height: 1.6; color: var(--danger, #dc2626); word-break: break-all; }
+.brief-error-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.brief-model-select {
+  max-width: 280px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+}
 .brief-body { display: flex; flex-direction: column; gap: 5px; }
 .brief-body p { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary); }
 .brief-body p :deep(b) {

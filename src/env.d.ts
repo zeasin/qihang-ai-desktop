@@ -108,7 +108,7 @@ interface ElectronAPI {
     setEnabled: (enabled: boolean | string) => Promise<{ ok: boolean; status?: any; error?: string }>;
     scanNow: () => Promise<{ ok: boolean; skipped?: boolean; round?: any; error?: string }>;
     toolStats: () => Promise<{ tool: string; sessions: number; running: number; lastActivity: number }[]>;
-    brief: (force?: boolean) => Promise<{ ok: boolean; brief?: string; generatedAt?: string; fromCache?: boolean; empty?: boolean; savedRel?: string; pushed?: boolean; error?: string }>;
+    brief: (force?: boolean, model?: string) => Promise<{ ok: boolean; brief?: string; generatedAt?: string; fromCache?: boolean; empty?: boolean; savedRel?: string; pushed?: boolean; model?: string; error?: string }>;
     dashboard: () => Promise<{ cards: any[]; events: any[]; sessions: any[]; stats: any; lastRound: any }>;
     sessions: (opts?: { tool?: string; q?: string; page?: number; pageSize?: number }) =>
       Promise<{ total: number; rows: any[] }>;

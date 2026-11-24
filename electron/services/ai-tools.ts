@@ -26,9 +26,11 @@ export interface AiToolGenerateOptions {
 /**
  * 用 pi agent 生成内容（非流式返回完整文本）。
  * 使用独立 session（前缀 aitool_），默认不注入本地工具；可传 customTools（如周报查询工具）。
+ * 未显式指定模型时，使用设置页「后台任务模型」（config.json 的 backgroundModel），缺省跟随 pi 默认模型。
  */
 export async function generateWithPi(opts: AiToolGenerateOptions): Promise<string> {
   const { prompt, sessionId, onDelta, customTools, modelPattern, timeoutMs = 300000 } = opts;
+  const effectiveModel = modelPattern || appConfig.getConfig('backgroundModel') || undefined;
   return new Promise((resolve, reject) => {
     let done = false;
     const timeout = setTimeout(() => {
@@ -39,7 +41,7 @@ export async function generateWithPi(opts: AiToolGenerateOptions): Promise<strin
       prompt,
       sessionId: 'aitool_' + sessionId,
       customTools,
-      modelPattern,
+      modelPattern: effectiveModel,
       timeoutMs,
       onDelta,
       onDone: (finalText) => {

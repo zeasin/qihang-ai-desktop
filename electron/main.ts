@@ -1259,7 +1259,7 @@ ipcMain.handle('radar:scan-now', async () => {
   }
 });
 ipcMain.handle('radar:tool-stats', () => agentRadar.toolStats());
-ipcMain.handle('radar:brief', (_, force) => getBrief(force === true));
+ipcMain.handle('radar:brief', (_, force, model) => getBrief(force === true, typeof model === 'string' ? model : undefined));
 ipcMain.handle('radar:dashboard', () => agentRadar.dashboard());
 ipcMain.handle('radar:sessions', (_, { tool, q, page, pageSize }) => {
   try {
@@ -1896,6 +1896,9 @@ ipcMain.handle('config:get', () => {
     agentRadarMonitorMs: appConfig.getConfig('agentRadarMonitorMs') || '3000',
     agentRadarExclude: appConfig.getConfig('agentRadarExclude') || '',
     feishuChatId: appConfig.getConfig('feishuChatId') || '',
+    // 后台任务默认模型（provider/modelId；空 = 跟随 pi 默认模型）
+    briefModel: appConfig.getConfig('briefModel') || '',
+    backgroundModel: appConfig.getConfig('backgroundModel') || '',
 
     approverEnabled: appConfig.getConfig('approverEnabled') || '0',
     approverPort: appConfig.getConfig('approverPort') || '8790',

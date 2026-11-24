@@ -308,7 +308,7 @@ async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number): Promis
  * 笔记库子助手：把昨天更新的文档内容摘录提炼成清单，供主汇总合并。
  * 摘录由代码确定性读取（完整性由枚举保证，子助手只负责提炼）；失败时原文摘录降级给主汇总，内容不丢。
  */
-async function runNoteSubAgent(dk: string, excerpts: Array<{ label: string; content: string }>, runId: number): Promise<string> {
+async function runNoteSubAgent(dk: string, excerpts: Array<{ label: string; content: string }>, runId: number, modelPattern?: string): Promise<string> {
   const source = excerpts.map((x) => `### ${x.label}\n${x.content}`).join('\n\n');
   try {
     const text = await generateWithPi({
@@ -319,6 +319,7 @@ async function runNoteSubAgent(dk: string, excerpts: Array<{ label: string; cont
         source,
       ].join('\n'),
       sessionId: `brief_${dk}_${runId}_note`,
+      modelPattern,
       timeoutMs: BRIEF_TIMEOUT_MS,
     });
     return text.trim().slice(0, NOTE_SUMMARY_CHARS);
@@ -335,6 +336,7 @@ async function generateBrief(
   ticket: { lines: string[]; created: number; flowed: number; closed: number; open: number },
   todoItems: PickedTodo[],
   todoDropped: number,
+  modelPattern?: string,
 ): Promise<string> {
   const runId = Date.now();
   const noteList = [...note.lines, ...note.dayFiles.map((file) => `- ${file}`)];
@@ -359,7 +361,7 @@ async function generateBrief(
   ].join('\n');
 
   if (ai.lines.length <= SHARD_THRESHOLD) {
-    const noteSummary = note.excerpts.length ? await runNoteSubAgent(dk, note.excerpts, runId) : '';
+    const noteSummary = note.excerpts.length ? await runNoteSubAgent(dk, note.excerpts, runId, modelPattern) : '';
     const ctx = [
       '## 昨日 AI 工具动态（共 ' + ai.count + ' 个会话）',
       ai.lines.join('\n') || '（无）',
@@ -375,7 +377,7 @@ async function generateBrief(
       '你是「昨日简报」助手。今天是 ' + dateKey() + '，昨天是 ' + dk + '。以下是从本机采集的 AI 工具会话、笔记库提炼与工单动态，以及今日待办候选清单，请汇总成一份简洁的中文 markdown 简报。',
       '', ctx, '', requirements,
     ].join('\n');
-    return generateWithPi({ prompt, sessionId: 'brief_' + dk, timeoutMs: BRIEF_TIMEOUT_MS });
+    return generateWithPi({ prompt, sessionId: 'brief_' + dk, modelPattern, timeoutMs: BRIEF_TIMEOUT_MS });
   }
 
   // 会话分片 + 笔记库子助手同池竞争，并发上限 MAX_PARALLEL
@@ -391,6 +393,7 @@ async function generateBrief(
           '', source,
         ].join('\n'),
         sessionId: `brief_${dk}_${runId}_shard_${index + 1}`,
+        modelPattern,
         timeoutMs: BRIEF_TIMEOUT_MS,
       });
     } catch (e: any) {
@@ -398,7 +401,7 @@ async function generateBrief(
       return '【本分片提炼失败，以下为原始内容，主汇总必须覆盖】\n' + source;
     }
   });
-  if (note.excerpts.length) tasks.push(() => runNoteSubAgent(dk, note.excerpts, runId));
+  if (note.excerpts.length) tasks.push(() => runNoteSubAgent(dk, note.excerpts, runId, modelPattern));
 
   const results = await runPool(tasks, MAX_PARALLEL);
   const shardResults = results.slice(0, shards.length);
@@ -422,16 +425,30 @@ async function generateBrief(
     '', requirements,
   ].join('\n');
   logger.info('[RadarBrief] 自适应分片: %s 个会话 → %s 片 + 笔记库子助手 %s 篇摘录，最多 %s 路并行，失败降级 %s 片', ai.lines.length, shards.length, note.excerpts.length, MAX_PARALLEL, degraded);
-  return generateWithPi({ prompt, sessionId: `brief_${dk}_${runId}`, timeoutMs: BRIEF_TIMEOUT_MS });
+  return generateWithPi({ prompt, sessionId: `brief_${dk}_${runId}`, modelPattern, timeoutMs: BRIEF_TIMEOUT_MS });
+}
+
+/**
+ * 简报使用的模型：显式指定 > 设置页「昨日简报模型」 > 设置页「后台任务模型」 > pi 默认模型。
+ * 空字符串表示不指定（走 pi 默认）。
+ */
+function resolveBriefModel(override?: string): string | undefined {
+  const explicit = String(override || '').trim();
+  if (explicit) return explicit;
+  const brief = String(appConfig.getConfig('briefModel') || '').trim();
+  if (brief) return brief;
+  const bg = String(appConfig.getConfig('backgroundModel') || '').trim();
+  return bg || undefined;
 }
 
 /**
  * 昨日简报主入口。force=true 手动刷新（重新生成并覆盖落盘，不重推）。
+ * model 可选：本次生成临时指定模型（设置页「昨日简报模型」优先，缺省跟随后台任务模型）。
  * 回顾昨日 AI/笔记动态，附今日待办（实时）。
  * 缓存两级：内存 → 落盘文件恢复（重启后）→ 生成。同一天生成中并发请求复用同一任务。
  * 返回 { ok, brief?, generatedAt?, fromCache?, empty?, error? }；brief 为空且 empty=true 表示昨日无活动。
  */
-export async function getBrief(force = false): Promise<any> {
+export async function getBrief(force = false, model?: string): Promise<any> {
   const range = yesterdayRange();
   const dk = range.key; // 缓存/落盘/推送都按「昨日」日期键
   if (!force && cacheDate === dk && cacheBrief) {
@@ -451,6 +468,7 @@ export async function getBrief(force = false): Promise<any> {
     }
   }
   const job = (async () => {
+    const modelPattern = resolveBriefModel(model);
     try {
       const ai = collectAiSide(range);
       // digest 只采集一次：待办筛选与笔记动态共用同一份口径
@@ -463,7 +481,7 @@ export async function getBrief(force = false): Promise<any> {
         return { ok: true, empty: true, brief: '' };
       }
 
-      const brief = await generateBrief(dk, ai, note, tickets, todos.items, todos.dropped);
+      const brief = await generateBrief(dk, ai, note, tickets, todos.items, todos.dropped, modelPattern);
       const generatedAt = dateKey() + ' ' + timeLabel();
       cacheDate = dk;
       cacheBrief = brief;
@@ -473,10 +491,10 @@ export async function getBrief(force = false): Promise<any> {
       const pushed = await pushFeishu(brief, dk);
       if (saved.ok) logger.info('[RadarBrief] 落盘成功: %s（推送: %s）', saved.rel, pushed.ok ? '是' : '否(' + (pushed.error || '') + ')');
       else logger.warn('[RadarBrief] 落盘失败: ' + saved.error);
-      return { ok: true, brief, generatedAt, fromCache: false, savedRel: saved.rel || '', savedError: saved.error || '', pushed: !!pushed.ok };
+      return { ok: true, brief, generatedAt, fromCache: false, savedRel: saved.rel || '', savedError: saved.error || '', pushed: !!pushed.ok, model: modelPattern || '' };
     } catch (e: any) {
-      logger.warn('[RadarBrief] 生成失败: ' + (e?.message || e));
-      return { ok: false, error: e?.message || String(e) };
+      logger.warn('[RadarBrief] 生成失败（模型 %s）: %s', modelPattern || '默认', e?.message || e);
+      return { ok: false, error: e?.message || String(e), model: modelPattern || '' };
     }
   })();
   inflight = job;

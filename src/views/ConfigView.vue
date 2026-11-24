@@ -117,6 +117,31 @@
         </div>
       </div>
 
+      <!-- 后台任务模型 -->
+      <div class="card">
+        <h2>🧠 后台任务模型</h2>
+        <div class="text-muted mb-2">昨日简报、会话摘要、日报生成、工具箱生成等后台调用默认使用这里的模型。不选择时跟随 pi 默认模型；昨日简报生成失败时，可在今天页的错误提示处临时换模型重试。</div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="form-group" style="flex:1;min-width:240px;">
+            <label style="font-size:12px;">昨日简报模型</label>
+            <select v-model="briefModelCfg" class="form-control">
+              <option value="">默认（跟随后台任务模型 / pi 默认）</option>
+              <option v-for="m in bgModels" :key="'brief-' + m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex:1;min-width:240px;">
+            <label style="font-size:12px;">其他后台任务模型</label>
+            <select v-model="backgroundModelCfg" class="form-control">
+              <option value="">默认（pi 默认模型）</option>
+              <option v-for="m in bgModels" :key="'bg-' + m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" style="margin-bottom:12px;" :disabled="bgModelSaving" @click="saveBgModelConfig">{{ bgModelSaving ? '保存中…' : '保存' }}</button>
+        </div>
+        <div v-if="!bgModels.length" class="text-muted" style="font-size:12px;">尚未加载到可用模型，请先在上方配置模型接入点。</div>
+        <span v-if="bgModelStatus" class="text-muted" :style="{ color: bgModelStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }" style="display:block;margin-top:8px;">{{ bgModelStatus }}</span>
+      </div>
+
       <!-- AI 引擎版本 -->
       <div class="card">
         <h2>🧩 AI 引擎版本</h2>
@@ -698,6 +723,33 @@ async function loadAgentVersions() {
   finally { versionsLoading.value = false; }
 }
 
+// 后台任务模型（昨日简报 / 会话摘要 / 日报 / 工具箱等）
+const bgModels = ref<{ providerLabel: string; name: string; pattern: string; configured: boolean }[]>([]);
+const briefModelCfg = ref('');
+const backgroundModelCfg = ref('');
+const bgModelSaving = ref(false);
+const bgModelStatus = ref('');
+
+async function loadBgModels() {
+  try {
+    const res = await API.pi.models();
+    bgModels.value = (res?.models || []).filter((m: any) => m.pattern);
+  } catch { bgModels.value = []; }
+}
+
+async function saveBgModelConfig() {
+  bgModelSaving.value = true;
+  try {
+    await API.config.set({ briefModel: briefModelCfg.value, backgroundModel: backgroundModelCfg.value });
+    bgModelStatus.value = '✅ 已保存，下次后台任务生效';
+  } catch (e: any) {
+    bgModelStatus.value = '❌ ' + (e?.message || '保存失败');
+  } finally {
+    bgModelSaving.value = false;
+    setTimeout(() => { bgModelStatus.value = ''; }, 4000);
+  }
+}
+
 // Provider modal state
 const providerModalOpen = ref(false);
 const editingProviderIndex = ref(-1);
@@ -1220,6 +1272,8 @@ async function loadConfig() {
     dshPath.value = cfg.dshPath || '';
     claudePath.value = cfg.claudePath || '';
     openCodeEscalateActions.value = cfg.opencodeEscalateActions || '';
+    briefModelCfg.value = cfg.briefModel || '';
+    backgroundModelCfg.value = cfg.backgroundModel || '';
   } catch { console.warn('加载配置失败'); }
 }
 
@@ -1618,6 +1672,7 @@ onMounted(async () => {
   await loadConfig();
   await loadStartupSetting();
   await loadLlmConfig();
+  await loadBgModels();
   await loadSearchConfig();
   await loadAgentVersions();
   await loadProjects();

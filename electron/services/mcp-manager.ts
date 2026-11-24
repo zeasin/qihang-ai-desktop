@@ -638,6 +638,8 @@ export async function classifyRecords(
       runPi({
         prompt,
         sessionId: `mcp-classify-${day}`,
+        // 后台任务默认模型（设置页「其他后台任务模型」）
+        modelPattern: String(loadConfig().backgroundModel || '').trim() || undefined,
         timeoutMs: 180_000,
         onDone: (t) => resolve(t),
         onError: (e) => reject(new Error(e)),
