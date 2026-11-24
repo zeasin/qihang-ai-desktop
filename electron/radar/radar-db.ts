@@ -2,7 +2,7 @@
  * 雷达本地正本库（radar.db，WAL）。
  * 从 qihangagenthub v2 hub-db 移植：指纹增量正本 + FTS5 trigram 全文检索。
  * 表结构与 hub-schema.sql 对齐（去 ENGINE/COMMENT/ngram，加 FTS5 虚表 + 触发器），
- * 表前缀 radar_。时间戳一律毫秒 epoch。tool 枚举：qoder/zcode/trae/dsh/claude-code/opencode/codex/pi。
+ * 表前缀 radar_。时间戳一律毫秒 epoch。tool 枚举：qoder/zcode/trae/dsh/claude-code/opencode/codex/pi/mcode/autoclaw。
  */
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';

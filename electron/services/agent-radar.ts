@@ -28,6 +28,12 @@ function numCfg(key: string, dflt: number): number {
   return Number.isFinite(n) && n > 0 ? n : dflt;
 }
 
+/** 同 numCfg，但允许 0（agentRadarAutoFreezeDays=0 表示关闭自动冻结） */
+function numCfgAllowZero(key: string, dflt: number): number {
+  const n = Number(appConfig.getConfig(key));
+  return Number.isFinite(n) && n >= 0 ? n : dflt;
+}
+
 function buildConfig(): RadarConfig {
   const tools = String(appConfig.getConfig('agentRadarTools') || '')
     .split(',').map((s) => s.trim()).filter(Boolean)
@@ -37,11 +43,11 @@ function buildConfig(): RadarConfig {
   return {
     tools,
     excludeProjects: exclude,
-    autoFreezeDays: 30,
+    autoFreezeDays: numCfgAllowZero('agentRadarAutoFreezeDays', 30),
     syncIntervalMs: numCfg('agentRadarIntervalMs', 60_000),
     monitorIntervalMs: numCfg('agentRadarMonitorMs', 3_000),
-    activeWindowMs: 3 * 60_000,
-    idleTimeoutMs: 3 * 60_000,
+    activeWindowMs: numCfg('agentRadarActiveWindowMs', 3 * 60_000),
+    idleTimeoutMs: numCfg('agentRadarIdleTimeoutMs', 3 * 60_000),
   };
 }
 

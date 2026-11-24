@@ -20,10 +20,23 @@ function opencodeDbPath(): string {
 export class OpenCodeCollector implements HubCollector {
   readonly tool = 'opencode';
 
-  private openDb(): DatabaseSync | null {
+  /** 常驻只读连接（与 zcode/qoder 同款，省掉探针每 3s 一次的 open/close） */
+  private db: DatabaseSync | null = null;
+
+  private getDb(): DatabaseSync | null {
+    if (this.db) return this.db;
     const dbPath = opencodeDbPath();
     if (!existsSync(dbPath)) return null;
-    return openSqliteReadonly(dbPath, 'RADAR-OPENCODE');
+    this.db = openSqliteReadonly(dbPath, 'RADAR-OPENCODE');
+    return this.db;
+  }
+
+  /** 连接出错时关闭并丢弃缓存句柄，下次 getDb 重新打开（库可能被源工具替换） */
+  private dropDb(): void {
+    if (this.db) {
+      try { this.db.close(); } catch {}
+      this.db = null;
+    }
   }
 
   private hasTable(db: DatabaseSync, table: string): boolean {
@@ -53,7 +66,7 @@ export class OpenCodeCollector implements HubCollector {
   }
 
   async listAll(): Promise<SessionInfo[]> {
-    const db = this.openDb();
+    const db = this.getDb();
     if (!db) return [];
     try {
       const table = this.sessionTable(db);
@@ -65,9 +78,8 @@ export class OpenCodeCollector implements HubCollector {
       return rows.map((r) => this.rowToSession(r));
     } catch (e) {
       LOG('listAll error:', e);
+      this.dropDb();
       return [];
-    } finally {
-      try { db.close(); } catch {}
     }
   }
 
@@ -167,7 +179,7 @@ export class OpenCodeCollector implements HubCollector {
   }
 
   async loadMessages(session: SessionInfo): Promise<SerializedMessage[]> {
-    const db = this.openDb();
+    const db = this.getDb();
     if (!db) return [];
     try {
       if (this.hasTable(db, 'message') && this.hasTable(db, 'part')) {
@@ -177,15 +189,14 @@ export class OpenCodeCollector implements HubCollector {
       return this.loadMessagesV2(db, session.id);
     } catch (e) {
       LOG('loadMessages error:', e);
+      this.dropDb();
       return [];
-    } finally {
-      try { db.close(); } catch {}
     }
   }
 
   async probe(): Promise<Map<string, ProbeSignal>> {
     const out = new Map<string, ProbeSignal>();
-    const db = this.openDb();
+    const db = this.getDb();
     if (!db) return out;
     try {
       const table = this.sessionTable(db);
@@ -197,11 +208,12 @@ export class OpenCodeCollector implements HubCollector {
       for (const r of rows) out.set(String(r.id), { ts: Number(r.time_updated) });
     } catch (e) {
       LOG('probe error:', e);
-    } finally {
-      try { db.close(); } catch {}
+      this.dropDb();
     }
     return out;
   }
 
-  async dispose(): Promise<void> {}
+  async dispose(): Promise<void> {
+    this.dropDb();
+  }
 }

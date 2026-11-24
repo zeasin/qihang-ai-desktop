@@ -7,6 +7,7 @@ import { PiCollector } from './pi';
 import { TraeCollector } from './trae';
 import { DshCollector } from './dsh';
 import { McodeCollector } from './mcode';
+import { AutoclawCollector } from './autoclaw';
 import { ALL_TOOLS, type RadarConfig } from '../radar-config';
 import type { HubCollector } from '../types';
 
@@ -23,6 +24,7 @@ export function defaultCollectors(cfg: RadarConfig): HubCollector[] {
     ['trae', () => new TraeCollector()],
     ['dsh', () => new DshCollector()],
     ['mcode', () => new McodeCollector()],
+    ['autoclaw', () => new AutoclawCollector()],
   ];
   const out: HubCollector[] = [];
   for (const [tool, factory] of factories) {

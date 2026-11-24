@@ -8,7 +8,7 @@ import path from 'node:path';
  */
 
 export interface RadarConfig {
-  /** 启用的工具（空 = 全部 8 个） */
+  /** 启用的工具（空 = 全部，见下方 ALL_TOOLS） */
   tools: string[];
   /** 排除的项目目录（不采集这些目录下的会话），大小写不敏感 */
   excludeProjects: string[];
@@ -24,7 +24,7 @@ export interface RadarConfig {
   idleTimeoutMs: number;
 }
 
-export const ALL_TOOLS = ['zcode', 'claude-code', 'codex', 'opencode', 'qoder', 'trae', 'dsh', 'pi', 'mcode'] as const;
+export const ALL_TOOLS = ['zcode', 'claude-code', 'codex', 'opencode', 'qoder', 'trae', 'dsh', 'pi', 'mcode', 'autoclaw'] as const;
 
 /** 雷达数据目录（正本库/指纹库/状态文件），全部本地、不出机器 */
 export function radarDataDir(): string {

@@ -357,7 +357,8 @@ export class McodeCollector implements HubCollector {
         if (hasTable) {
           const rows = db.prepare(
             `SELECT session_id, updated_at_ms, status FROM local_runtime_sessions
-             WHERE IFNULL(archived, 0) = 0 AND IFNULL(visibility, 'visible') = 'visible'`,
+             WHERE IFNULL(archived, 0) = 0 AND IFNULL(visibility, 'visible') = 'visible'
+             ORDER BY updated_at_ms DESC LIMIT 5000`,
           ).all() as any[];
           const now = Date.now();
           for (const r of rows) {

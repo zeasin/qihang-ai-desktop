@@ -1,4 +1,4 @@
-﻿<!--
+<!--
   RadarSessionView —— 雷达会话详情页（独立页面，从雷达页会话行进入）
   全页浏览单个会话的对话记录 / 状态时间线；会话活跃时状态徽标实时更新。
 -->
@@ -152,7 +152,7 @@ const loading = ref(false);
 
 const TOOL_LABELS: Record<string, string> = {
   zcode: 'ZCode', 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'OpenCode',
-  qoder: 'Qoder', trae: 'Trae', dsh: 'DSH', pi: 'Pi', mcode: 'MiniMax Code',
+  qoder: 'Qoder', trae: 'Trae', dsh: 'DSH', pi: 'Pi', mcode: 'MiniMax Code', autoclaw: 'AutoClaw',
 };
 const toolLabel = (t: string) => TOOL_LABELS[t] || t;
 

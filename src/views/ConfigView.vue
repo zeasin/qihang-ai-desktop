@@ -589,7 +589,7 @@
       <div class="card">
         <h2>🛰 智能体雷达</h2>
         <div class="text-muted mb-2">
-          监控本机其他 AI 编码工具（ZCode / Claude Code / Codex / OpenCode / Qoder / Trae / DSH / Pi）的运行状态，
+          监控本机其他 AI 编码工具（ZCode / Claude Code / Codex / OpenCode / Qoder / Trae / DSH / Pi / MiniMax Code / AutoClaw）的运行状态，
           会话对话自动存档在本地（~/.qihang-ai-desktop/radar/），<b>不上传任何数据</b>。默认关闭，开启后生效。
         </div>
         <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
@@ -614,6 +614,28 @@
           <div class="form-group" style="flex:1;min-width:260px;margin:0;">
             <label style="font-size:12px;">排除目录（逗号分隔，前缀匹配）</label>
             <input v-model="radarExclude" type="text" class="form-control" placeholder="如 D:\tmp,C:\scratch">
+          </div>
+        </div>
+        <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:12px;">自动冻结天数（0 = 关闭）</label>
+            <input v-model="radarAutoFreezeDays" type="number" min="0" step="1" class="form-control" style="width:150px;">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:12px;">活跃窗口（毫秒）</label>
+            <input v-model="radarActiveWindowMs" type="number" min="30000" step="30000" class="form-control" style="width:140px;">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:12px;">空闲超时（毫秒）</label>
+            <input v-model="radarIdleTimeoutMs" type="number" min="30000" step="30000" class="form-control" style="width:140px;">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="font-size:12px;">采集工具（不勾选任何一项 = 全部采集）</label>
+          <div class="flex" style="gap:12px;flex-wrap:wrap;align-items:center;">
+            <label v-for="t in RADAR_TOOLS" :key="t.id" class="text-muted" style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin:0;">
+              <input type="checkbox" :value="t.id" v-model="radarTools"> {{ t.label }}
+            </label>
           </div>
         </div>
         <div class="flex" style="gap:8px;flex-wrap:wrap;align-items:center;">
@@ -1512,8 +1534,25 @@ const radarRunning = ref(false);
 const radarIntervalMs = ref('60000');
 const radarMonitorMs = ref('3000');
 const radarExclude = ref('');
+const radarAutoFreezeDays = ref('30');
+const radarActiveWindowMs = ref('180000');
+const radarIdleTimeoutMs = ref('180000');
 const radarBusy = ref(false);
 const radarStatus = ref('');
+// 雷达采集工具清单（与 electron/radar/radar-config.ts 的 ALL_TOOLS 对齐）；勾选集写 agentRadarTools，空 = 全部
+const RADAR_TOOLS = [
+  { id: 'zcode', label: 'ZCode' },
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'opencode', label: 'OpenCode' },
+  { id: 'qoder', label: 'Qoder' },
+  { id: 'trae', label: 'Trae' },
+  { id: 'dsh', label: 'DSH' },
+  { id: 'pi', label: 'Pi' },
+  { id: 'mcode', label: 'MiniMax Code' },
+  { id: 'autoclaw', label: 'AutoClaw' },
+];
+const radarTools = ref<string[]>([]);
 
 async function loadRadarCfg() {
   try {
@@ -1523,6 +1562,10 @@ async function loadRadarCfg() {
     radarIntervalMs.value = String(cfg.agentRadarIntervalMs || '60000');
     radarMonitorMs.value = String(cfg.agentRadarMonitorMs || '3000');
     radarExclude.value = cfg.agentRadarExclude || '';
+    radarAutoFreezeDays.value = String(cfg.agentRadarAutoFreezeDays || '30');
+    radarActiveWindowMs.value = String(cfg.agentRadarActiveWindowMs || '180000');
+    radarIdleTimeoutMs.value = String(cfg.agentRadarIdleTimeoutMs || '180000');
+    radarTools.value = String(cfg.agentRadarTools || '').split(',').map((s: string) => s.trim()).filter(Boolean);
     radarRunning.value = !!st?.running;
   } catch { /* 雷达 IPC 不可用时保持默认 */ }
 }
@@ -1530,13 +1573,19 @@ async function loadRadarCfg() {
 async function saveRadarCfg() {
   radarBusy.value = true;
   try {
+    const freezeDays = parseInt(radarAutoFreezeDays.value);
     await API.config.set({
       agentRadarIntervalMs: String(parseInt(radarIntervalMs.value) || 60000),
       agentRadarMonitorMs: String(parseInt(radarMonitorMs.value) || 3000),
       agentRadarExclude: radarExclude.value.trim(),
+      agentRadarTools: radarTools.value.join(','),
+      agentRadarAutoFreezeDays: String(Number.isFinite(freezeDays) && freezeDays >= 0 ? freezeDays : 30),
+      agentRadarActiveWindowMs: String(parseInt(radarActiveWindowMs.value) || 180000),
+      agentRadarIdleTimeoutMs: String(parseInt(radarIdleTimeoutMs.value) || 180000),
     });
-    // 间隔改动需重启采集循环生效
+    // 工具/间隔/窗口改动需重启采集循环生效；setEnabled(true) 在服务已运行时是幂等 no-op，须先停再启
     if (radarEnabled.value) {
+      await API.radar.setEnabled(false);
       const res = await API.radar.setEnabled(true);
       if (res?.status) radarRunning.value = !!res.status.running;
     }

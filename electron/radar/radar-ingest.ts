@@ -279,7 +279,7 @@ function normalizedCount(messages: SerializedMessage[]): number {
   return messages.filter((m) => m.content || m.thinking || m.tools?.length).length;
 }
 
-/** 截断后组装写库包；seq 在过滤空消息后按序编号（与全部解析结果一致，delta 靠它对齐） */
+/** 截断后组装写库包；seq 先按解析序号编号、再过滤空消息（空消息占号被滤掉，seq 存在空位；delta/full 编号规则一致，delta 靠 seq 对齐） */
 function buildPack(
   s: SessionInfo,
   messages: SerializedMessage[],

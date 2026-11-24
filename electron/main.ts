@@ -1873,6 +1873,11 @@ ipcMain.handle('config:get', () => {
     agentRadarIntervalMs: appConfig.getConfig('agentRadarIntervalMs') || '60000',
     agentRadarMonitorMs: appConfig.getConfig('agentRadarMonitorMs') || '3000',
     agentRadarExclude: appConfig.getConfig('agentRadarExclude') || '',
+    // 雷达工具清单与可调参数（agentRadarTools 空 = 全部；三参数默认 30 天 / 3 分钟 / 3 分钟）
+    agentRadarTools: appConfig.getConfig('agentRadarTools') || '',
+    agentRadarAutoFreezeDays: appConfig.getConfig('agentRadarAutoFreezeDays') || '30',
+    agentRadarActiveWindowMs: appConfig.getConfig('agentRadarActiveWindowMs') || '180000',
+    agentRadarIdleTimeoutMs: appConfig.getConfig('agentRadarIdleTimeoutMs') || '180000',
     feishuChatId: appConfig.getConfig('feishuChatId') || '',
     // 后台任务默认模型（provider/modelId；空 = 跟随 pi 默认模型）
     briefModel: appConfig.getConfig('briefModel') || '',

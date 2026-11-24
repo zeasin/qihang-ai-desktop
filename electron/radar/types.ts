@@ -1,4 +1,4 @@
-/** 雷达共享类型。tool 枚举：qoder/zcode/trae/dsh/claude-code/opencode/codex/pi/mcode */
+/** 雷达共享类型。tool 枚举：qoder/zcode/trae/dsh/claude-code/opencode/codex/pi/mcode/autoclaw */
 
 export interface SessionInfo {
   id: string;

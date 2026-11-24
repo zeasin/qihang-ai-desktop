@@ -31,5 +31,8 @@
   "agentRadarIntervalMs": "60000",
   "agentRadarMonitorMs": "3000",
   "agentRadarExclude": "",
-  "agentRadarTools": ""
+  "agentRadarTools": "",
+  "agentRadarAutoFreezeDays": "30",
+  "agentRadarActiveWindowMs": "180000",
+  "agentRadarIdleTimeoutMs": "180000"
 }
