@@ -100,7 +100,7 @@
                 </button>
                 <input ref="fileInputRef" type="file" accept="image/*" multiple style="display:none" @change="handleImageUpload" />
                 <select class="model-selector" v-model="selectedModel" :disabled="isStreaming || modelsLoading" title="选择模型">
-                  <option value="">默认模型</option>
+                  <option value="">默认{{ piDefaultLabel ? '（' + piDefaultLabel + '）' : '（pi 默认模型）' }}</option>
                   <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
                   <option v-for="m in piModels" :key="m.pattern" :value="m.pattern">
                     {{ m.providerLabel }} · {{ m.name }}
@@ -201,6 +201,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 const feishuHint = ref('');
 let feishuHintTimer: ReturnType<typeof setTimeout> | null = null;
 const piModels = ref<{ provider: string; providerLabel: string; id: string; name: string; pattern: string; configured: boolean }[]>([]);
+const piDefaultLabel = ref('');
 const selectedModel = ref('');
 const modelsLoaded = ref(false);
 const modelsLoading = ref(false);
@@ -320,6 +321,9 @@ async function loadPiModels() {
   try {
     const res = await API.pi.models();
     piModels.value = (res?.models || []).filter((m) => m.pattern);
+    const dp = String(res?.defaultPattern || '');
+    const dm = piModels.value.find((m) => m.pattern === dp);
+    piDefaultLabel.value = dp ? (dm ? `${dm.providerLabel} · ${dm.name}` : dp) : '';
     const saved = localStorage.getItem(CHAT_MODEL_KEY);
     if (saved && piModels.value.some((m) => m.pattern === saved)) {
       selectedModel.value = saved;

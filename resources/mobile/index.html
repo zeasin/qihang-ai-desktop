@@ -1456,7 +1456,7 @@
   function renderModelList(models) {
     modelList.innerHTML = '';
     var cur = modelSheetTarget === 'radar' ? state.radarModel : state.currentModel;
-    var options = [{ pattern: '', name: '默认模型', providerLabel: '' }].concat(models || []);
+    var options = [{ pattern: '', name: '默认（pi 默认模型）', providerLabel: '' }].concat(models || []);
     options.forEach(function (m) {
       var row = document.createElement('div');
       row.className = 'model-item' + (m.pattern === cur ? ' current' : '');

@@ -35,7 +35,7 @@ try {
 import * as db from './services/database';
 import * as ticketStore from './services/tickets';
 import * as appConfig from './services/app-config';
-import { runPi, listPiModels, generateDailyReport as piGenerateDailyReport, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession, resetAllPiSessions } from './services/pi-agent';
+import { runPi, listPiModels, listBuiltinModelConfigs, saveBuiltinModelConfigs, testBuiltinModelConnection, syncDefaultModelSettings, abortSession, resetPiSession, resetAllPiSessions } from './services/pi-agent';
 import * as mcpManager from './services/mcp-manager';
 import { agentVersions } from './services/agent-versions';
 import { buildDataToolDefs, appendTodoNote } from './services/tools';
@@ -459,6 +459,8 @@ const feishuMessageHandler = async (msg) => {
       // 飞书续聊的问题也要在桌面正在看的会话里即时出气泡（chat:done 会整段重拉兜底）
       sendToRenderer('chat:remote', { sessionId: sid, title: lastSession.title || '', text: question });
       const ok = await followUpFeishuSession(sid, question, db, {
+        // 飞书 Bot 使用设置页指定的模型
+        model: appConfig.getConfig('feishuModel') || undefined,
         onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: sid, text: delta }),
         onDone: (text, meta) => {
           feishuRunningSessions.delete(sid);
@@ -548,6 +550,8 @@ const feishuMessageHandler = async (msg) => {
         sendToRenderer('chat:remote', { sessionId: followupSid, title: followSession.title || '', text: followQuestion });
         emitChatEvent('chat:status', { sessionId: followupSid, text: '飞书追加追问' });
         const ok = await followUpFeishuSession(followupSid, followQuestion, db, {
+          // 飞书 Bot 使用设置页指定的模型
+          model: appConfig.getConfig('feishuModel') || undefined,
           images: msgImages.length ? msgImages : undefined,
           onDelta: (delta: string) => emitChatEvent('chat:delta', { sessionId: followupSid, text: delta }),
           onTool: (toolEvent: any) => emitChatEvent('chat:tool', { sessionId: followupSid, ...toolEvent }),
@@ -670,6 +674,8 @@ const feishuMessageHandler = async (msg) => {
       prompt,
       sessionId,
       cwd: projectDir || undefined,
+      // 飞书 Bot 由设置页显式指定模型，避免飞书会话悄悄使用 pi 默认模型
+      modelPattern: appConfig.getConfig('feishuModel') || undefined,
       customTools: toolDefs,
       images: turnImages.length ? turnImages : undefined,
       // 不设超时（2026-10-31 用户决策）：300 秒硬超时会掐断活跃的长任务——
@@ -1454,11 +1460,12 @@ ipcMain.handle('mcp:fetch', async (_, { serverId, tool, from, to, page }) => {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
-ipcMain.handle('mcp:classify', async (_, { serverId, tool, limit, force }) => {
+ipcMain.handle('mcp:classify', async (_, { serverId, tool, limit, force, model }) => {
   try {
     return await mcpManager.classifyRecords(String(serverId || ''), String(tool || ''), {
       limit: Number(limit) || 0,
       force: force === true,
+      model: String(model || '').trim() || undefined,
     });
   } catch (e: any) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
@@ -1658,45 +1665,26 @@ ipcMain.handle('task:update', (_, id, data) => {
   return true;
 });
 ipcMain.handle('task:remove', (_, id) => {
-  const t = db.task.get(id);
-  if (t && t.task_type === 'daily_report') throw new Error('内置的「生成综合日报」任务不可删除，可在任务页暂停它');
   db.task.remove(id);
   scheduler.removeTask(id);
   return true;
 });
-ipcMain.handle('task:execute', (_, id) => scheduler.executeTaskNow(id));
+ipcMain.handle('task:execute', (_, id, model) => scheduler.executeTaskNow(id, String(model || '').trim() || undefined));
 ipcMain.handle('task:executions', (_, taskId) => db.taskExecution.listByTask(taskId));
 ipcMain.handle('task:execution:list', (_, page, pageSize) => db.taskExecution.list(page, pageSize));
 ipcMain.handle('task:execution:get', (_, id) => db.taskExecution.get(id));
 ipcMain.handle('reminder:test', (_, id) => scheduler.triggerReminderNow(id));
 
-// --- 内置日报任务 ---
-/**
- * 确保存在内置的「生成综合日报」任务（task_type='daily_report'，source='system'）。
- * 初始为 paused 且未绑定笔记库（用户绑定笔记库并开启后才参与调度）；
- * 老用户此前在设置页保存的日报提示词（daily_report_prompt）在此一次性迁入任务 prompt。
- */
-function ensureDailyReportTask() {
+// --- 综合日报已下线（2026-11-24）---
+/** 清理旧版本遗留的「生成综合日报」任务与已生成的日报数据 */
+function purgeLegacyDailyReport() {
   try {
-    const existing = db.qOne("SELECT id FROM plan_tasks WHERE task_type = 'daily_report' LIMIT 1");
-    if (existing) return;
-    const migratedPrompt = appConfig.getConfig('daily_report_prompt') || '';
-    db.task.add({
-      title: '生成综合日报',
-      prompt: migratedPrompt,
-      description: '内置任务：每天定时聚合所有笔记库与数据集生成综合日报，展示在「今天」页，可推送飞书。绑定笔记库并开启后生效。',
-      task_type: 'daily_report',
-      source: 'system',
-      status: 'paused',
-      project_id: null,
-      trigger_type: 'cycle',
-      cycle_type: 'daily',
-      cycle_time: '22:00',
-      notify_feishu: 1,
-    });
-    logger.info('[Startup] Seeded built-in daily report task (paused, unbound)');
+    const tasks = db.q("SELECT id FROM plan_tasks WHERE task_type = 'daily_report'") as any[];
+    for (const t of tasks) db.task.remove(t.id);
+    db.run("DELETE FROM ai_analysis WHERE type = 'daily_report'");
+    if (tasks.length) logger.info('[Startup] 已清理综合日报遗留任务 %d 个', tasks.length);
   } catch (e: any) {
-    logger.error('[Startup] ensureDailyReportTask failed: ' + (e.message || e));
+    logger.warn('[Startup] 清理综合日报遗留数据失败: ' + (e.message || e));
   }
 }
 
@@ -1717,15 +1705,7 @@ ipcMain.handle('insights:stats', () => {
     totalChats, projectCount, todoPending, todoOverdue, remindersActive, todayDataRecords,
   };
 });
-ipcMain.handle('insights:reports', () => {
-  return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'daily_report' ORDER BY created_at DESC LIMIT 10");
-});
 ipcMain.handle('insights:recentFiles', () => projectScan.collectRecentFiles(6));
-ipcMain.handle('insights:reportGenerating', () => {
-  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-  const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);
-  return { generating: !existing };
-});
 ipcMain.handle('insights:weeklyReports', () => {
   return db.q("SELECT id, type, report_date, content, substr(content, 1, 100) as summary, created_at FROM ai_analysis WHERE type = 'weekly_report' ORDER BY created_at DESC LIMIT 10");
 });
@@ -1848,8 +1828,8 @@ ipcMain.handle('feishu:webhook:test', async (_, { url }) => {
   const result = await feishu.sendViaWebhook(url, '🔔 启航AI工作台 桌面端连接测试成功！');
   return result;
 });
-ipcMain.handle('feishu:bot:save', (_, { app_id, app_secret }) => {
-  appConfig.saveConfig({ feishuAppId: app_id || '', feishuAppSecret: app_secret || '' });
+ipcMain.handle('feishu:bot:save', (_, { app_id, app_secret, model }) => {
+  appConfig.saveConfig({ feishuAppId: app_id || '', feishuAppSecret: app_secret || '', feishuModel: model || '' });
   logger.info('[Feishu] Bot credentials saved');
   return { ok: true };
 });
@@ -1888,9 +1868,7 @@ ipcMain.handle('config:get', () => {
     feishuWebhookUrl: appConfig.getConfig('feishuWebhookUrl') || '',
     feishuAppId: appConfig.getConfig('feishuAppId') || '',
     feishuAppSecret: appConfig.getConfig('feishuAppSecret') || '',
-    dailyReportRetentionDays: appConfig.getConfig('daily_report_retention_days') || '30',
-    dailyReportPrompt: appConfig.getConfig('daily_report_prompt') || '',
-    dailyReportTemplate: appConfig.getConfig('daily_report_template') || scheduler.DEFAULT_REPORT_TEMPLATE || '',
+    feishuModel: appConfig.getConfig('feishuModel') || '',
     agentRadarEnabled: appConfig.getConfig('agentRadarEnabled') || '0',
     agentRadarIntervalMs: appConfig.getConfig('agentRadarIntervalMs') || '60000',
     agentRadarMonitorMs: appConfig.getConfig('agentRadarMonitorMs') || '3000',
@@ -1899,6 +1877,7 @@ ipcMain.handle('config:get', () => {
     // 后台任务默认模型（provider/modelId；空 = 跟随 pi 默认模型）
     briefModel: appConfig.getConfig('briefModel') || '',
     backgroundModel: appConfig.getConfig('backgroundModel') || '',
+    digestModel: appConfig.getConfig('digestModel') || '',
 
     approverEnabled: appConfig.getConfig('approverEnabled') || '0',
     approverPort: appConfig.getConfig('approverPort') || '8790',
@@ -1914,7 +1893,7 @@ ipcMain.handle('config:set', (_, cfg) => {
 
 // ========== AI 工具箱（aitool:*） ==========
 
-ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name, params }) => {
+ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name, params, model }) => {
   try {
     const { buildReportToolDefs, buildDataToolDefs } = require('./services/tools');
     let customTools: any[] | undefined;
@@ -1943,6 +1922,8 @@ ipcMain.handle('aitool:generate', async (event, { tool, prompt, sessionId, name,
       prompt: kbPrompt,
       // generateWithPi 内部会加 aitool_ 前缀；这里不再重复拼 tool，保证与 aitool:cancel 传来的 sessionId 对得上
       sessionId: sessionId || String(Date.now()),
+      // 工具箱由用户显式选模型，未选时走 pi 默认模型
+      modelPattern: model || undefined,
       customTools,
       onDelta: (delta) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2172,7 +2153,7 @@ app.whenReady().then(async () => {
     startFeishu({ app_id: savedAppId, app_secret: savedAppSecret });
   }
 
-  ensureDailyReportTask();
+  purgeLegacyDailyReport();
   scheduler.start();
   backup.startAutoBackup();
   // 智能体雷达：默认关，用户在设置页显式开启
@@ -2211,34 +2192,6 @@ app.whenReady().then(async () => {
   updateTrayMenu(getServicesStatus());
 
   backgroundReady = true;
-
-  // 内置日报任务错过补跑：任务已开启（pending 且已绑定笔记库）且当天已过计划时间但尚未生成时，启动即补跑一次；
-  // 未开启或未到计划时间则交给任务调度器，不再无条件启动生成
-  (async () => {
-    try {
-      const t = db.qOne("SELECT * FROM plan_tasks WHERE task_type = 'daily_report' LIMIT 1");
-      if (!t || t.status !== 'pending' || !t.project_id) return;
-      if (!db.project.list().length) return;
-      const now = new Date(Date.now() + 8 * 3600 * 1000);
-      const today = now.toISOString().slice(0, 10);
-      const existing = db.qOne("SELECT id FROM ai_analysis WHERE type = 'daily_report' AND report_date = ?", today);
-      if (existing) return;
-      const parts = String(t.cycle_time || '22:00').split(':');
-      const planMin = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
-      const nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
-      if (nowMin < planMin) return; // 未到计划时间，等调度器触发
-      const modelResult = await listPiModels();
-      if (!modelResult.models?.some((m) => m.configured)) {
-        logger.warn('[Startup] Skip daily report catch-up: 未配置可用模型，请在「设置 → 对话模型配置」中配置后重试');
-        return;
-      }
-      logger.info('[Startup] Daily report task enabled but past schedule, catch-up run...');
-      await scheduler.runDailyReportTask(t, 'scheduled');
-      if (mainWindow) mainWindow.webContents.send('report:generated');
-    } catch (e: any) {
-      logger.error('[Startup] daily report catch-up failed: ' + (e.message || e));
-    }
-  })();
 });
 
 app.on('before-quit', () => {

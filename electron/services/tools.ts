@@ -507,7 +507,7 @@ async function buildReportToolDefs(kbId) {
     { name: 'update_task', label: 'update_task', description: '更新任务（标题、说明、触发配置、状态）。先调用 query_tasks 获取任务 id。', parameters: Type.Object({ id: Type.Number({ description: '任务 id' }), title: optStr('新标题'), prompt: optStr('新说明'), status: optStr('状态: pending / in_progress / done'), trigger_type: optStr('触发类型: now / once / cycle'), scheduled_start: optStr('once 用: YYYY-MM-DD HH:MM'), cycle_type: optStr('cycle 用: daily / weekly / monthly / cron'), cycle_value: optStr('cycle 用'), cycle_time: optStr('cycle 用: HH:MM') }), execute: exec(updateTaskTool) },
     { name: 'get_today_info', label: 'get_today_info', description: '获取当前日期信息（今天的中国日期、项目/知识库名称等）。', parameters: Type.Object({}), execute: exec((args) => getTodayInfoTool(args, kbId)) },
     { name: 'query_radar_sessions', label: 'query_radar_sessions', description: '查询智能体雷达采集的本机 AI 编码工具会话（Pi / Claude Code / Codex 等），带 AI 提炼的会话摘要与价值分。用于汇总「AI 工具今天/本周干了什么」。', parameters: Type.Object({ date_from: optStr('起始日期 YYYY-MM-DD'), date_to: optStr('结束日期 YYYY-MM-DD'), limit: optNum('返回条数上限，默认20') }), execute: exec((args) => queryRadarSessionsTool({ ...args, limit: toNumber(args.limit, 20) })) },
-    // 工单三件套：飞书 kb 会话 / 定时任务 / 日报生成 共用（桌面对话经 buildTicketToolDefs 单独注入）
+    // 工单三件套：飞书 kb 会话 / 定时任务 共用（桌面对话经 buildTicketToolDefs 单独注入）
     ...(await buildTicketToolDefs()),
   ];
 }

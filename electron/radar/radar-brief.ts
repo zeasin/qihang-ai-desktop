@@ -429,21 +429,20 @@ async function generateBrief(
 }
 
 /**
- * 简报使用的模型：显式指定 > 设置页「昨日简报模型」 > 设置页「后台任务模型」 > pi 默认模型。
+ * 简报使用的模型：显式指定 > 设置页「昨日简报模型」 > pi 默认模型。
+ * 简报走专属简报模型，不再回落到「其他后台任务模型」。
  * 空字符串表示不指定（走 pi 默认）。
  */
 function resolveBriefModel(override?: string): string | undefined {
   const explicit = String(override || '').trim();
   if (explicit) return explicit;
   const brief = String(appConfig.getConfig('briefModel') || '').trim();
-  if (brief) return brief;
-  const bg = String(appConfig.getConfig('backgroundModel') || '').trim();
-  return bg || undefined;
+  return brief || undefined;
 }
 
 /**
  * 昨日简报主入口。force=true 手动刷新（重新生成并覆盖落盘，不重推）。
- * model 可选：本次生成临时指定模型（设置页「昨日简报模型」优先，缺省跟随后台任务模型）。
+ * model 可选：本次生成临时指定模型（优先于设置页「昨日简报模型」；未设置时走 pi 默认模型）。
  * 回顾昨日 AI/笔记动态，附今日待办（实时）。
  * 缓存两级：内存 → 落盘文件恢复（重启后）→ 生成。同一天生成中并发请求复用同一任务。
  * 返回 { ok, brief?, generatedAt?, fromCache?, empty?, error? }；brief 为空且 empty=true 表示昨日无活动。

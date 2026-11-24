@@ -9,8 +9,8 @@
       <!-- Project Management -->
       <div class="card">
         <h2>📁 项目</h2>
-        <div class="text-muted mb-2">项目就是本地目录。AI 对话按所选项目目录运行，AI 直接读取项目目录里的 Markdown 文件作答；综合日报聚合<b>所有项目 + 数据集</b>；飞书派活、任务结果存档与数据归档默认写入<b>默认项目</b>。</div>
-        <div v-if="!kbLibraries.length" class="text-muted mb-2" style="font-size:13px;">尚未添加任何项目。添加后 AI 对话、任务执行、日报生成、知识库浏览方可使用。</div>
+        <div class="text-muted mb-2">项目就是本地目录。AI 对话按所选项目目录运行，AI 直接读取项目目录里的 Markdown 文件作答；飞书派活、任务结果存档与数据归档默认写入<b>默认项目</b>。</div>
+        <div v-if="!kbLibraries.length" class="text-muted mb-2" style="font-size:13px;">尚未添加任何项目。添加后 AI 对话、任务执行、知识库浏览方可使用。</div>
         <div v-for="lib in kbLibraries" :key="lib.id" class="kb-lib-row">
           <div class="kb-lib-main">
             <span class="kb-lib-name">📁 {{ lib.name }}</span>
@@ -34,7 +34,7 @@
       <!-- 对话模型配置 -->
       <div class="card">
         <h2>💬 对话模型配置</h2>
-        <div class="text-muted mb-2">配置 AI 对话使用的模型接入点。选择「默认（DeepSeek）」只需填入 API Key 即可快速开始；选择「自定义」可配置任意 OpenAI 兼容接口（如 DeepSeek、Ollama、LM Studio 等）。配置完成后所有 AI 对话、日报生成即可直接使用，无需安装终端工具。</div>
+        <div class="text-muted mb-2">配置 AI 对话使用的模型接入点。选择「默认（DeepSeek）」只需填入 API Key 即可快速开始；选择「自定义」可配置任意 OpenAI 兼容接口（如 DeepSeek、Ollama、LM Studio 等）。配置完成后所有 AI 对话即可直接使用，无需安装终端工具。</div>
 
         <div v-if="!llmProviders.length" class="llm-empty">
           <div class="llm-empty-icon">🤖</div>
@@ -120,20 +120,20 @@
       <!-- 后台任务模型 -->
       <div class="card">
         <h2>🧠 后台任务模型</h2>
-        <div class="text-muted mb-2">昨日简报、会话摘要、日报生成、工具箱生成等后台调用默认使用这里的模型。不选择时跟随 pi 默认模型；昨日简报生成失败时，可在今天页的错误提示处临时换模型重试。</div>
+        <div class="text-muted mb-2">昨日简报、会话摘要各有独立的专项模型设置，不选择时跟随 pi 默认模型。定时任务在创建/编辑任务时选择模型（重跑时也可临时换）；MCP 数据分类在点击分类时弹窗选模型；工具箱、问雷达、飞书对话也在各自位置单独设置模型。昨日简报生成失败时，可在今天页的错误提示处临时换模型重试。</div>
         <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;">
           <div class="form-group" style="flex:1;min-width:240px;">
-            <label style="font-size:12px;">昨日简报模型</label>
+            <label style="font-size:12px;">昨日简报模型（简报专属）</label>
             <select v-model="briefModelCfg" class="form-control">
-              <option value="">默认（跟随后台任务模型 / pi 默认）</option>
+              <option value="">默认{{ bgDefaultLabel ? '（' + bgDefaultLabel + '）' : '（pi 默认模型）' }}</option>
               <option v-for="m in bgModels" :key="'brief-' + m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
             </select>
           </div>
           <div class="form-group" style="flex:1;min-width:240px;">
-            <label style="font-size:12px;">其他后台任务模型</label>
-            <select v-model="backgroundModelCfg" class="form-control">
-              <option value="">默认（pi 默认模型）</option>
-              <option v-for="m in bgModels" :key="'bg-' + m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+            <label style="font-size:12px;">会话摘要模型（摘要专属）</label>
+            <select v-model="digestModelCfg" class="form-control">
+              <option value="">默认{{ bgDefaultLabel ? '（' + bgDefaultLabel + '）' : '（pi 默认模型）' }}</option>
+              <option v-for="m in bgModels" :key="'digest-' + m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
             </select>
           </div>
           <button class="btn btn-primary" style="margin-bottom:12px;" :disabled="bgModelSaving" @click="saveBgModelConfig">{{ bgModelSaving ? '保存中…' : '保存' }}</button>
@@ -304,7 +304,15 @@
             <label style="font-size:12px;">App Secret</label>
             <input v-model="feishuAppSecret" type="password" class="form-control" placeholder="飞书自建应用的 App Secret">
           </div>
+          <div class="form-group" style="flex:1;min-width:240px;">
+            <label style="font-size:12px;">对话模型</label>
+            <select v-model="feishuModel" class="form-control">
+              <option value="">默认{{ bgDefaultLabel ? '（' + bgDefaultLabel + '）' : '（pi 默认模型）' }}</option>
+              <option v-for="m in bgModels" :key="'fs-' + m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+            </select>
+          </div>
         </div>
+        <div class="text-muted" style="font-size:12px;margin-top:4px;">飞书 Bot 的首轮对话与「接着问」都使用这里选择的模型；不选择时跟随 pi 默认模型。</div>
         <div class="flex" style="gap:8px;margin-top:8px;">
           <button class="btn btn-primary" @click="saveFeishuBot">保存</button>
           <button class="btn btn-primary" @click="startFeishuBot">{{ feishuRunning ? '重启 Bot' : '启动 Bot' }}</button>
@@ -632,6 +640,7 @@ const webhookStatus = ref('');
 
 const feishuAppId = ref('');
 const feishuAppSecret = ref('');
+const feishuModel = ref('');
 const feishuRunning = ref(false);
 const feishuStatus = ref('');
 
@@ -723,10 +732,11 @@ async function loadAgentVersions() {
   finally { versionsLoading.value = false; }
 }
 
-// 后台任务模型（昨日简报 / 会话摘要 / 日报 / 工具箱等）
+// 后台任务模型（仅昨日简报 / 会话摘要两个专项；定时任务在任务上选模型，MCP 分类点击时弹窗选模型，工具箱、问雷达不在此列）
 const bgModels = ref<{ providerLabel: string; name: string; pattern: string; configured: boolean }[]>([]);
+const bgDefaultLabel = ref('');
 const briefModelCfg = ref('');
-const backgroundModelCfg = ref('');
+const digestModelCfg = ref('');
 const bgModelSaving = ref(false);
 const bgModelStatus = ref('');
 
@@ -734,13 +744,16 @@ async function loadBgModels() {
   try {
     const res = await API.pi.models();
     bgModels.value = (res?.models || []).filter((m: any) => m.pattern);
+    const dp = String(res?.defaultPattern || '');
+    const dm = bgModels.value.find((m: any) => m.pattern === dp);
+    bgDefaultLabel.value = dp ? (dm ? `${dm.providerLabel} · ${dm.name}` : dp) : '';
   } catch { bgModels.value = []; }
 }
 
 async function saveBgModelConfig() {
   bgModelSaving.value = true;
   try {
-    await API.config.set({ briefModel: briefModelCfg.value, backgroundModel: backgroundModelCfg.value });
+    await API.config.set({ briefModel: briefModelCfg.value, digestModel: digestModelCfg.value });
     bgModelStatus.value = '✅ 已保存，下次后台任务生效';
   } catch (e: any) {
     bgModelStatus.value = '❌ ' + (e?.message || '保存失败');
@@ -1219,7 +1232,7 @@ async function testWebhook() {
 
 async function saveFeishuBot() {
   try {
-    await API.feishu.saveBot(feishuAppId.value, feishuAppSecret.value);
+    await API.feishu.saveBot(feishuAppId.value, feishuAppSecret.value, feishuModel.value);
     feishuStatus.value = '✅ 配置已保存';
     setTimeout(() => feishuStatus.value = '', 3000);
   } catch (e: any) { feishuStatus.value = '❌ ' + (e.message || '保存失败'); }
@@ -1228,7 +1241,7 @@ async function saveFeishuBot() {
 async function startFeishuBot() {
   if (!feishuAppId.value || !feishuAppSecret.value) { feishuStatus.value = '❌ 请先填写 App ID 和 App Secret'; return; }
   try {
-    await API.feishu.saveBot(feishuAppId.value, feishuAppSecret.value);
+    await API.feishu.saveBot(feishuAppId.value, feishuAppSecret.value, feishuModel.value);
     const ok = await API.service.startFeishu({ app_id: feishuAppId.value, app_secret: feishuAppSecret.value });
     feishuRunning.value = true;
     feishuStatus.value = ok ? '✅ Bot 已启动' : '❌ 启动失败，请检查配置';
@@ -1266,6 +1279,7 @@ async function loadConfig() {
     webhookUrl.value = cfg.feishuWebhookUrl || '';
     feishuAppId.value = cfg.feishuAppId || '';
     feishuAppSecret.value = cfg.feishuAppSecret || '';
+    feishuModel.value = cfg.feishuModel || '';
     feishuChatId.value = cfg.feishuChatId || '';
     approverEnabled.value = cfg.approverEnabled === '1';
     approverPort.value = cfg.approverPort || '8790';
@@ -1273,7 +1287,7 @@ async function loadConfig() {
     claudePath.value = cfg.claudePath || '';
     openCodeEscalateActions.value = cfg.opencodeEscalateActions || '';
     briefModelCfg.value = cfg.briefModel || '';
-    backgroundModelCfg.value = cfg.backgroundModel || '';
+    digestModelCfg.value = cfg.digestModel || '';
   } catch { console.warn('加载配置失败'); }
 }
 

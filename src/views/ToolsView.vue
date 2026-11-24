@@ -57,6 +57,17 @@
               />
             </div>
 
+            <!-- AI 生成类技能：由用户选择本次使用的大模型（不读设置页后台任务模型） -->
+            <div v-if="activeTool.usesPi" class="form-row">
+              <label class="form-label">大模型</label>
+              <select v-model="toolModel" class="form-input" :disabled="running">
+                <option value="">默认{{ toolDefaultLabel ? '（' + toolDefaultLabel + '）' : '（pi 默认模型）' }}</option>
+                <option v-for="m in toolModels" :key="m.pattern" :value="m.pattern">
+                  {{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}
+                </option>
+              </select>
+            </div>
+
             <!-- 图片生成：服务配置 -->
             <div v-if="activeTool.id === 'image'" class="img-config">
               <div class="img-config-toggle" @click="imgConfigOpen = !imgConfigOpen">
@@ -182,7 +193,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
 
 interface Field {
@@ -271,6 +282,34 @@ let sessionSeqN = 0;
 const imgDataUrl = ref('');
 const imgConfig = reactive({ baseUrl: '', apiKey: '', model: '' });
 const imgConfigOpen = ref(false);
+
+/** 工具箱模型选择：记住上次选择；未选时跟随 pi 默认模型（不读后台任务模型） */
+const TOOL_MODEL_KEY = 'toolbox_model_pi';
+const toolModel = ref(localStorage.getItem(TOOL_MODEL_KEY) || '');
+const toolModels = ref<any[]>([]);
+const toolDefaultLabel = ref('');
+watch(toolModel, (v) => {
+  try {
+    if (v) localStorage.setItem(TOOL_MODEL_KEY, v);
+    else localStorage.removeItem(TOOL_MODEL_KEY);
+  } catch {}
+});
+const loadToolModels = async () => {
+  try {
+    const res = await window.electronAPI.pi.models();
+    toolModels.value = (res?.models || []).filter((m: any) => m.pattern);
+    const dp = String(res?.defaultPattern || '');
+    const dm = toolModels.value.find((m: any) => m.pattern === dp);
+    toolDefaultLabel.value = dp ? (dm ? `${dm.providerLabel} · ${dm.name}` : dp) : '';
+    // 没有历史选择时默认选中第一个已配置模型，避免生成时悄悄落到 pi 默认模型
+    if (!toolModel.value) {
+      const first = toolModels.value.find((m: any) => m.configured);
+      if (first) toolModel.value = first.pattern;
+    }
+  } catch {
+    toolModels.value = [];
+  }
+};
 
 const canRun = computed(() => {
   const t = activeTool.value;
@@ -478,6 +517,7 @@ const onDelta = (e: any) => {
 
 onMounted(() => {
   resetForm();
+  void loadToolModels();
   window.electronAPI?.on('aitool:delta', onDelta);
   window.electronAPI?.aitool.imageConfig().then((cfg: any) => {
     imgConfig.baseUrl = cfg?.baseUrl || 'https://api.openai.com/v1';
@@ -521,9 +561,9 @@ const run = async () => {
   const sid = toolId + '_' + (++sessionSeqN);
   streamId = sid;
   const name = form.topic || (toolId === 'report' ? (form.type === '日报' ? '日报' : '周报') : activeTool.value.name);
-  const params = JSON.stringify({ ...form });
+  const params = JSON.stringify({ ...form, model: toolModel.value || '' });
   try {
-    const res = await window.electronAPI.aitool.generate(toolId, buildPrompt(), sid, name, params);
+    const res = await window.electronAPI.aitool.generate(toolId, buildPrompt(), sid, name, params, toolModel.value || undefined);
     if (token !== runToken) return; // 期间切换了工具，丢弃
     if (res.ok) {
       outputText.value = res.text || '';

@@ -51,7 +51,7 @@
             <button class="nc-tool" title="添加图片" @click="handleImageClick()"><AppIcon name="paperclip" :size="15" /></button>
             <span class="model-pick" title="选择模型">
               <select class="nc-model" v-model="selectedModel" :disabled="modelsLoading">
-                <option value="">默认模型</option>
+                <option value="">默认{{ piDefaultLabel ? '（' + piDefaultLabel + '）' : '（pi 默认模型）' }}</option>
                 <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
                 <option v-for="m in piModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
               </select>
@@ -88,6 +88,7 @@ const selectedProjectId = ref<number | null | typeof NEW_PROJECT>(null);
 const kbLibraries = ref<any[]>([]);
 const kbLoaded = ref(false);
 const piModels = ref<{ provider: string; providerLabel: string; id: string; name: string; pattern: string; configured: boolean }[]>([]);
+const piDefaultLabel = ref('');
 const selectedModel = ref('');
 const modelsLoading = ref(false);
 const CHAT_MODEL_KEY = 'chat_home_model_pi';
@@ -104,6 +105,9 @@ async function loadPiModels() {
   try {
     const res = await API.pi.models();
     piModels.value = (res?.models || []).filter((m: any) => m.pattern);
+    const dp = String(res?.defaultPattern || '');
+    const dm = piModels.value.find((m: any) => m.pattern === dp);
+    piDefaultLabel.value = dp ? (dm ? `${dm.providerLabel} · ${dm.name}` : dp) : '';
     const saved = localStorage.getItem(CHAT_MODEL_KEY);
     if (saved && piModels.value.some((m) => m.pattern === saved)) {
       selectedModel.value = saved;

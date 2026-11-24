@@ -16,7 +16,7 @@
               配置 AI 对话大模型
               <span class="step-status" v-if="llmReady">✓ 已就绪</span>
             </div>
-            <p class="step-desc">所有 AI 对话、工具调用、日报生成都由大模型驱动，无需安装任何终端工具。在「设置」页填写接入点信息即可（OpenAI 兼容接口，如 DeepSeek、Ollama 等）：</p>
+            <p class="step-desc">所有 AI 对话、工具调用都由大模型驱动，无需安装任何终端工具。在「设置」页填写接入点信息即可（OpenAI 兼容接口，如 DeepSeek、Ollama 等）：</p>
             <button class="btn btn-sm btn-primary" @click="go('/config')">⚙️ 前往「设置」配置大模型</button>
             <p class="step-desc" style="margin-top:8px;">配置后应用自动识别，立即生效。也可随时在「设置 → 💬 对话模型配置」修改或添加多个接入点。</p>
           </div>

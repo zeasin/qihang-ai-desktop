@@ -10,7 +10,7 @@
       <span class="scope-hint">本对话只会调用「{{ serverName }}」暴露的工具</span>
       <span class="grow"></span>
       <select v-model="selectedModel" class="mcpc-model" :disabled="stream.running" title="选择模型">
-        <option value="">默认模型</option>
+        <option value="">默认{{ defaultModelLabel ? '（' + defaultModelLabel + '）' : '（pi 默认模型）' }}</option>
         <option v-for="m in models" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
       </select>
     </div>
@@ -93,6 +93,7 @@ const text = ref('');
 const composing = ref(false);
 const selectedModel = ref('');
 const models = ref<any[]>([]);
+const defaultModelLabel = ref('');
 const messages = ref<Array<{ role: string; content: string; thinking?: string }>>([]);
 
 const stream = reactive({ running: false, text: '', thinking: '', status: '', error: '' });
@@ -125,8 +126,15 @@ async function loadModels() {
   try {
     const res = await API.pi.models();
     models.value = (res?.models || []).filter((m: any) => m.pattern);
+    const dp = String(res?.defaultPattern || '');
+    const dm = models.value.find((m: any) => m.pattern === dp);
+    defaultModelLabel.value = dp ? (dm ? `${dm.providerLabel} · ${dm.name}` : dp) : '';
     const saved = localStorage.getItem(MODEL_KEY) || localStorage.getItem('chat_home_model_pi') || '';
     if (saved && models.value.some((m: any) => m.pattern === saved)) selectedModel.value = saved;
+    else if (!selectedModel.value) {
+      const first = models.value.find((m: any) => m.configured);
+      if (first) selectedModel.value = first.pattern;
+    }
   } catch { models.value = []; }
 }
 

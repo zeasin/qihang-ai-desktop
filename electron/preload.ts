@@ -4,7 +4,7 @@ const VALID_CHANNELS = [
   'chat:delta', 'chat:status', 'chat:thinking', 'chat:tool', 'chat:done', 'chat:error',
   'chat:remote', 'chat:created', 'nav:open-session',
   'service:status', 'service:toggle', 'feishu:message',
-  'report:generated', 'aitool:delta', 'task:changed', 'tickets:changed',
+  'aitool:delta', 'task:changed', 'tickets:changed',
   'radar:event', 'win:maximized', 'approver:event',
 ];
 
@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setWebhook: (url: string) => ipcRenderer.invoke('feishu:webhook:set', { url }),
     testWebhook: (url: string) => ipcRenderer.invoke('feishu:webhook:test', { url }),
     send: (message: string) => ipcRenderer.invoke('feishu:send', { message }),
-    saveBot: (app_id: string, app_secret: string) => ipcRenderer.invoke('feishu:bot:save', { app_id, app_secret }),
+    saveBot: (app_id: string, app_secret: string, model?: string) => ipcRenderer.invoke('feishu:bot:save', { app_id, app_secret, model }),
     testBot: (app_id: string, app_secret: string) => ipcRenderer.invoke('feishu:testBot', { app_id, app_secret }),
   },
 
@@ -125,7 +125,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     overview: (serverId: string, refresh?: boolean) => ipcRenderer.invoke('mcp:overview', { serverId, refresh }),
     fetch: (serverId: string, tool: string, opts?: { from?: string; to?: string; page?: number }) =>
       ipcRenderer.invoke('mcp:fetch', { serverId, tool, ...(opts || {}) }),
-    classify: (serverId: string, tool: string, opts?: { limit?: number; force?: boolean }) =>
+    classify: (serverId: string, tool: string, opts?: { limit?: number; force?: boolean; model?: string }) =>
       ipcRenderer.invoke('mcp:classify', { serverId, tool, ...(opts || {}) }),
     classifications: (serverId: string, tool: string) =>
       ipcRenderer.invoke('mcp:classifications', { serverId, tool }),
@@ -244,7 +244,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     add: (data: unknown) => ipcRenderer.invoke('task:add', data),
     update: (id: number, data: unknown) => ipcRenderer.invoke('task:update', id, data),
     remove: (id: number) => ipcRenderer.invoke('task:remove', id),
-    execute: (id: number) => ipcRenderer.invoke('task:execute', id),
+    execute: (id: number, model?: string) => ipcRenderer.invoke('task:execute', id, model),
     executions: (taskId: number) => ipcRenderer.invoke('task:executions', taskId),
     executionList: (page: number, pageSize: number) => ipcRenderer.invoke('task:execution:list', page, pageSize),
     executionGet: (id: number) => ipcRenderer.invoke('task:execution:get', id),
@@ -253,14 +253,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Insights
   insights: {
     stats: () => ipcRenderer.invoke('insights:stats'),
-    reports: () => ipcRenderer.invoke('insights:reports'),
     recentFiles: () => ipcRenderer.invoke('insights:recentFiles'),
     weeklyReports: () => ipcRenderer.invoke('insights:weeklyReports'),
     subProjects: () => ipcRenderer.invoke('insights:subProjects'),
     tags: () => ipcRenderer.invoke('insights:tags'),
     heatmap: () => ipcRenderer.invoke('insights:heatmap'),
     libraryStats: () => ipcRenderer.invoke('insights:libraryStats'),
-    reportGenerating: () => ipcRenderer.invoke('insights:reportGenerating'),
   },
 
   // Archive
@@ -275,8 +273,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // AI 工具箱
   aitool: {
-    generate: (tool: string, prompt: string, sessionId: string, name?: string, params?: string) =>
-      ipcRenderer.invoke('aitool:generate', { tool, prompt, sessionId, name, params }),
+    generate: (tool: string, prompt: string, sessionId: string, name?: string, params?: string, model?: string) =>
+      ipcRenderer.invoke('aitool:generate', { tool, prompt, sessionId, name, params, model }),
     cancel: (sessionId: string) => ipcRenderer.invoke('aitool:cancel', { sessionId }),
     exportPptx: (md: string, defaultName: string) =>
       ipcRenderer.invoke('aitool:exportPptx', { md, defaultName }),

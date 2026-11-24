@@ -200,10 +200,10 @@
                   {{ fetching ? '加载中…' : (hasMore ? '下一页' : '没有更多了') }}
                 </button>
                 <span class="grow"></span>
-                <button class="text-btn" :disabled="classifying" @click="classifyCurrent(false)">
+                <button class="text-btn" :disabled="classifying" @click="openClassifyModal(false)">
                   {{ classifying ? 'AI 分类中…' : 'AI 分类' }}
                 </button>
-                <button class="text-btn" v-if="hasLabels" :disabled="classifying" @click="classifyCurrent(true)">重新分类</button>
+                <button class="text-btn" v-if="hasLabels" :disabled="classifying" @click="openClassifyModal(true)">重新分类</button>
               </div>
             </template>
           </div>
@@ -236,6 +236,30 @@
           <div v-else class="none-row">
             {{ toolsLoading ? '正在连接服务端…' : (toolsLoaded ? '没有匹配的工具' : '尚未读取工具清单') }}
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== AI 分类选模型弹窗 ========== -->
+    <div v-if="classifyModalOpen" class="modal-overlay" @click="classifyModalOpen = false">
+      <div class="modal-box" style="width:440px;" @click.stop>
+        <div class="modal-header">
+          <h3>{{ classifyForce ? '重新分类' : 'AI 分类' }}<small class="tool-count">{{ currentToolLabel }}</small></h3>
+          <button class="btn btn-secondary" @click="classifyModalOpen = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>本次使用的模型</label>
+            <select v-model="classifyModel" class="form-control">
+              <option value="">默认（pi 默认模型）</option>
+              <option v-for="m in classifyModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+            </select>
+          </div>
+          <p class="form-hint">分类是手动触发的 AI 调用（一次最多 60 条），选个便宜的模型即可；已打标的记录不重复调用，只有新记录消耗 token。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="classifyModalOpen = false">取消</button>
+          <button class="btn btn-primary" @click="classifyCurrent(classifyForce)" :disabled="classifying">{{ classifying ? '分类中…' : '开始分类' }}</button>
         </div>
       </div>
     </div>
@@ -604,6 +628,25 @@ const classMap = ref<Map<string, Record<string, string>>>(new Map());
 const classifying = ref(false);
 const hasLabels = computed(() => classMap.value.size > 0);
 
+// 分类是手动触发的 AI 消耗：点按钮先弹窗选本次模型，不读设置页后台模型
+const classifyModalOpen = ref(false);
+const classifyForce = ref(false);
+const classifyModel = ref('');
+const classifyModels = ref<{ providerLabel: string; name: string; pattern: string; configured: boolean }[]>([]);
+const currentToolLabel = computed(() => domains.value.find(d => d.tool === currentTool.value)?.label || currentTool.value || '');
+
+async function openClassifyModal(force: boolean) {
+  classifyForce.value = force;
+  classifyModel.value = '';
+  if (!classifyModels.value.length) {
+    try {
+      const res = await API.pi.models();
+      classifyModels.value = (res?.models || []).filter((m: any) => m.pattern);
+    } catch { classifyModels.value = []; }
+  }
+  classifyModalOpen.value = true;
+}
+
 const filteredRows = computed(() => {
   const f = filter.value;
   const active = Object.entries(f).filter(([, v]) => v);
@@ -630,9 +673,10 @@ async function loadClassifications() {
 
 async function classifyCurrent(force: boolean) {
   if (!selected.value || !currentTool.value || !API) return;
+  classifyModalOpen.value = false;
   classifying.value = true;
   try {
-    const res = await API.mcp.classify(selected.value.id, currentTool.value, { force });
+    const res = await API.mcp.classify(selected.value.id, currentTool.value, { force, model: classifyModel.value || undefined });
     if (res.ok) {
       dimensions.value = res.dimensions || [];
       await loadClassifications();

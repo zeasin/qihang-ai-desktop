@@ -36,9 +36,10 @@
           :disabled="asking"
           @keyup.enter="doAsk"
         />
-        <select class="model-selector" v-model="selectedModel" :disabled="asking || modelsLoading" title="选择大模型">
-          <option value="">默认模型</option>
+        <select class="model-selector" v-model="selectedModel" :disabled="asking || modelsLoading" title="选择本次提问使用的大模型">
+          <option value="">默认{{ defaultModelLabel ? '（' + defaultModelLabel + '）' : '（pi 默认模型）' }}</option>
           <option v-if="modelsLoading" value="" disabled>模型加载中…</option>
+          <option v-else-if="!piModels.length" value="" disabled>未读取到模型，请检查设置页模型接入点</option>
           <option v-for="m in piModels" :key="m.pattern" :value="m.pattern">
             {{ m.providerLabel }} · {{ m.name }}
           </option>
@@ -118,12 +119,16 @@ const answerHtml = computed(() => {
 const piModels = ref<any[]>([]);
 const modelsLoading = ref(false);
 const selectedModel = ref('');
+const defaultModelLabel = ref('');
 
 async function loadModels() {
   modelsLoading.value = true;
   try {
     const res = await API.pi.models();
     piModels.value = (res?.models || []).filter((m: any) => m.pattern);
+    const dp = String(res?.defaultPattern || '');
+    const dm = piModels.value.find((m: any) => m.pattern === dp);
+    defaultModelLabel.value = dp ? (dm ? `${dm.providerLabel} · ${dm.name}` : dp) : '';
     const saved = localStorage.getItem(MODEL_KEY);
     if (saved && piModels.value.some((m: any) => m.pattern === saved)) {
       selectedModel.value = saved;

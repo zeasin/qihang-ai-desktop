@@ -172,6 +172,7 @@ function initSchema() {
       output_type TEXT DEFAULT '',
       output_target TEXT DEFAULT '',
       notify_feishu INTEGER DEFAULT 0,
+      model TEXT DEFAULT '',
       session_id TEXT DEFAULT '',
       source TEXT DEFAULT '',
       dataset_id TEXT DEFAULT '',
@@ -326,6 +327,7 @@ function initSchema() {
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_cycle_run TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN output_target TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN notify_feishu INTEGER DEFAULT 0"); } catch (e) {}
+  try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN model TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_result TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_run_at TEXT DEFAULT ''"); } catch (e) {}
   try { getDb().exec("ALTER TABLE plan_tasks ADD COLUMN last_status TEXT DEFAULT ''"); } catch (e) {}
@@ -855,12 +857,12 @@ const task = {
   get: (id: number) => qOne('SELECT * FROM plan_tasks WHERE id = ?', id),
   add: (data: any) => {
     const pid = (data.project_id !== null && data.project_id !== undefined && data.project_id !== '') ? (Number.isFinite(Number(data.project_id)) ? Math.trunc(Number(data.project_id)) : null) : null;
-    run('INSERT INTO plan_tasks (title, prompt, description, priority, status, task_type, project_id, trigger_type, scheduled_start, cycle_type, cycle_value, cycle_time, cycle_end, output_type, output_target, notify_feishu, session_id, source, dataset_id, record_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    run('INSERT INTO plan_tasks (title, prompt, description, priority, status, task_type, project_id, trigger_type, scheduled_start, cycle_type, cycle_value, cycle_time, cycle_end, output_type, output_target, notify_feishu, model, session_id, source, dataset_id, record_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       data.title, data.prompt || '', data.description || '', data.priority || 'mid', data.status || 'pending',
       data.task_type || '', pid,
       data.trigger_type || '', data.scheduled_start || '', data.cycle_type || '', data.cycle_value || '',
       data.cycle_time || '', data.cycle_end || '', data.output_type || '', data.output_target || '',
-      data.notify_feishu ? 1 : 0, data.session_id || '', data.source || '', data.dataset_id || '', data.record_id || '');
+      data.notify_feishu ? 1 : 0, data.model || '', data.session_id || '', data.source || '', data.dataset_id || '', data.record_id || '');
     const r = qOne<{id: number}>('SELECT id FROM plan_tasks ORDER BY id DESC LIMIT 1');
     return { id: r!.id };
   },
@@ -885,6 +887,7 @@ const task = {
     if (data.output_type !== undefined) { fields.push('output_type = ?'); params.push(data.output_type); }
     if (data.output_target !== undefined) { fields.push('output_target = ?'); params.push(data.output_target); }
     if (data.notify_feishu !== undefined) { fields.push('notify_feishu = ?'); params.push(data.notify_feishu ? 1 : 0); }
+    if (data.model !== undefined) { fields.push('model = ?'); params.push(data.model); }
     if (data.session_id !== undefined) { fields.push('session_id = ?'); params.push(data.session_id); }
     if (data.source !== undefined) { fields.push('source = ?'); params.push(data.source); }
     if (data.dataset_id !== undefined) { fields.push('dataset_id = ?'); params.push(data.dataset_id); }

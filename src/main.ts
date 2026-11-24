@@ -90,7 +90,6 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
     },
     task: (() => {
       const tasks: any[] = [
-        { id: 1, title: '生成综合日报', status: 'pending', priority: 'mid', trigger_type: 'cycle', cycle_type: 'daily', cycle_time: '22:00', cycle_value: '', project_id: 1, source: 'system', last_run_at: iso(1), last_status: 'SUCCESS', created_at: iso(3), notify_feishu: 1, output_target: '', scheduled_start: '', description: '内置任务：每天定时聚合所有笔记库与数据集生成综合日报。', prompt: '', session_id: 's1', task_type: 'daily_report' },
         { id: 2, title: '竞品价格巡检', status: 'pending', priority: 'mid', trigger_type: 'cycle', cycle_type: 'daily', cycle_time: '08:00', cycle_value: '', project_id: 1, source: 'ui', last_run_at: iso(1), last_status: 'SUCCESS', created_at: iso(5), notify_feishu: 0, output_target: '', scheduled_start: '', description: '', prompt: '抓取三个竞品的价格页，更新「竞品价格」数据集。', session_id: '', task_type: 'note' },
       ];
       return {
@@ -169,9 +168,6 @@ if (import.meta.env.DEV && !(window as any).electronAPI) {
     },
     insights: {
       stats: async () => ({ fileCount: 0, notesFileCount: 324, todayModified: 4, projectCount: 2, totalChats: 21, todoPending: 5, todoOverdue: 1, remindersActive: 1, todayDataRecords: 12 }),
-      reports: async () => [
-        { id: 1, report_date: '2026-10-30', created_at: iso(1), summary: '今日完成订单核对 42 单；竞品 A 降价 6.2% 已记录；双 11 素材进入终审。', content: '# 综合日报\n## 今日概览\n订单核对 42 单，售后关闭 3 个。' },
-      ],
     },
     noteDigest: {
       extract: async () => ({

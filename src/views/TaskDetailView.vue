@@ -55,6 +55,10 @@
             <span class="info-label">输出路径</span>
             <span class="info-value">{{ task.output_target }}</span>
           </div>
+          <div class="info-item">
+            <span class="info-label">使用模型</span>
+            <span class="info-value">{{ taskModelLabel(task.model) }}</span>
+          </div>
         </div>
       </div>
 
@@ -169,6 +173,13 @@
           </template>
           <div class="form-row">
             <div class="form-group">
+              <label>使用模型</label>
+              <select class="form-control" v-model="editing.model">
+                <option value="">默认（pi 默认模型）</option>
+                <option v-for="m in taskModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+              </select>
+            </div>
+            <div class="form-group">
               <label>结果保存位置（相对项目目录，留空自动保存）</label>
               <input type="text" class="form-control" v-model="editing.output_target" placeholder="如 任务输出/日报.md">
             </div>
@@ -184,6 +195,30 @@
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="showTaskModal = false">取消</button>
           <button class="btn btn-primary" @click="saveTask">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 执行选模型模态框 -->
+    <div v-if="runModalOpen" class="modal-overlay" @click="runModalOpen = false">
+      <div class="modal-box" style="width:440px;" @click.stop>
+        <div class="modal-header">
+          <h3>执行任务<small style="font-size:12px;color:var(--text-muted);margin-left:8px;">{{ task?.title }}</small></h3>
+          <button class="btn btn-secondary" @click="runModalOpen = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>本次使用的模型</label>
+            <select class="form-control" v-model="runModel">
+              <option :value="''">任务默认（{{ taskModelLabel(task?.model) }}）</option>
+              <option v-for="m in taskModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+            </select>
+          </div>
+          <p style="color:var(--text-muted);font-size:12px;">留空使用任务设置里的模型；此处只影响本次执行，不改动任务设置。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="runModalOpen = false">取消</button>
+          <button class="btn btn-primary" @click="confirmRun">执行</button>
         </div>
       </div>
     </div>
@@ -313,10 +348,35 @@ function triggerLabel(type: string): string {
 }
 
 // ========== 操作 ==========
+// 任务级模型：编辑任务时可选；重跑时也可临时换（只影响本次执行）
+const taskModels = ref<{ providerLabel: string; name: string; pattern: string; configured: boolean }[]>([]);
+const runModalOpen = ref(false);
+const runModel = ref('');
+
+async function loadTaskModels() {
+  try {
+    const res = await API.pi.models();
+    taskModels.value = (res?.models || []).filter((m: any) => m.pattern);
+  } catch { taskModels.value = []; }
+}
+
+function taskModelLabel(pattern?: string): string {
+  if (!pattern) return 'pi 默认模型';
+  const m = taskModels.value.find(x => x.pattern === pattern);
+  return m ? `${m.providerLabel} · ${m.name}` : pattern;
+}
+
 async function runTask() {
   if (!task.value) return;
+  runModel.value = '';
+  runModalOpen.value = true;
+}
+
+async function confirmRun() {
+  if (!task.value) return;
+  runModalOpen.value = false;
   try {
-    await API.task.execute(task.value.id);
+    await API.task.execute(task.value.id, runModel.value || undefined);
     await loadTask();
   } catch (e: any) { alert('执行失败: ' + (e.message || e)); }
 }
@@ -348,6 +408,7 @@ async function saveTask() {
     cycle_value: t.trigger_type === 'cycle' ? cycleValue : '',
     cycle_time: t.trigger_type === 'cycle' ? t.cycle_time : '',
     output_target: t.output_target,
+    model: t.model || '',
     notify_feishu: t.notify_feishu ? 1 : 0,
     status: t.status,
   };
@@ -389,6 +450,7 @@ onMounted(async () => {
   await Promise.all([loadTask(), loadProjects(), loadExecutions()]);
   notesLoaded.value = true;
   await loadMessages();
+  loadTaskModels();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
 });
 

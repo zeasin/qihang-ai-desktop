@@ -79,6 +79,7 @@ interface ElectronAPI {
     setWebhook: (url: string) => Promise<{ ok: boolean }>;
     testWebhook: (url: string) => Promise<{ ok: boolean; error?: string }>;
     send: (message: string) => Promise<{ ok: boolean; error?: string }>;
+    saveBot: (appId: string, appSecret: string, model?: string) => Promise<{ ok: boolean }>;
     testBot: (appId: string, appSecret: string) => Promise<{ ok: boolean; botName?: string; error?: string }>;
   };
   kb: {
@@ -134,7 +135,7 @@ interface ElectronAPI {
       Promise<{ ok: boolean; error?: string; instructions?: string; tools?: any[]; metrics?: any; counts?: any }>;
     fetch: (serverId: string, tool: string, opts?: { from?: string; to?: string; page?: number }) =>
       Promise<{ ok: boolean; error?: string; rows?: any[]; text?: string; hasMore?: boolean }>;
-    classify: (serverId: string, tool: string, opts?: { limit?: number; force?: boolean }) =>
+    classify: (serverId: string, tool: string, opts?: { limit?: number; force?: boolean; model?: string }) =>
       Promise<{ ok: boolean; error?: string; dimensions?: any[]; labeled?: number; cached?: number }>;
     classifications: (serverId: string, tool: string) =>
       Promise<{ ok: boolean; error?: string; items: { key: string; labels: any; created_at: string }[] }>;
@@ -155,6 +156,8 @@ interface ElectronAPI {
   pi: {
     models: () => Promise<{
       models: { provider: string; providerLabel: string; id: string; name: string; pattern: string; configured: boolean }[];
+      /** pi settings.json 里的默认模型 pattern，用于界面展示「默认」具体是哪个模型 */
+      defaultPattern?: string;
       error?: string;
     }>;
     configGet: () => Promise<{ providers: { name: string; displayName: string; baseUrl: string; apiKey: string; models: { id: string; name?: string }[] }[] }>;
@@ -311,7 +314,7 @@ interface ElectronAPI {
     add: (data: any) => Promise<{ id: number }>;
     update: (id: number, data: any) => Promise<void>;
     remove: (id: number) => Promise<void>;
-    execute: (id: number) => Promise<boolean>;
+    execute: (id: number, model?: string) => Promise<boolean>;
     executions: (taskId: number) => Promise<any[]>;
     executionList: (page: number, pageSize: number) => Promise<{ total: number; rows: any[] }>;
     executionGet: (id: number) => Promise<any>;
@@ -325,11 +328,9 @@ interface ElectronAPI {
       projectCount: number; totalChats: number; todoPending: number; todoOverdue: number;
       remindersActive: number; todayDataRecords: number;
     }>;
-    reports: () => Promise<any[]>;
     /** 最近更新的笔记文件（跳过代码仓库，按修改时间倒序） */
     recentFiles: () => Promise<Array<{ projectId: number; projectName: string; rel: string; mtime: number }>>;
     weeklyReports: () => Promise<any[]>;
-    reportGenerating: () => Promise<{ generating: boolean }>;
     subProjects: () => Promise<Array<{ name: string; fileCount: number; totalSize: number; files: string[]; analysis?: string; hasAnalysis: boolean }>>;
     tags: () => Promise<Array<{ name: string; count: number }>>;
     heatmap: () => Promise<Record<string, number>>;
@@ -338,7 +339,7 @@ interface ElectronAPI {
   };
   /** AI 工具箱（技能页） */
   aitool: {
-    generate: (tool: string, prompt: string, sessionId: string, name?: string, params?: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
+    generate: (tool: string, prompt: string, sessionId: string, name?: string, params?: string, model?: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
     cancel: (sessionId: string) => Promise<{ ok: boolean }>;
     exportPptx: (md: string, defaultName: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
     exportHtml: (md: string, defaultName: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;

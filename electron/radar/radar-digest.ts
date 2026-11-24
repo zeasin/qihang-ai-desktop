@@ -12,6 +12,7 @@ import { agentRadar } from '../services/agent-radar';
 import { generateWithPi } from '../services/ai-tools';
 import { reportSummaryNote } from './radar-note-save';
 import logger from '../services/logger';
+import * as appConfig from '../services/app-config';
 
 const MIN_SCORE = 3;          // 价值分门槛（computeValueScore 0-5）
 const MIN_NEW_MSGS = 4;       // 已有摘要时，新消息数达到该值才重新提炼
@@ -193,7 +194,10 @@ export async function digestOne(tool: string, sessionId: string): Promise<void> 
     transcript.join('\n'),
   ].join('\n');
 
-  const summary = (await generateWithPi({ prompt, sessionId: 'radar_digest_' + Date.now(), timeoutMs: 120_000 })).trim();
+  // 会话摘要使用设置页「会话摘要模型」（digestModel，简报同级的独立专项），未设置时明确记录回落到 pi 默认模型
+  const digestModel = String(appConfig.getConfig('digestModel') || '').trim() || undefined;
+  logger.info('[RadarDigest] 会话摘要使用模型: %s', digestModel || '(pi 默认)');
+  const summary = (await generateWithPi({ prompt, sessionId: 'radar_digest_' + Date.now(), modelPattern: digestModel, timeoutMs: 120_000 })).trim();
   if (!summary) return;
   agentRadar.saveSummary(tool, sessionId, summary.slice(0, 2000), info.messageCount || 0);
   const title = upgradeTitle(tool, sessionId, summary, info.title || '');

@@ -14,7 +14,7 @@ EventEmitter.defaultMaxListeners = 30;
 import * as fs from 'fs';
 import logger from './logger';
 import { buildLoadedMcpConfig } from './mcp-manager';
-import * as appConfig from './app-config';
+
 
 // ---- 桌面端会话放行 bash/edit/write（不经过 AgentHub 人工审批网关） ----
 // ~/.pi/agent/extensions/pi-agenthub-gate.ts 会在 bash/edit/write 的 tool_call 上阻塞等待
@@ -157,7 +157,12 @@ async function getSession(opts: {
     const provider = idx >= 0 ? modelPattern.slice(0, idx) : undefined;
     const modelId = idx >= 0 ? modelPattern.slice(idx + 1) : modelPattern;
     if (provider) model = bundle.registry.find(provider, modelId);
-    if (!model) modelFallbackMessage = `model ${modelPattern} not found, using default`;
+    if (!model) {
+      modelFallbackMessage = `model ${modelPattern} not found, using default`;
+      logger.warn('[PiAgent] 指定模型 %s 不存在，已回落到 pi 默认模型', modelPattern);
+    }
+  } else {
+    logger.warn('[PiAgent] 会话 %s 未指定模型，使用 pi 默认模型（settings.json）', sessionId);
   }
 
   const settingsManager = sdk.SettingsManager.create(cwd || process.cwd(), getAgentDir());
@@ -254,11 +259,20 @@ function friendlyPiError(message: string | undefined): string {
   return m || '未知错误';
 }
 
+/** 当前 pi 默认模型（settings.json 的 defaultProvider/defaultModel），供界面把「默认」具体是哪个模型显示出来 */
+export function getPiDefaultPattern(): string {
+  const settings = readSettingsJsonFile();
+  if (!settings) return '';
+  const provider = String(settings.defaultProvider || '');
+  const model = String(settings.defaultModel || '');
+  return provider && model ? `${provider}/${model}` : '';
+}
+
 /**
  * 列出 pi agent 可用的模型（来自 ~/.pi/agent 的 ModelRuntime）。
  * 优先返回已配置认证的模型（getAvailable 快照），一个都没有时兜底列出全部内置模型。
  */
-export async function listPiModels(): Promise<{ models: PiModelInfo[]; error?: string }> {
+export async function listPiModels(): Promise<{ models: PiModelInfo[]; defaultPattern: string; error?: string }> {
   try {
     const bundle = await getRuntime();
     const registry = bundle.registry;
@@ -305,10 +319,10 @@ export async function listPiModels(): Promise<{ models: PiModelInfo[]; error?: s
     models.sort(
       (a, b) => a.providerLabel.localeCompare(b.providerLabel) || a.name.localeCompare(b.name),
     );
-    return { models };
+    return { models, defaultPattern: getPiDefaultPattern() };
   } catch (e: any) {
     logger.warn('[PiAgent] listPiModels failed: %s', e && e.message ? e.message : e);
-    return { models: [], error: (e && e.message) || String(e) };
+    return { models: [], defaultPattern: '', error: (e && e.message) || String(e) };
   }
 }
 
@@ -511,14 +525,16 @@ export async function runPi(opts: RunPiOptions): Promise<void> {
 }
 
 /**
- * 使用 pi agent 生成日报（非流式，返回完整文本，过滤思考过程）
- * 注入日报查询工具（待办/对话/文档/数据记录/提醒/日期），供 AI 自行查数生成。
+ * 使用 pi agent 生成任务结果（非流式，返回完整文本，过滤思考过程）
+ * 注入查询工具（待办/对话/文档/数据记录/提醒/日期），供 AI 自行查数完成任务。
+ * 模型口径：本次执行显式指定的 overrideModel（重跑时选择）> 任务上保存的 model（创建/编辑时选择）> pi 默认模型；
+ * 不再读设置页「后台任务模型」。
  */
-export async function generateDailyReport(sessionId: string, prompt: string): Promise<string> {
+export async function generateTaskResult(sessionId: string, prompt: string, opts: { taskModel?: string; overrideModel?: string } = {}): Promise<string> {
   const { buildReportToolDefs } = require('./tools');
   const customTools = await buildReportToolDefs(undefined);
-  // 后台任务默认模型（设置页「其他后台任务模型」），缺省跟随 pi 默认模型
-  const modelPattern = String(appConfig.getConfig('backgroundModel') || '').trim() || undefined;
+  const modelPattern = String(opts.overrideModel || opts.taskModel || '').trim() || undefined;
+  logger.info('[PiAgent] 后台任务使用模型: %s', modelPattern || '(pi 默认)');
   return new Promise((resolve, reject) => {
     let done = false;
     runPi({
@@ -767,7 +783,7 @@ function readSettingsJsonFile(): any | null {
 
 /**
  * 同步 pi SDK 的默认模型（~/.pi/agent/settings.json 的 defaultProvider/defaultModel）。
- * 日报、定时任务、飞书派活、AI 工具生成等未显式指定模型的链路都走这个默认值；
+ * 仍会回落到该默认值的链路：未显式选型的对话/追问、任务未选模型时、问雷达/工具箱（用户选「默认」时）；
  * 若默认值仍指向已删除的接入点（或没有 API Key 的模型），SDK 会选中它并报
  * 「当前模型未配置 API Key」，因此这里改为应用内配置的第一个模型。
  * 默认模型仍可用时保持不动，不干扰用户在 pi CLI 里的选择。

@@ -495,7 +495,7 @@ export interface ReportHit {
   snippet: string;
 }
 
-/** 日报/周报/模块分析检索（ai_analysis，个人量级用 LIKE） */
+/** 历史报告/模块分析检索（ai_analysis，个人量级用 LIKE） */
 export function searchReports(q: string, limit = 10, opts: { days?: number } = {}): ReportHit[] {
   const queryStr = String(q || '').trim();
   if (!queryStr) return [];

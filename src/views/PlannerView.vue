@@ -75,7 +75,7 @@
                 >{{ t.status === 'in_progress' ? '执行中…' : '▶ 立即执行' }}</button>
                 <button
                   class="btn btn-secondary btn-xs"
-                  :disabled="!!t.last_run_at && t.task_type !== 'daily_report'"
+                  :disabled="!!t.last_run_at"
                   @click.stop="editTask(t)"
                 >编辑</button>
               </div>
@@ -114,11 +114,11 @@
               <button
                 v-if="selectedTask.trigger_type !== 'now'"
                 class="btn btn-secondary btn-sm"
-                :disabled="!!selectedTask.last_run_at && selectedTask.task_type !== 'daily_report'"
+                :disabled="!!selectedTask.last_run_at"
                 @click="editTask(selectedTask)"
               >编辑</button>
               <router-link :to="'/task/' + selectedTask.id" class="btn btn-secondary btn-sm">全屏</router-link>
-              <button v-if="selectedTask.task_type !== 'daily_report'" class="btn btn-danger btn-sm" @click="openDeleteModal(selectedTask)">删除</button>
+              <button class="btn btn-danger btn-sm" @click="openDeleteModal(selectedTask)">删除</button>
             </div>
           </div>
 
@@ -200,11 +200,11 @@
             </div>
             <div class="form-group">
               <label>任务标题 *</label>
-              <input type="text" class="form-control" v-model="editing.title" :readonly="isSystemTask(editing)" placeholder="例如：每日数据总结 / 整理本周笔记">
+              <input type="text" class="form-control" v-model="editing.title" placeholder="例如：每日数据总结 / 整理本周笔记">
             </div>
             <div class="form-group">
-              <label>{{ isSystemTask(editing) ? '日报提示词（留空使用内置默认格式）' : '任务诉求（AI 将据此执行）' }}</label>
-              <textarea class="form-control" v-model="editing.prompt" rows="4" :placeholder="isSystemTask(editing) ? '可自定义日报板块、评分规则等；留空则使用内置日报格式' : '描述要让 AI 做什么'"></textarea>
+              <label>任务诉求（AI 将据此执行）</label>
+              <textarea class="form-control" v-model="editing.prompt" rows="4" placeholder="描述要让 AI 做什么"></textarea>
             </div>
             <div class="form-group">
               <label>执行方式</label>
@@ -255,23 +255,53 @@
               </div>
             </template>
             <div class="form-row">
-              <div class="form-group" v-if="!isSystemTask(editing)">
+              <div class="form-group">
+                <label>使用模型</label>
+                <select class="form-control" v-model="editing.model">
+                  <option value="">默认（pi 默认模型）</option>
+                  <option v-for="m in taskModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+                </select>
+              </div>
+              <div class="form-group">
                 <label>结果保存位置（相对项目目录，留空自动保存）</label>
                 <input type="text" class="form-control" v-model="editing.output_target" placeholder="如 任务输出/日报.md">
               </div>
-              <div class="form-group">
-                <label>&nbsp;</label>
-                <label class="check-item">
-                  <input type="checkbox" v-model="editing.notify_feishu">
-                  完成后推送飞书
-                </label>
-              </div>
+            </div>
+            <div class="form-group">
+              <label class="check-item">
+                <input type="checkbox" v-model="editing.notify_feishu">
+                完成后推送飞书
+              </label>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="showTaskModal = false">取消</button>
-            <button class="btn btn-danger" v-if="isEditing && !isSystemTask(editing)" @click="openDeleteModal(editing)">🗑️ 删除</button>
+            <button class="btn btn-danger" v-if="isEditing" @click="openDeleteModal(editing)">🗑️ 删除</button>
             <button class="btn btn-primary" @click="saveTask">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 执行选模型模态框 -->
+      <div v-if="runModalTask" class="modal-overlay" @click="runModalTask = null">
+        <div class="modal-box" style="width:440px;" @click.stop>
+          <div class="modal-header">
+            <h3>执行任务<small class="run-modal-title">{{ runModalTask.title }}</small></h3>
+            <button class="btn btn-secondary" @click="runModalTask = null">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>本次使用的模型</label>
+              <select class="form-control" v-model="runModel">
+                <option :value="''">任务默认{{ taskModelLabel(runModalTask.model) }}</option>
+                <option v-for="m in taskModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}{{ m.configured ? '' : '（未配置 Key）' }}</option>
+              </select>
+            </div>
+            <p style="color:var(--text-muted);font-size:12px;">留空使用任务创建/编辑时选的模型；此处只影响本次执行，不改动任务设置。</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="runModalTask = null">取消</button>
+            <button class="btn btn-primary" @click="confirmRun">执行</button>
           </div>
         </div>
       </div>
@@ -297,7 +327,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
 import NotesGate from '@/components/NotesGate.vue';
 import AppIcon from '@/components/AppIcon.vue';
@@ -309,6 +339,7 @@ interface AiTask {
   status: string; task_type: string; project_id: number | null; source: string;
   trigger_type: string; scheduled_start: string; cycle_type: string; cycle_value: string;
   cycle_time: string; cycle_end?: string; output_target: string; notify_feishu: boolean;
+  model?: string;
   last_result: string; last_run_at: string; last_status: string; session_id: string;
   last_cycle_run?: string;
   created_at?: string;
@@ -328,8 +359,7 @@ const noteTaskFilter = ref<number | null>(null);
 const visibleNoteTasks = computed(() => {
   const noteIds = new Set(projectOptions.value.map(p => p.id));
   return tasks.value
-    // 内置日报任务未绑定笔记库时也显示（未开启状态，等用户选库开启）
-    .filter(t => noteIds.has(Number(t.project_id)) || t.task_type === 'daily_report')
+    .filter(t => noteIds.has(Number(t.project_id)))
     // 飞书一次性消息不是任务（2026-10-31 会话化，启动时已迁移为纯会话），
     // 这里兜底过滤，防旧库迁移失败或外部写入把问答混进任务列表
     .filter(t => !(t.source === 'feishu' && t.trigger_type === 'now'))
@@ -422,9 +452,6 @@ const isEditing = ref(false);
 const editing = ref<AiTask>(emptyTask());
 const editingWeekDays = ref<number[]>([]);
 const editingMonthDays = ref<number | string>(1);
-// 内置日报任务从「未开启」点开启时走编辑弹窗选库，保存成功后置为待执行
-const enableAfterSave = ref(false);
-watch(showTaskModal, (v) => { if (!v) enableAfterSave.value = false; });
 
 const showDeleteModal = ref(false);
 const deletingTask = ref<AiTask | null>(null);
@@ -443,8 +470,17 @@ function emptyTask(): AiTask {
     id: 0, title: '', prompt: '', description: '', priority: 'mid', status: 'pending',
     task_type: 'note', project_id: null, source: '', trigger_type: 'now', scheduled_start: '',
     cycle_type: 'daily', cycle_value: '', cycle_time: '09:00', output_target: '',
-    notify_feishu: false, last_result: '', last_run_at: '', last_status: '', session_id: ''
+    notify_feishu: false, model: '', last_result: '', last_run_at: '', last_status: '', session_id: ''
   };
+}
+
+// 任务级模型：创建/编辑时选一次，之后到点执行都用它（重跑时还可临时换）
+const taskModels = ref<{ providerLabel: string; name: string; pattern: string; configured: boolean }[]>([]);
+async function loadTaskModels() {
+  try {
+    const res = await API.pi.models();
+    taskModels.value = (res?.models || []).filter((m: any) => m.pattern);
+  } catch { taskModels.value = []; }
 }
 
 // ========== 数据加载 ==========
@@ -515,7 +551,7 @@ async function saveTask() {
   if (t.cycle_type === 'monthly') cycleValue = String(editingMonthDays.value || 1);
   const data: any = {
     title: t.title, prompt: t.prompt,
-    task_type: isSystemTask(t) ? 'daily_report' : 'note',
+    task_type: 'note',
     project_id: t.project_id,
     trigger_type: t.trigger_type,
     scheduled_start: t.trigger_type === 'once' ? t.scheduled_start : '',
@@ -523,10 +559,10 @@ async function saveTask() {
     cycle_value: t.trigger_type === 'cycle' ? cycleValue : '',
     cycle_time: t.trigger_type === 'cycle' ? t.cycle_time : '',
     output_target: t.output_target,
+    model: t.model || '',
     notify_feishu: t.notify_feishu ? 1 : 0,
   };
-  // 内置日报任务保存不改状态（保持未开启/已暂停）；仅当本次编辑来自「开启」动作时置为待执行
-  if (!isSystemTask(t) || enableAfterSave.value) data.status = 'pending';
+  data.status = 'pending';
   try {
     let createdId: number | null = null;
     if (isEditing.value) {
@@ -544,8 +580,26 @@ async function saveTask() {
 }
 
 async function runTask(task: AiTask) {
+  // 先弹窗选本次模型（留空用任务默认），确认后执行
+  runModel.value = '';
+  runModalTask.value = task;
+}
+
+const runModalTask = ref<AiTask | null>(null);
+const runModel = ref('');
+
+function taskModelLabel(pattern?: string): string {
+  if (!pattern) return '（pi 默认模型）';
+  const m = taskModels.value.find(x => x.pattern === pattern);
+  return m ? `：${m.providerLabel} · ${m.name}` : `：${pattern}`;
+}
+
+async function confirmRun() {
+  const task = runModalTask.value;
+  if (!task) return;
+  runModalTask.value = null;
   try {
-    await API.task.execute(task.id);
+    await API.task.execute(task.id, runModel.value || undefined);
     await loadTasks();
     await loadRecentRuns();
     await loadSelectedDetail();
@@ -574,13 +628,11 @@ const renderMarkdown = (content: string) => {
   return marked(content, { async: false }) as string;
 };
 
-const isSystemTask = (t: AiTask) => t.task_type === 'daily_report';
 const isTaskOn = (t: AiTask) => t.status === 'pending' || t.status === 'in_progress';
 /** 立即执行入口：循环/定时任务随时可手动跑；now 型任务最近一次失败后可重跑 */
 const canRun = (t: AiTask) => t.trigger_type !== 'now' || t.last_status === 'FAILED';
 
 function taskBadgeText(t: AiTask): string {
-  if (isSystemTask(t) && !t.project_id) return '未开启';
   return statusText(t.status);
 }
 
@@ -594,18 +646,11 @@ function statusText(status: string): string {
   }
 }
 
-/**
- * 开启/暂停循环任务。内置日报任务未绑定笔记库时不允许直接开启，
- * 转入编辑弹窗选库，保存（enableAfterSave）后自动纳入调度。
- */
+/** 开启/暂停循环任务 */
 async function toggleTask(t: AiTask) {
   try {
     if (isTaskOn(t)) {
       await API.task.update(t.id, { status: 'paused' });
-    } else if (isSystemTask(t) && !t.project_id) {
-      enableAfterSave.value = true;
-      editTask(t);
-      return;
     } else {
       await API.task.update(t.id, { status: 'pending' });
     }
@@ -667,6 +712,7 @@ onMounted(async () => {
   await Promise.all([loadProjects(), loadTasks()]);
   notesLoaded.value = true;
   loadRecentRuns();
+  loadTaskModels();
   window.electronAPI?.on?.('task:changed', onTaskChanged);
 });
 

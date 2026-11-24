@@ -3,7 +3,7 @@
  *
  * 5 个只读工具：search（多源统一检索）/ get_note / list_notes / get_session / recent_activity。
  * 数据源：个人笔记（FTS5）、外部 AI 会话（radar.db 只读）、应用内对话（chat_message_fts）、
- * 日报周报（ai_analysis LIKE）。
+ * 历史报告与模块分析（ai_analysis LIKE）。
  *
  * 返回统一 JSON 信封 { records | ... }，与 mcp-manager.ts parseToolResult 的识别键兼容，
  * 方便本应用主进程直连消费。
@@ -42,13 +42,13 @@ export function registerKbTools(server: any): void {
     {
       title: '知识库统一检索',
       description:
-        '检索本地知识库：个人笔记、历史 AI 会话及摘要、应用内对话、日报周报。' +
+        '检索本地知识库：个人笔记、历史 AI 会话及摘要、应用内对话、历史报告。' +
         '用户问「我之前做过/研究过/记录过 X」「以前的结论是什么」时先调它，' +
         '可用 scope 限定数据源；命中笔记后用 get_note 读全文，命中会话后用 get_session 看详情。',
       inputSchema: {
         query: z.string().min(1).describe('检索词，中英文均可；少于 3 个字符时笔记只匹配标题'),
         scope: z.enum(['all', 'notes', 'sessions', 'chat', 'reports']).optional()
-          .describe('数据源：all(默认)/notes 笔记/sessions 外部 AI 会话/chat 应用内对话/reports 日报周报'),
+          .describe('数据源：all(默认)/notes 笔记/sessions 外部 AI 会话/chat 应用内对话/reports 历史报告'),
         agent: z.string().optional().describe('仅 sessions：按 agent 工具过滤，如 claude、codex、trae、qoder、opencode、dsh、pi'),
         days: z.number().int().min(1).max(3650).optional().describe('仅检索最近 N 天'),
         limit: z.number().int().min(1).max(50).optional().describe('每个数据源返回条数上限，默认 10'),
@@ -220,7 +220,7 @@ export function registerKbTools(server: any): void {
     {
       title: '最近 AI 活动',
       description:
-        '列出最近 N 天活跃的外部 AI 会话（含摘要）以及最近生成的日报/周报/模块分析。' +
+        '列出最近 N 天活跃的外部 AI 会话（含摘要）以及最近生成的历史报告/模块分析。' +
         '用户问「最近 AI 在做什么」「昨天/这周的进展」时用它。',
       inputSchema: {
         days: z.number().int().min(1).max(365).optional().describe('回看天数，默认 7'),

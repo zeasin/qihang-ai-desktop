@@ -34,7 +34,7 @@
           <li><strong>跟单</strong>：待办与工单统一在「事项」页，处理人变更按节点通知、承诺时间自动提醒、流转节点账可回放；AI 与飞书都能直接建单改单</li>
           <li><strong>观测</strong>：雷达自动采集本机各 AI 编码工具（Trae、Qoder、Claude Code、Codex 等）的会话，今天页集中看动态</li>
           <li><strong>审批</strong>：Claude Code / OpenCode / DSH 的敏感工具调用推送飞书审批卡，回合完成、失败实时通知</li>
-          <li><strong>推送</strong>：综合日报、定时提醒、任务结果、工单指派、审批卡片全部推送到飞书，出门也不掉线</li>
+          <li><strong>推送</strong>：定时提醒、任务结果、工单指派、审批卡片全部推送到飞书，出门也不掉线</li>
         </ol>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
           <div style="flex:1;min-width:140px;padding:10px;background:var(--success-soft);border-radius:8px;border:1px solid var(--success-soft);font-size:12px;line-height:1.5;">
@@ -54,13 +54,13 @@
 
       <div class="card card-prereq" id="sec-prereq">
         <h2 style="font-size:17px;">📋 使用前必读：两个前置条件</h2>
-        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中笔记库（项目）是 AI 功能的前置条件：支持添加多个，一个都没有时，AI 对话、任务执行、日报生成、待办/工作日志提炼会被门禁拦截并提示；MCP、提醒、日志不受影响。</p>
+        <p class="text-muted mb-2">应用启动后，需要完成以下两项配置。其中笔记库（项目）是 AI 功能的前置条件：支持添加多个，一个都没有时，AI 对话、任务执行、待办/工作日志提炼会被门禁拦截并提示；MCP、提醒、日志不受影响。</p>
 
         <div class="prereq-item">
           <div class="prereq-number">1</div>
           <div class="prereq-content">
             <strong>配置 AI 对话大模型</strong>
-            <p class="text-muted">所有 AI 对话、工具调用、日报生成都由大模型驱动。进入「设置 → 💬 对话模型配置」，填写接入点信息（接入名称、服务地址、API Key、模型 ID），支持 OpenAI 兼容接口（如 DeepSeek、硅基流动、Ollama、LM Studio 等），可配置多个接入，每个接入可管理多个模型（上下文窗口、推理模型、是否支持图片等属性可逐个设置）。改动自动保存并立即生效，点「测试」可验证连接是否正常。</p>
+            <p class="text-muted">所有 AI 对话、工具调用都由大模型驱动。进入「设置 → 💬 对话模型配置」，填写接入点信息（接入名称、服务地址、API Key、模型 ID），支持 OpenAI 兼容接口（如 DeepSeek、硅基流动、Ollama、LM Studio 等），可配置多个接入，每个接入可管理多个模型（上下文窗口、推理模型、是否支持图片等属性可逐个设置）。改动自动保存并立即生效，点「测试」可验证连接是否正常。</p>
           </div>
         </div>
 
@@ -68,7 +68,7 @@
           <div class="prereq-number">2</div>
           <div class="prereq-content">
             <strong>添加笔记库（项目）</strong>
-            <p class="text-muted">进入「设置 → 📁 项目」，点击「➕ 添加项目」选择一个本地文件夹作为笔记库，可添加多个并指定默认项目。添加后即可在「笔记」页浏览文件、在对话与任务中选择目标项目，让 AI 基于你的笔记回答问题、自动保存任务执行结果。综合日报则始终基于全部项目生成。待办、工作日志、昨日简报也从笔记库自动提炼。一个笔记库都没有时，AI 相关入口会提示先添加。</p>
+            <p class="text-muted">进入「设置 → 📁 项目」，点击「➕ 添加项目」选择一个本地文件夹作为笔记库，可添加多个并指定默认项目。添加后即可在「笔记」页浏览文件、在对话与任务中选择目标项目，让 AI 基于你的笔记回答问题、自动保存任务执行结果。待办、工作日志、昨日简报也从笔记库自动提炼。一个笔记库都没有时，AI 相关入口会提示先添加。</p>
           </div>
         </div>
       </div>
@@ -153,7 +153,6 @@
           <thead><tr><th>能力</th><th>说明</th></tr></thead>
           <tbody>
           <tr><td>📚 笔记任务</td><td>挂在某个项目下的任务：让 AI 定时读书、写周报、汇总文档，结果自动保存到该项目目录，可推送到飞书</td></tr>
-          <tr><td>📊 综合日报（内置）</td><td>任务页默认内置「生成综合日报」任务：绑定笔记库并开启后，每天定时聚合所有项目生成日报，展示在「今天」页并可推送飞书；日报提示词在该任务的编辑弹窗中修改，任务不可删除、只能暂停</td></tr>
           <tr><td>🤖 引擎运行时</td><td>任务由本地 AI 引擎执行：优先使用内置 opencode，其次全局安装，均不可用时回落 pi；对话页可按会话切换引擎与模型，仅当前会话生效</td></tr>
           </tbody>
         </table>
@@ -165,7 +164,7 @@
         <p class="text-muted mb-2">MCP 页按「服务端 / 客户端」两段组织：上半区是本机知识库对外提供的服务，下半区是外部 MCP 服务的接入与管理。</p>
 
         <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">服务端：本机知识库 qihang-kb</p>
-        <p class="text-muted" style="margin:0 0 8px;">把笔记库、已采集会话、应用内对话、日报周报以只读 MCP 工具对外提供，供 Claude Code / Codex / opencode / Trae 等接入；应用内对话自动注入。详见下方 <a href="#" @click.prevent="scrollToSection('sec-kbmcp')">🔗 本机 MCP 服务与智能体接入</a>。</p>
+        <p class="text-muted" style="margin:0 0 8px;">把笔记库、已采集会话、应用内对话、报告以只读 MCP 工具对外提供，供 Claude Code / Codex / opencode / Trae 等接入；应用内对话自动注入。详见下方 <a href="#" @click.prevent="scrollToSection('sec-kbmcp')">🔗 本机 MCP 服务与智能体接入</a>。</p>
 
         <p style="font-weight:600;margin:14px 0 6px;font-size:13px;">客户端：接入外部 MCP 服务</p>
         <ul>
@@ -181,7 +180,7 @@
       <div class="card" id="sec-kbmcp">
         <h2>🔗 本机 MCP 服务（qihang-kb）与智能体接入</h2>
         <p class="text-muted mb-2">
-          工作台会把本机知识资产以标准 MCP 工具对外提供：<b>笔记库</b>、<b>已采集的外部 AI 会话（含摘要）</b>、<b>应用内对话</b>、<b>日报周报</b>。
+          工作台会把本机知识资产以标准 MCP 工具对外提供：<b>笔记库</b>、<b>已采集的外部 AI 会话（含摘要）</b>、<b>应用内对话</b>、<b>历史报告</b>。
           Claude Code、Codex、opencode、Trae、ZCode 等外部智能体接上后，就能直接检索「我之前写过/做过什么」；工作台自带对话会自动注入，无需配置。
         </p>
 
@@ -202,7 +201,7 @@
             <tr><td><code>get_note</code></td><td>读一篇笔记的 Markdown 全文（超长截断并标注）</td><td><code>path</code>：绝对路径或「项目名/相对路径」</td></tr>
             <tr><td><code>list_notes</code></td><td>列出笔记项目及篇数；传项目名列出该项目文件清单</td><td><code>project</code>、<code>limit</code></td></tr>
             <tr><td><code>get_session</code></td><td>读外部 AI 会话的元信息、AI 摘要、最近消息</td><td><code>session_id</code>、<code>messages</code>（0-200）</td></tr>
-            <tr><td><code>recent_activity</code></td><td>最近 N 天活跃的外部 AI 会话 + 最近日报周报</td><td><code>days</code>（默认 7）、<code>limit</code></td></tr>
+            <tr><td><code>recent_activity</code></td><td>最近 N 天活跃的外部 AI 会话 + 最近历史报告</td><td><code>days</code>（默认 7）、<code>limit</code></td></tr>
           </tbody>
         </table>
 

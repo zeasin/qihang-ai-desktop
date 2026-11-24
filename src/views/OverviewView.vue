@@ -54,7 +54,7 @@
           <div class="brief-error-msg">❌ 昨日简报生成失败：{{ briefError }}</div>
           <div class="brief-error-actions">
             <select v-model="briefModel" class="brief-model-select" :disabled="briefLoading" title="选择本次重试使用的大模型">
-              <option value="">默认模型{{ briefDefaultModelLabel }}</option>
+              <option value="">默认{{ briefDefaultModelLabel || '（pi 默认模型）' }}</option>
               <option v-for="m in briefModels" :key="m.pattern" :value="m.pattern">{{ m.providerLabel }} · {{ m.name }}</option>
             </select>
             <button class="btn btn-sm btn-primary" :disabled="briefLoading" @click="regenBrief">{{ briefLoading ? '生成中…' : '用所选模型重试' }}</button>
@@ -155,23 +155,6 @@ const stats = ref({
   fileCount: 0, notesFileCount: 0, chunkCount: 0, todayModified: 0, projectCount: 0, totalChats: 0, todoPending: 0, todoOverdue: 0, remindersActive: 0, todayDataRecords: 0
 });
 
-const reports = ref<any[]>([]);
-const reportCron = ref('');
-
-const reportScheduleText = computed(() => {
-  if (reportCron.value) {
-    const parts = reportCron.value.split(' ');
-    if (parts.length >= 2) {
-      const hour = parts[1].padStart(2, '0');
-      const min = parts[0].padStart(2, '0');
-      return `每日 ${hour}:${min}`;
-    }
-  }
-  return '';
-});
-
-const reportPushText = ref('，可推送飞书');
-
 const todos = ref<any[]>([]);
 const todayStr = ref('');
 
@@ -196,15 +179,6 @@ const greeting = computed(() => {
 // ========== 引擎简报（由现有数据汇编，不额外调用 AI） ==========
 const briefLines = computed(() => {
   const lines: string[] = [];
-  const latest = reports.value[0];
-  if (latest) {
-    const points = keyPointGroups.value.flatMap((g) => g.items).slice(0, 2);
-    lines.push(
-      `最新综合日报 <b>《${latest.report_date || '最新'}》</b> 已生成${latest.created_at ? '（' + latest.created_at + '）' : ''}` +
-      (reportScheduleText.value ? `，${reportScheduleText.value}自动更新` : '') + '。'
-    );
-    for (const p of points) lines.push(escapeHtml(p).replace(/：(\d[\d,.]*)/g, '：<b>$1</b>') + '。');
-  }
   if (digest.value) {
     const dp = digestPending.value.length;
     if (dp) {
@@ -214,17 +188,13 @@ const briefLines = computed(() => {
   return lines.slice(0, 4);
 });
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 // ========== 昨日简报（AI 生成：AI 工具动态 + 笔记库动态；失败时展示错误并可换模型重试） ==========
 const briefMd = ref('');
 const briefGeneratedAt = ref('');
 const briefLoading = ref(false);
 const briefEmpty = ref(false);
 const briefError = ref('');
-// 简报模型：空 = 设置页默认（昨日简报模型 → 后台任务模型 → pi 默认）
+// 简报模型：空 = 设置页「昨日简报模型」，未设置则走 pi 默认模型（不回落到后台任务模型）
 const BRIEF_MODEL_KEY = 'brief_model_pi';
 const briefModel = ref(localStorage.getItem(BRIEF_MODEL_KEY) || '');
 const briefModels = ref<any[]>([]);
@@ -303,79 +273,6 @@ function relTime(diff: number): string {
   return `${Math.floor(diff / 86400_000)} 天前`;
 }
 
-// ========== 最新日报重点提炼 ==========
-const latestReport = computed(() => (reports.value.length ? reports.value[0] : null));
-
-const KEY_GROUPS: { match: RegExp; label: string }[] = [
-  { match: /今日概览|概览/, label: '📊 今日概览' },
-  { match: /今日完成|已完成|完成情况/, label: '✅ 完成情况' },
-  { match: /待办|待处理|进行中/, label: '📋 今日待办' },
-  { match: /综合评估|改进建议|建议/, label: '💡 改进建议' },
-];
-
-function markdownClean(s: string): string {
-  return s
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/`(.+?)`/g, '$1')
-    .replace(/\[(.+?)\]\(.+?\)/g, '$1')
-    .trim();
-}
-
-function extractKeyPoints(content: string): { label: string; items: string[] }[] {
-  if (!content) return [];
-  const lines = content.split('\n');
-  const start = lines.findIndex((l) => {
-    const t = l.trim();
-    return /^#{1,4}\s/.test(t) || /^-{3,}\s*$/.test(t);
-  });
-  const body = (start >= 0 ? lines.slice(start) : lines).map((l) => l.trim()).filter(Boolean);
-
-  const groups: { label: string; items: string[] }[] = [];
-  let current: { label: string; items: string[] } | null = null;
-  let defaultGroup: { label: string; items: string[] } | null = null;
-
-  const pushItem = (text: string) => {
-    if (!text) return;
-    if (current) current.items.push(text);
-    else {
-      if (!defaultGroup) {
-        defaultGroup = { label: '关键数据', items: [] };
-        groups.push(defaultGroup);
-      }
-      defaultGroup.items.push(text);
-    }
-  };
-
-  let inTable = false;
-  for (const line of body) {
-    const heading = line.match(/^#{1,4}\s+(.+)$/);
-    if (heading) {
-      inTable = false;
-      const title = heading[1];
-      const g = KEY_GROUPS.find((k) => k.match.test(title));
-      current = g ? { label: g.label, items: [] } : null;
-      if (g) groups.push(current!);
-      continue;
-    }
-    if (/^[-|=]{3,}$/.test(line)) { inTable = false; continue; }
-    if (/^\|/.test(line)) {
-      const cells = line.split('|').map((c) => c.trim()).filter(Boolean);
-      if (cells.length >= 2) {
-        if (!inTable) inTable = true;
-        else if (!/^:?-{2,}:?$/.test(cells[1])) pushItem(`${cells[0]}：${cells.slice(1).join(' / ')}`);
-      }
-      continue;
-    }
-    inTable = false;
-    const clean = markdownClean(line.replace(/^[-*]\s+/, ''));
-    if (clean && clean.length < 80) pushItem(clean);
-  }
-
-  return groups.map((g) => ({ ...g, items: g.items.slice(0, 6) })).filter((g) => g.items.length);
-}
-
-const keyPointGroups = computed(() => extractKeyPoints(latestReport.value?.content || ''));
-
 // ========== 最近更新（笔记库按修改时间倒序的前 6 个文件） ==========
 const recentFiles = ref<any[]>([]);
 
@@ -403,7 +300,6 @@ async function loadOverviewData() {
   const d = new Date();
   todayStr.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   try { stats.value = await API.insights.stats(); } catch {}
-  try { reports.value = await API.insights.reports(); } catch {}
   // 待办 = 类型'待办'的未完结工单（2026-11-21 待办并入工单）
   try {
     todos.value = (await API.ticket.data.list())
@@ -413,19 +309,6 @@ async function loadOverviewData() {
   } catch {}
   try { recentFiles.value = await API.insights.recentFiles(12); } catch {}
   // 数据页退役（本地数据集隐藏）：pendingRecords 不再加载
-  // 日报调度时间来自内置的「生成综合日报」任务（未开启则不显示该行）
-  try {
-    const tsk = (await API.task.list()) || [];
-    const dr: any = tsk.find((t: any) => t.task_type === 'daily_report' && t.status === 'pending' && t.cycle_time);
-    if (dr) {
-      const parts = String(dr.cycle_time).split(':');
-      reportCron.value = `${parseInt(parts[1] || '0', 10)} ${parseInt(parts[0] || '0', 10)} * * *`;
-      reportPushText.value = dr.notify_feishu ? '，并推送飞书' : '';
-    } else {
-      reportCron.value = '';
-      reportPushText.value = '';
-    }
-  } catch { reportCron.value = ''; }
 }
 
 async function loadKbCount() {
@@ -520,12 +403,8 @@ onMounted(() => {
   // 模型列表只用于失败重试，后台加载即可，不能挡在简报生成前面（首次会加载 pi SDK）
   void loadBriefModels();
   loadBrief();
-  API.on('report:generated', () => {
-    loadOverviewData();
-  });
 });
 onUnmounted(() => {
-  API.removeAllListeners('report:generated');
   API.removeAllListeners('radar:event');
 });
 </script>
@@ -703,24 +582,4 @@ onUnmounted(() => {
 @media (max-width: 1080px) {
   .grid2 { grid-template-columns: minmax(0, 1fr); }
 }
-
-/* ========== 日报详情弹窗 ========== */
-.modal-overlay {
-  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000;
-}
-.modal-box {
-  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
-  max-width: 90%; max-height: 90vh; overflow-y: auto; width: 520px;
-}
-.modal-box-lg { width: 680px; }
-.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-.modal-header h3 { font-size: 16px; font-weight: 600; }
-.modal-close {
-  border: none; background: none; font-size: 20px; line-height: 1;
-  color: var(--text-muted); cursor: pointer; padding: 4px 8px; border-radius: 6px;
-}
-.modal-close:hover { color: var(--text-primary); background: var(--hover); }
-.modal-body { padding: 20px; }
-.report-modal-body { font-size: 14px; line-height: 1.7; color: var(--text-primary); word-break: break-word; }
 </style>
