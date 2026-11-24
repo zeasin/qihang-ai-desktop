@@ -225,10 +225,10 @@ const briefLoading = ref(false);
 const briefEmpty = ref(false);
 const briefError = ref('');
 // 简报模型：空 = 设置页默认（昨日简报模型 → 后台任务模型 → pi 默认）
-const briefModel = ref('');
+const BRIEF_MODEL_KEY = 'brief_model_pi';
+const briefModel = ref(localStorage.getItem(BRIEF_MODEL_KEY) || '');
 const briefModels = ref<any[]>([]);
 const briefDefaultModel = ref('');
-const BRIEF_MODEL_KEY = 'brief_model_pi';
 const briefDefaultModelLabel = computed(() => {
   if (!briefDefaultModel.value) return '';
   const hit = briefModels.value.find((m: any) => m.pattern === briefDefaultModel.value);
@@ -248,8 +248,6 @@ async function loadBriefModels() {
     const [res, cfg] = await Promise.all([API.pi.models(), API.config.get()]);
     briefModels.value = (res?.models || []).filter((m: any) => m.pattern);
     briefDefaultModel.value = cfg?.briefModel || cfg?.backgroundModel || '';
-    const saved = localStorage.getItem(BRIEF_MODEL_KEY) || '';
-    if (saved && briefModels.value.some((m: any) => m.pattern === saved)) briefModel.value = saved;
   } catch { briefModels.value = []; }
 }
 
@@ -515,12 +513,12 @@ async function onGateReady() {
   loadNoteDigest();
 }
 
-onMounted(async () => {
+onMounted(() => {
   loadOverviewData();
   loadKbCount();
   loadNoteDigest();
-  // 先恢复上次选择的简报模型，再生成（失败时可在错误提示处换模型重试）
-  await loadBriefModels();
+  // 模型列表只用于失败重试，后台加载即可，不能挡在简报生成前面（首次会加载 pi SDK）
+  void loadBriefModels();
   loadBrief();
   API.on('report:generated', () => {
     loadOverviewData();

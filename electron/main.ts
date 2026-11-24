@@ -2128,13 +2128,8 @@ app.whenReady().then(async () => {
     logger.warn('[Startup] 开机自启自愈失败: %s', e?.message || e);
   }
 
-  // 默认模型自愈：settings.json 的默认模型若指向已删除的接入点（或缺失），
-  // 同步为应用内配置的第一个模型，避免日报/定时任务/飞书选中无 API Key 的旧模型
-  try {
-    await syncDefaultModelSettings();
-  } catch (e) {
-    logger.error('syncDefaultModelSettings error: %s', e);
-  }
+  // 默认模型自愈（syncDefaultModelSettings）会加载 pi SDK，首次冷启动可能要数秒；
+  // 放到窗口创建后后台执行，绝不阻塞启动。见下方 setTimeout。
 
   // 多笔记库迁移：旧版单库（config.notesDir）转正为默认笔记库，并维持指针不变量（幂等）
   try {
@@ -2163,6 +2158,12 @@ app.whenReady().then(async () => {
 
   createWindow();
   startupElapsed('window created');
+
+  // 默认模型自愈：settings.json 的默认模型若指向已删除的接入点（或缺失），
+  // 同步为应用内配置的第一个模型，避免日报/定时任务/飞书选中无 API Key 的旧模型。
+  // 会动态加载 pi SDK（冷启动可达数秒），窗口创建后立即后台执行，绝不占用启动关键路径；
+  // 必须早于日报补跑，避免补跑用到已失效的旧默认模型。
+  void syncDefaultModelSettings().catch((e: any) => logger.error('syncDefaultModelSettings error: %s', e));
 
   const savedAppId = appConfig.getConfig('feishuAppId');
   const savedAppSecret = appConfig.getConfig('feishuAppSecret');

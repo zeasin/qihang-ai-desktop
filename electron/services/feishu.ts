@@ -1,5 +1,11 @@
-import * as lark from '@larksuiteoapi/node-sdk';
 import logger from './logger';
+
+// 飞书 SDK 体积较大，延迟到真正启动 Bot 时再加载，避免拖慢应用冷启动
+let larkModule: any = null;
+function getLark(): any {
+  if (!larkModule) larkModule = require('@larksuiteoapi/node-sdk');
+  return larkModule;
+}
 
 let webhookUrl: any = null;
 let wsClient: any = null;
@@ -108,6 +114,7 @@ async function start(configData, onMessage) {
     }
 
     logger.info('[Feishu] Creating Lark.Client...');
+    const lark = getLark();
     client = new lark.Client(baseConfig);
 
     logger.info('[Feishu] Creating Lark.WSClient...');
